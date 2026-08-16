@@ -36,6 +36,10 @@ export type NormalizedQuote = {
   quoteExpiresAt?: string;
   errorCode?: string;
   errorMessage?: string;
+  requestUrl?: string;
+  requestPayload?: unknown;
+  responseHttpStatus?: number;
+  responseLatencyMs?: number;
   rawResponse: unknown;
 };
 

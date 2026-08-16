@@ -69,14 +69,14 @@ const partners: Array<{ id: PartnerId; name: string; short: string; color: strin
 ];
 
 const ranges = [
-  { id: "1-100", label: "$1 – <$100" },
-  { id: "100-1000", label: "$100 – <$1K" },
-  { id: "1000-10000", label: "$1K – <$10K" },
-  { id: "10000-50000", label: "$10K – <$50K" },
-  { id: "50000-100000", label: "$50K – <$100K" },
-  { id: "100000-200000", label: "$100K – <$200K" },
-  { id: "200000-500000", label: "$200K – <$500K" },
-  { id: "500000-1000000", label: "$500K – $1M" },
+  { id: "1-100", label: "$1 – <$100", sampleUsd: 10 },
+  { id: "100-1000", label: "$100 – <$1K", sampleUsd: 316.23 },
+  { id: "1000-10000", label: "$1K – <$10K", sampleUsd: 3_162.28 },
+  { id: "10000-50000", label: "$10K – <$50K", sampleUsd: 22_360.68 },
+  { id: "50000-100000", label: "$50K – <$100K", sampleUsd: 70_710.68 },
+  { id: "100000-200000", label: "$100K – <$200K", sampleUsd: 141_421.36 },
+  { id: "200000-500000", label: "$200K – <$500K", sampleUsd: 316_227.77 },
+  { id: "500000-1000000", label: "$500K – $1M", sampleUsd: 707_106.78 },
 ];
 
 function PartnerMark({ id, muted = false }: { id: PartnerId; muted?: boolean }) {
@@ -107,6 +107,7 @@ export default function Home() {
   const [selectedRange, setSelectedRange] = useState(ranges[3]);
   const [runDetails, setRunDetails] = useState<RunResponse | null>(null);
   const [runLoading, setRunLoading] = useState(false);
+  const [runSubmitting, setRunSubmitting] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -146,36 +147,49 @@ export default function Home() {
     return () => controller.abort();
   }, [selectedRange.id, selectedRoute]);
 
-  const requestEstimate = useMemo(() => {
-    return catalog?.counts?.scheduledRequests ?? 0;
-  }, [catalog]);
+  const winnerProtocol = useMemo(() => {
+    const quoted = (runDetails?.quotes ?? []).filter((quote) => quote.status === "quoted" && quote.expectedOutputFormatted);
+    return quoted.sort((a, b) => Number(b.expectedOutputFormatted) - Number(a.expectedOutputFormatted))[0]?.protocol;
+  }, [runDetails]);
+
+  async function runTestQuote() {
+    if (!selectedRoute) return;
+    setRunSubmitting(true);
+    setRunDetails(null);
+    try {
+      const response = await fetch("/api/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ routeId: selectedRoute.id, rangeId: selectedRange.id }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Test run failed");
+      const params = new URLSearchParams({ routeId: selectedRoute.id, rangeId: selectedRange.id });
+      const latest = await fetch(`/api/runs?${params}`);
+      const data = await latest.json() as RunResponse;
+      if (!latest.ok) throw new Error(data.error ?? "Quote history unavailable");
+      setRunDetails(data);
+    } catch (error) {
+      setRunDetails({ run: null, quotes: [], error: error instanceof Error ? error.message : "Test run failed" });
+    } finally {
+      setRunSubmitting(false);
+    }
+  }
 
   return (
     <main className="app-shell" id="top">
       <header className="topbar">
         <a className="brand" href="#top"><span className="brand-symbol"><i /><i /><i /></span><span>Quote<span>Tool</span></span></a>
-        <nav aria-label="Primary navigation"><a className="active" href="#routes">Routes</a><a href="#collection">Collection</a><a href="#requests">Requests</a></nav>
+        <nav aria-label="Primary navigation"><a className="active" href="#routes">Routes</a><a href="#requests">Quote test</a></nav>
         <span className="truth-pill"><i /> Real data only</span>
       </header>
 
       <section className="hero">
         <div>
           <p className="eyebrow">THORChain-led route intelligence</p>
-          <h1>Every route.<br /><em>Every comparable quote.</em></h1>
-          <p>THORChain defines the route universe. For now, QuoteTool tracks its 20 most active routes, checks which partners support the exact same assets, and preserves every request for inspection.</p>
+          <h1>Compare the routes<br /><em>that matter now.</em></h1>
+          <p>Select one of THORChain’s 20 most active directed routes, choose a USD range, and run one synchronized read-only quote test across every supported protocol.</p>
         </div>
-        <aside className="schedule-card">
-          <div><span className="pulse amber" /><b>Collection not active</b></div>
-          <strong>15 <small>minute target</small></strong>
-          <p>The top-20 route catalog below is live. Quote history remains empty until the first scheduled collection and NEAR credentials are enabled.</p>
-        </aside>
-      </section>
-
-      <section className="metric-grid" aria-label="Live route catalog summary">
-        <article><span>THORChain assets</span><strong>{catalog?.counts?.thorAssets ?? "—"}</strong><small>Available pools + native RUNE</small></article>
-        <article><span>THORChain universe</span><strong>{catalog?.counts?.allRoutes?.toLocaleString() ?? "—"}</strong><small>Available for future expansion</small></article>
-        <article className="accent"><span>Routes in scope</span><strong>{catalog?.counts?.scheduledRoutes ?? "—"}</strong><small>Ranked by 24-hour pool activity</small></article>
-        <article><span>Estimated requests / cycle</span><strong>{requestEstimate.toLocaleString()}</strong><small>One midpoint per range</small></article>
       </section>
 
       <section className="route-section" id="routes">
@@ -193,14 +207,12 @@ export default function Home() {
         {catalog?.error ? <div className="error-state"><b>Live catalog unavailable</b><span>{catalog.error}</span></div> : (
           <div className={`route-table-wrap ${loading ? "loading" : ""}`}>
             <table className="route-table">
-              <thead><tr><th>Route</th><th>Protocol coverage</th><th>Latest run</th><th>Run state</th><th /></tr></thead>
+              <thead><tr><th>Route</th><th>Protocol coverage</th><th /></tr></thead>
               <tbody>
                 {(catalog?.routes ?? []).map((route) => (
                   <tr key={route.id} className={selectedRoute?.id === route.id ? "selected" : ""} onClick={() => setSelectedRoute(route)} tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter") setSelectedRoute(route); }}>
                     <td><RoutePair route={route} /></td>
                     <td><span className="partner-stack">{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!route.partners.includes(partner.id)} />)}<small>{route.partners.length}/4</small></span></td>
-                    <td><span className="no-run">No captured quote</span></td>
-                    <td><span className="state waiting">Awaiting run</span></td>
                     <td><button className="inspect-button" aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol}`}>Inspect →</button></td>
                   </tr>
                 ))}
@@ -218,27 +230,27 @@ export default function Home() {
 
       <section className="route-detail" id="requests">
         <div className="detail-header">
-          <div><p className="eyebrow">Route drill-down</p>{selectedRoute ? <h2><RoutePair route={selectedRoute} /></h2> : <h2>Select a route</h2>}</div>
-          {selectedRoute && <div className="coverage-summary"><span>Quote partners</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id)} />)}</div></div>}
+          <div><p className="eyebrow">Route drill-down</p>{selectedRoute ? <h2 className="detail-route"><span>{selectedRoute.source.symbol}<small>{selectedRoute.source.chain}</small></span><i>→</i><span>{selectedRoute.destination.symbol}<small>{selectedRoute.destination.chain}</small></span></h2> : <h2>Select a route</h2>}</div>
+          {selectedRoute && <div className="detail-actions"><div className="coverage-summary"><span>Quote partners</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id)} />)}</div></div><button className="run-button" onClick={runTestQuote} disabled={runSubmitting || runLoading}>{runSubmitting ? "Running four quotes…" : "Run selected test"}</button></div>}
         </div>
 
         <div className="range-layout">
           <div className="range-grid">
             {ranges.map((range) => (
               <button key={range.id} className={selectedRange.id === range.id ? "selected" : ""} onClick={() => setSelectedRange(range)}>
-                <span>{range.label}</span><b>No completed run</b><small>Latest requests will appear here</small>
+                <span>{range.label}</span><b>{selectedRange.id === range.id && runDetails?.run ? `${runDetails.quotes.filter((quote) => quote.status === "quoted").length} live quotes` : `$${range.sampleUsd.toLocaleString()} test amount`}</b><small>{selectedRange.id === range.id && runDetails?.run ? formatTime(runDetails.run.initiatedAt) : "Fixed geometric midpoint"}</small>
               </button>
             ))}
           </div>
           <aside className={`request-panel ${runDetails?.quotes.length ? "has-quotes" : ""}`}>
             <p className="eyebrow">Latest requests · {selectedRange.label}</p>
             {runLoading ? <><h3>Loading requests…</h3><p>Reading the latest synchronized batch from quote history.</p></> : runDetails?.run ? <>
-              <h3>{runDetails.quotes.length} partner request{runDetails.quotes.length === 1 ? "" : "s"}</h3>
-              <p>Captured {formatTime(runDetails.run.initiatedAt)} · ${runDetails.run.sourceAmountUsd.toLocaleString()} input · {runDetails.run.mode}</p>
+              <h3>{runDetails.quotes.length} protocol results</h3>
+              <p>Captured {formatTime(runDetails.run.initiatedAt)} · ${runDetails.run.sourceAmountUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })} input · synchronized within {runDetails.run.maxRequestSkewMs ?? "—"} ms</p>
               <div className="request-list">
                 {runDetails.quotes.map((quote) => (
                   <details key={quote.id}>
-                    <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong>{quote.status}</strong></summary>
+                    <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quote.status}</strong></summary>
                     <dl>
                       <div><dt>Requested</dt><dd>{formatTime(quote.requestStartedAt)}</dd></div>
                       <div><dt>HTTP status</dt><dd>{quote.responseHttpStatus ?? "—"}</dd></div>
@@ -252,7 +264,7 @@ export default function Home() {
               </div>
             </> : <>
               <h3>No captured requests yet</h3>
-              <p>{runDetails?.error ?? "Once collection starts, this panel will list every partner request from the latest synchronized batch."}</p>
+              <p>{runDetails?.error ?? "Choose a range and run a test. This panel will show THORChain, Chainflip, NEAR Intents, and Maya together."}</p>
               <dl>
                 <div><dt>Request timestamp</dt><dd>—</dd></div>
                 <div><dt>Exact input amount</dt><dd>—</dd></div>
@@ -262,15 +274,6 @@ export default function Home() {
               </dl>
             </>}
           </aside>
-        </div>
-      </section>
-
-      <section className="collection-section" id="collection">
-        <div><p className="eyebrow">Collection design</p><h2>A complete audit trail,<br />without pretending scale is free.</h2></div>
-        <div className="collection-list">
-          <article><span>01</span><div><h3>Popularity refresh</h3><p>Re-rank the THORChain route universe using current 24-hour pool activity before each collection cycle.</p></div><b>Top 20 routes</b></article>
-          <article><span>02</span><div><h3>15-minute quote sweep</h3><p>One representative midpoint per range, launched as synchronized batches only for partners supporting that exact route.</p></div><b>~{requestEstimate.toLocaleString()} requests</b></article>
-          <article><span>03</span><div><h3>Deep range scan</h3><p>Low, geometric midpoint, and high samples for a selected route and range, with crossover refinement when winners differ.</p></div><b>On demand</b></article>
         </div>
       </section>
 

@@ -142,11 +142,11 @@ async function buildCatalog() {
   const cfSourceAssets = new Map(CHAINFLIP_ASSETS.flatMap((asset) => {
     const status = chainflipSupport.get(asset.chainflipId);
     const enabled = status?.depositChannelCreationEnabled && status.depositChannelDepositsEnabled && status.vaultSwapDepositsEnabled;
-    return enabled ? [[canonicalAsset(asset.chain, asset.symbol, asset.contractAddress), `${asset.chain}:${asset.chainflipId}`] as const] : [];
+    return enabled ? [[canonicalAsset(asset.chain, asset.symbol, asset.contractAddress), `${asset.chain}:${asset.symbol}`] as const] : [];
   }));
   const cfDestinationAssets = new Map(CHAINFLIP_ASSETS.flatMap((asset) => {
     const status = chainflipSupport.get(asset.chainflipId);
-    return status?.egressEnabled ? [[canonicalAsset(asset.chain, asset.symbol, asset.contractAddress), `${asset.chain}:${asset.chainflipId}`] as const] : [];
+    return status?.egressEnabled ? [[canonicalAsset(asset.chain, asset.symbol, asset.contractAddress), `${asset.chain}:${asset.symbol}`] as const] : [];
   }));
 
   const thorPools = thorResult.value.filter((pool) => pool.status.toLowerCase() === "available");
@@ -201,4 +201,11 @@ export function routesFromAssets(assets: CatalogAsset[]) {
     }
   }
   return routes;
+}
+
+export function topThorRoutes(assets: CatalogAsset[], limit = 20) {
+  return routesFromAssets(assets)
+    .filter((route) => route.popularityScore > 0)
+    .sort((a, b) => b.popularityScore - a.popularityScore)
+    .slice(0, limit);
 }

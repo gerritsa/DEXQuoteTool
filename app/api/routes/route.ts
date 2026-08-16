@@ -1,4 +1,4 @@
-import { getCatalog, routesFromAssets } from "../../../lib/routes/catalog";
+import { getCatalog, routesFromAssets, topThorRoutes } from "../../../lib/routes/catalog";
 
 export async function GET(request: Request) {
   try {
@@ -7,10 +7,7 @@ export async function GET(request: Request) {
     const catalog = await getCatalog();
     const allRoutes = routesFromAssets(catalog.assets);
     const comparableRoutes = allRoutes.filter((route) => route.partners.length > 1);
-    const topRoutes = allRoutes
-      .filter((route) => route.popularityScore > 0)
-      .sort((a, b) => b.popularityScore - a.popularityScore)
-      .slice(0, 20);
+    const topRoutes = topThorRoutes(catalog.assets);
     const filtered = search
       ? topRoutes.filter((route) => `${route.source.label} ${route.destination.label}`.toLowerCase().includes(search))
       : topRoutes;

@@ -15,10 +15,12 @@ test("server-renders the QuoteTool dashboard", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /<title>QuoteTool/);
-  assert.match(html, /Every route/);
+  assert.match(html, /Compare the routes/);
   assert.match(html, /Real data only/);
-  assert.match(html, /Routes in scope/);
+  assert.match(html, /synchronized read-only quote test/);
   assert.match(html, /No captured requests yet/);
+  assert.doesNotMatch(html, /A complete audit trail/);
+  assert.doesNotMatch(html, /THORChain assets/);
   assert.doesNotMatch(html, /Illustrative preview values/);
   assert.doesNotMatch(html, /codex-preview/);
   assert.doesNotMatch(html, /react-loading-skeleton/);

@@ -1,295 +1,290 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-type Protocol = "THORChain" | "Chainflip" | "NEAR Intents" | "Maya";
-type Mode = "standard" | "optimized";
+type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 
-type RangeResult = {
-  range: string;
-  sample: string;
-  standardWinner: Protocol;
-  standardEdge: number;
-  optimizedWinner: Protocol;
-  optimizedGain: number;
-  eta: string;
-  confidence: "Dominant" | "Mixed";
+type Route = {
+  id: string;
+  source: { id: string; label: string; chain: string; symbol: string; thorAsset: string };
+  destination: { id: string; label: string; chain: string; symbol: string; thorAsset: string };
+  partners: PartnerId[];
 };
 
-const protocols: Array<{
-  name: Protocol;
-  mark: string;
-  color: string;
-  status: string;
-  ready: boolean;
-}> = [
-  { name: "THORChain", mark: "T", color: "#17b897", status: "Public API ready", ready: true },
-  { name: "Chainflip", mark: "C", color: "#ff4fd8", status: "SDK ready", ready: true },
-  { name: "NEAR Intents", mark: "N", color: "#171717", status: "Key required", ready: false },
-  { name: "Maya", mark: "M", color: "#ef6a38", status: "Public API ready", ready: true },
-];
-
-const pairs = [
-  { id: "btc-eth", from: "BTC", to: "ETH", route: "Bitcoin → Ethereum", outputPrice: 3250 },
-  { id: "eth-btc", from: "ETH", to: "BTC", route: "Ethereum → Bitcoin", outputPrice: 96400 },
-  { id: "eth-usdc", from: "ETH", to: "USDC", route: "Ethereum → Ethereum", outputPrice: 1 },
-];
-
-const results: RangeResult[] = [
-  { range: "$1 – <$100", sample: "$10 · $32 · $99", standardWinner: "NEAR Intents", standardEdge: 0.18, optimizedWinner: "NEAR Intents", optimizedGain: 0.00, eta: "~1m", confidence: "Dominant" },
-  { range: "$100 – <$1K", sample: "$100 · $316 · $999", standardWinner: "Chainflip", standardEdge: 0.12, optimizedWinner: "Chainflip", optimizedGain: 0.08, eta: "~2m", confidence: "Mixed" },
-  { range: "$1K – <$10K", sample: "$1K · $3.2K · $9.9K", standardWinner: "THORChain", standardEdge: 0.24, optimizedWinner: "THORChain", optimizedGain: 0.31, eta: "~4m", confidence: "Dominant" },
-  { range: "$10K – <$50K", sample: "$10K · $22K · $49K", standardWinner: "THORChain", standardEdge: 0.36, optimizedWinner: "Chainflip", optimizedGain: 0.42, eta: "~7m", confidence: "Mixed" },
-  { range: "$50K – <$100K", sample: "$50K · $71K · $99K", standardWinner: "Chainflip", standardEdge: 0.28, optimizedWinner: "Chainflip", optimizedGain: 0.61, eta: "~9m", confidence: "Dominant" },
-  { range: "$100K – <$200K", sample: "$100K · $141K · $199K", standardWinner: "Maya", standardEdge: 0.44, optimizedWinner: "THORChain", optimizedGain: 0.88, eta: "~12m", confidence: "Mixed" },
-  { range: "$200K – <$500K", sample: "$200K · $316K · $499K", standardWinner: "Maya", standardEdge: 0.72, optimizedWinner: "THORChain", optimizedGain: 1.14, eta: "~18m", confidence: "Mixed" },
-  { range: "$500K – $1M", sample: "$500K · $707K · $1M", standardWinner: "THORChain", standardEdge: 1.08, optimizedWinner: "THORChain", optimizedGain: 1.63, eta: "~26m", confidence: "Dominant" },
-];
-
-const protocolAdjustment: Record<Protocol, number> = {
-  THORChain: 0.9982,
-  Chainflip: 0.9974,
-  "NEAR Intents": 0.9968,
-  Maya: 0.9959,
+type CatalogResponse = {
+  generatedAt: string;
+  statuses: Record<PartnerId, { available: boolean; error?: string }>;
+  counts: {
+    thorAssets: number;
+    allRoutes: number;
+    comparableRoutes: number;
+    scheduledRoutes: number;
+    filteredRoutes: number;
+    partnerRouteCounts: Record<PartnerId, number>;
+    scheduledRequests: number;
+  };
+  routes: Route[];
+  page: number;
+  pages: number;
+  ranking?: { metric: string; description: string };
+  error?: string;
 };
 
-function ProtocolName({ name }: { name: Protocol }) {
-  const protocol = protocols.find((item) => item.name === name)!;
+type RunResponse = {
+  run: null | {
+    initiatedAt: string;
+    sourceAmountBaseUnits: string;
+    sourceAmountUsd: number;
+    sourcePriceUsd: number;
+    mode: string;
+    status: string;
+    maxRequestSkewMs?: number | null;
+  };
+  quotes: Array<{
+    id: number;
+    protocol: PartnerId;
+    strategy: string;
+    status: string;
+    expectedOutputFormatted?: string | null;
+    expectedOutputBaseUnits?: string | null;
+    requestStartedAt: string;
+    responseReceivedAt?: string | null;
+    responseLatencyMs?: number | null;
+    responseHttpStatus?: number | null;
+    quoteExpiresAt?: string | null;
+    requestUrl?: string | null;
+    requestPayloadJson?: string | null;
+    rawResponseJson?: string | null;
+    errorMessage?: string | null;
+  }>;
+  migrationPending?: boolean;
+  error?: string;
+};
+
+const partners: Array<{ id: PartnerId; name: string; short: string; color: string }> = [
+  { id: "thorchain", name: "THORChain", short: "T", color: "#17b897" },
+  { id: "chainflip", name: "Chainflip", short: "C", color: "#ed49c9" },
+  { id: "near-intents", name: "NEAR Intents", short: "N", color: "#171817" },
+  { id: "maya", name: "Maya", short: "M", color: "#ef6a38" },
+];
+
+const ranges = [
+  { id: "1-100", label: "$1 – <$100" },
+  { id: "100-1000", label: "$100 – <$1K" },
+  { id: "1000-10000", label: "$1K – <$10K" },
+  { id: "10000-50000", label: "$10K – <$50K" },
+  { id: "50000-100000", label: "$50K – <$100K" },
+  { id: "100000-200000", label: "$100K – <$200K" },
+  { id: "200000-500000", label: "$200K – <$500K" },
+  { id: "500000-1000000", label: "$500K – $1M" },
+];
+
+function PartnerMark({ id, muted = false }: { id: PartnerId; muted?: boolean }) {
+  const partner = partners.find((item) => item.id === id)!;
+  return <span className={`partner-mark ${muted ? "muted" : ""}`} style={{ background: muted ? undefined : partner.color }} title={partner.name}>{partner.short}</span>;
+}
+
+function RoutePair({ route }: { route: Route }) {
   return (
-    <span className="protocol-name">
-      <span className="protocol-mark" style={{ background: protocol.color }} aria-hidden="true">{protocol.mark}</span>
-      {name}
+    <span className="route-pair">
+      <span><b>{route.source.symbol}</b><small>{route.source.chain}</small></span>
+      <i aria-hidden="true">→</i>
+      <span><b>{route.destination.symbol}</b><small>{route.destination.chain}</small></span>
     </span>
   );
 }
 
-function formatOutput(value: number, symbol: string) {
-  const digits = symbol === "USDC" ? 2 : value >= 100 ? 3 : value >= 1 ? 5 : 7;
-  return `${value.toLocaleString("en-US", { maximumFractionDigits: digits })} ${symbol}`;
+function formatTime(value?: string) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 export default function Home() {
-  const [pairId, setPairId] = useState(pairs[0].id);
-  const [mode, setMode] = useState<Mode>("standard");
-  const [selectedIndex, setSelectedIndex] = useState(3);
-  const [capturedAt, setCapturedAt] = useState("Preview dataset");
-  const [refreshing, setRefreshing] = useState(false);
+  const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
+  const [selectedRange, setSelectedRange] = useState(ranges[3]);
+  const [runDetails, setRunDetails] = useState<RunResponse | null>(null);
+  const [runLoading, setRunLoading] = useState(false);
 
-  const pair = pairs.find((item) => item.id === pairId)!;
-  const selected = results[selectedIndex];
-  const winner = mode === "standard" ? selected.standardWinner : selected.optimizedWinner;
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({ search });
+        const response = await fetch(`/api/routes?${params}`, { signal: controller.signal });
+        const data = await response.json() as CatalogResponse;
+        if (!response.ok) throw new Error(data.error ?? "Route catalog unavailable");
+        setCatalog(data);
+        setSelectedRoute((current) => current && data.routes.some((route) => route.id === current.id) ? current : data.routes[0] ?? null);
+      } catch (error) {
+        if (!controller.signal.aborted) setCatalog({ error: error instanceof Error ? error.message : "Route catalog unavailable" } as CatalogResponse);
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [search]);
 
-  const quoteCards = useMemo(() => {
-    const usdMidpoints = [32, 316, 3162, 22361, 70711, 141421, 316228, 707107];
-    const baseOutput = usdMidpoints[selectedIndex] / pair.outputPrice;
-    return protocols.map((protocol, protocolIndex) => {
-      const isWinner = protocol.name === winner;
-      const modeLift = mode === "optimized" && ["THORChain", "Chainflip", "Maya"].includes(protocol.name)
-        ? selected.optimizedGain / 100
-        : 0;
-      const variation = 1 - protocolIndex * 0.00045 - selectedIndex * protocolIndex * 0.00007;
-      const normalized = isWinner
-        ? 1
-        : protocolAdjustment[protocol.name] * variation;
-      return {
-        ...protocol,
-        isWinner,
-        output: baseOutput * normalized * (1 + modeLift),
-        fee: (0.08 + protocolIndex * 0.07 + selectedIndex * 0.03).toFixed(2),
-        duration: mode === "optimized" && ["THORChain", "Chainflip", "Maya"].includes(protocol.name)
-          ? selected.eta
-          : protocolIndex === 2 ? "~1m" : `~${2 + protocolIndex}m`,
-        strategy: mode === "optimized"
-          ? protocol.name === "Chainflip" ? "DCA" : protocol.name === "NEAR Intents" ? "Solver quote" : "Streaming"
-          : protocol.name === "NEAR Intents" ? "Solver quote" : "Single swap",
-      };
-    }).sort((a, b) => b.output - a.output);
-  }, [mode, pair.outputPrice, selected, selectedIndex, winner]);
+  useEffect(() => {
+    if (!selectedRoute) { setRunDetails(null); return; }
+    const controller = new AbortController();
+    setRunLoading(true);
+    const params = new URLSearchParams({ routeId: selectedRoute.id, rangeId: selectedRange.id });
+    fetch(`/api/runs?${params}`, { signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json() as RunResponse;
+        if (!response.ok) throw new Error(data.error ?? "Quote history unavailable");
+        setRunDetails(data);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setRunDetails({ run: null, quotes: [], error: error instanceof Error ? error.message : "Quote history unavailable" });
+      })
+      .finally(() => { if (!controller.signal.aborted) setRunLoading(false); });
+    return () => controller.abort();
+  }, [selectedRange.id, selectedRoute]);
 
-  function refreshPreview() {
-    setRefreshing(true);
-    window.setTimeout(() => {
-      setCapturedAt(`Preview refreshed ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`);
-      setRefreshing(false);
-    }, 650);
-  }
+  const requestEstimate = useMemo(() => {
+    return catalog?.counts?.scheduledRequests ?? 0;
+  }, [catalog]);
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" id="top">
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="QuoteTool home">
-          <span className="brand-symbol" aria-hidden="true"><i /><i /><i /></span>
-          <span>Quote<span>Tool</span></span>
-        </a>
-        <nav aria-label="Primary navigation">
-          <a className="active" href="#overview">Overview</a>
-          <a href="#methodology">Methodology</a>
-          <a href="#coverage">Coverage</a>
-        </nav>
-        <div className="preview-pill"><span /> Preview mode</div>
+        <a className="brand" href="#top"><span className="brand-symbol"><i /><i /><i /></span><span>Quote<span>Tool</span></span></a>
+        <nav aria-label="Primary navigation"><a className="active" href="#routes">Routes</a><a href="#collection">Collection</a><a href="#requests">Requests</a></nav>
+        <span className="truth-pill"><i /> Real data only</span>
       </header>
 
-      <section className="hero" id="top">
+      <section className="hero">
         <div>
-          <p className="eyebrow">Cross-chain execution intelligence</p>
-          <h1>See where every trade<br />gets the <em>best execution.</em></h1>
-          <p className="hero-copy">Compare synchronized quotes across four cross-chain protocols, from a $1 swap to a $1M order.</p>
+          <p className="eyebrow">THORChain-led route intelligence</p>
+          <h1>Every route.<br /><em>Every comparable quote.</em></h1>
+          <p>THORChain defines the route universe. For now, QuoteTool tracks its 20 most active routes, checks which partners support the exact same assets, and preserves every request for inspection.</p>
         </div>
-        <div className="hero-aside" aria-label="Benchmark status">
-          <span>Benchmark coverage</span>
-          <strong>4 <small>protocols</small></strong>
-          <div className="coverage-bar"><i /><i /><i /><i className="pending" /></div>
-          <p>NEAR goes live when your Distribution Channel key is added.</p>
-        </div>
+        <aside className="schedule-card">
+          <div><span className="pulse amber" /><b>Collection not active</b></div>
+          <strong>15 <small>minute target</small></strong>
+          <p>The top-20 route catalog below is live. Quote history remains empty until the first scheduled collection and NEAR credentials are enabled.</p>
+        </aside>
       </section>
 
-      <section className="control-panel" aria-label="Benchmark controls">
-        <label>
-          <span>Trading pair</span>
-          <select value={pairId} onChange={(event) => setPairId(event.target.value)}>
-            {pairs.map((item) => <option key={item.id} value={item.id}>{item.from} → {item.to} · {item.route}</option>)}
-          </select>
-        </label>
-        <fieldset>
-          <legend>Execution view</legend>
-          <div className="segmented-control">
-            <button className={mode === "standard" ? "selected" : ""} onClick={() => setMode("standard")} type="button">Standard</button>
-            <button className={mode === "optimized" ? "selected" : ""} onClick={() => setMode("optimized")} type="button">Best output</button>
-          </div>
-        </fieldset>
-        <div className="capture-control">
-          <span>{capturedAt}</span>
-          <button type="button" onClick={refreshPreview} disabled={refreshing}>{refreshing ? "Refreshing…" : "Refresh preview"}</button>
-        </div>
+      <section className="metric-grid" aria-label="Live route catalog summary">
+        <article><span>THORChain assets</span><strong>{catalog?.counts?.thorAssets ?? "—"}</strong><small>Available pools + native RUNE</small></article>
+        <article><span>THORChain universe</span><strong>{catalog?.counts?.allRoutes?.toLocaleString() ?? "—"}</strong><small>Available for future expansion</small></article>
+        <article className="accent"><span>Routes in scope</span><strong>{catalog?.counts?.scheduledRoutes ?? "—"}</strong><small>Ranked by 24-hour pool activity</small></article>
+        <article><span>Estimated requests / cycle</span><strong>{requestEstimate.toLocaleString()}</strong><small>One midpoint per range</small></article>
       </section>
 
-      <section className="summary-grid" id="overview">
-        <article className="summary-card primary">
-          <p>Standard execution leader</p>
-          <ProtocolName name="THORChain" />
-          <strong>3 of 8 <span>ranges won</span></strong>
-          <small>Fast, single-swap routes only</small>
-        </article>
-        <article className="summary-card">
-          <p>Best-output leader</p>
-          <ProtocolName name="THORChain" />
-          <strong>4 of 8 <span>ranges won</span></strong>
-          <small>Streaming and DCA included</small>
-        </article>
-        <article className="summary-card">
-          <p>Largest optimization gain</p>
-          <strong className="metric">+1.63%</strong>
-          <small>At $500K–$1M · ~26m execution</small>
-        </article>
-        <article className="summary-card">
-          <p>Range confidence</p>
-          <strong className="metric">4 / 8</strong>
-          <small>Four ranges need crossover sampling</small>
-        </article>
-      </section>
-
-      <section className="comparison-section">
+      <section className="route-section" id="routes">
         <div className="section-heading">
-          <div>
-            <p className="eyebrow">Range map</p>
-            <h2>Winner by trade size</h2>
+          <div><p className="eyebrow">Live coverage catalog</p><h2>Routes</h2></div>
+          <p>Top 20 directed routes ranked from current THORChain pool activity. Select one to inspect its ranges and captured requests.</p>
+        </div>
+
+        <div className="filter-bar">
+          <label><span>Search top 20</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="BTC, ETH, USDC…" /></label>
+          <div className="ranking-note"><span>Ranking</span><b>24h pool activity</b></div>
+          <div className="catalog-stamp"><span>Catalog snapshot</span><b>{formatTime(catalog?.generatedAt)}</b></div>
+        </div>
+
+        {catalog?.error ? <div className="error-state"><b>Live catalog unavailable</b><span>{catalog.error}</span></div> : (
+          <div className={`route-table-wrap ${loading ? "loading" : ""}`}>
+            <table className="route-table">
+              <thead><tr><th>Route</th><th>Protocol coverage</th><th>Latest run</th><th>Run state</th><th /></tr></thead>
+              <tbody>
+                {(catalog?.routes ?? []).map((route) => (
+                  <tr key={route.id} className={selectedRoute?.id === route.id ? "selected" : ""} onClick={() => setSelectedRoute(route)} tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter") setSelectedRoute(route); }}>
+                    <td><RoutePair route={route} /></td>
+                    <td><span className="partner-stack">{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!route.partners.includes(partner.id)} />)}<small>{route.partners.length}/4</small></span></td>
+                    <td><span className="no-run">No captured quote</span></td>
+                    <td><span className="state waiting">Awaiting run</span></td>
+                    <td><button className="inspect-button" aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol}`}>Inspect →</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!loading && catalog?.routes.length === 0 && <div className="empty-table">No THORChain routes match this filter.</div>}
           </div>
-          <p>Three logarithmic samples per range. Select a row to inspect the quote stack.</p>
-        </div>
+        )}
 
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>USD range</th>
-                <th>Standard winner</th>
-                <th>Edge</th>
-                <th>Best-output winner</th>
-                <th>Optimization</th>
-                <th>Est. duration</th>
-                <th>Confidence</th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.map((row, index) => (
-                <tr key={row.range} className={selectedIndex === index ? "selected-row" : ""} onClick={() => setSelectedIndex(index)} tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setSelectedIndex(index); }}>
-                  <td><strong>{row.range}</strong><small>{row.sample}</small></td>
-                  <td><ProtocolName name={row.standardWinner} /></td>
-                  <td className="positive">+{row.standardEdge.toFixed(2)}%</td>
-                  <td><ProtocolName name={row.optimizedWinner} /></td>
-                  <td className="positive">+{row.optimizedGain.toFixed(2)}%</td>
-                  <td>{row.eta}</td>
-                  <td><span className={`confidence ${row.confidence.toLowerCase()}`}>{row.confidence}</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="pagination">
+          <span>{catalog?.counts?.filteredRoutes?.toLocaleString() ?? 0} of 20 routes shown</span>
+          <b>Direction is treated separately</b>
         </div>
       </section>
 
-      <section className="quote-inspector">
-        <div className="section-heading compact">
-          <div>
-            <p className="eyebrow">Quote stack · {selected.range}</p>
-            <h2>{mode === "standard" ? "Standard execution" : "Best-output execution"}</h2>
+      <section className="route-detail" id="requests">
+        <div className="detail-header">
+          <div><p className="eyebrow">Route drill-down</p>{selectedRoute ? <h2><RoutePair route={selectedRoute} /></h2> : <h2>Select a route</h2>}</div>
+          {selectedRoute && <div className="coverage-summary"><span>Quote partners</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id)} />)}</div></div>}
+        </div>
+
+        <div className="range-layout">
+          <div className="range-grid">
+            {ranges.map((range) => (
+              <button key={range.id} className={selectedRange.id === range.id ? "selected" : ""} onClick={() => setSelectedRange(range)}>
+                <span>{range.label}</span><b>No completed run</b><small>Latest requests will appear here</small>
+              </button>
+            ))}
           </div>
-          <span className="sample-note">Representative midpoint · synchronized batch</span>
-        </div>
-        <div className="quote-grid">
-          {quoteCards.map((quote, index) => (
-            <article className={`quote-card ${quote.isWinner ? "winner" : ""}`} key={quote.name}>
-              <div className="quote-rank">{index + 1}</div>
-              <ProtocolName name={quote.name} />
-              {quote.isWinner && <span className="winner-label">Best quote</span>}
-              <strong>{formatOutput(quote.output, pair.to)}</strong>
-              <div className="quote-meta"><span>{quote.strategy}</span><span>{quote.duration}</span><span>{quote.fee}% quoted cost</span></div>
-            </article>
-          ))}
-        </div>
-        <p className="data-note">Illustrative preview values—not live market quotes. Raw responses, request timestamps, and quote expiries will be retained once live collection is enabled.</p>
-      </section>
-
-      <section className="mode-explainer" id="methodology">
-        <div>
-          <p className="eyebrow">Why two views?</p>
-          <h2>Price and time are separate decisions.</h2>
-        </div>
-        <article>
-          <span>01</span>
-          <h3>Standard</h3>
-          <p>Compares single-swap or regular routes. This is the clearest answer to “who wins now?”</p>
-        </article>
-        <article>
-          <span>02</span>
-          <h3>Best output</h3>
-          <p>Allows native route optimization: streaming on THORChain and Maya, DCA on Chainflip, and the best NEAR solver quote.</p>
-        </article>
-        <article>
-          <span>03</span>
-          <h3>No hidden score</h3>
-          <p>Output and duration stay visible. The tool never invents an opaque price-versus-speed ranking.</p>
-        </article>
-      </section>
-
-      <section className="protocol-status" id="coverage">
-        <div className="section-heading compact">
-          <div><p className="eyebrow">Integration status</p><h2>Protocol coverage</h2></div>
-        </div>
-        <div className="status-list">
-          {protocols.map((protocol) => (
-            <div key={protocol.name}>
-              <ProtocolName name={protocol.name} />
-              <span className={protocol.ready ? "ready" : "waiting"}>{protocol.status}</span>
-            </div>
-          ))}
+          <aside className={`request-panel ${runDetails?.quotes.length ? "has-quotes" : ""}`}>
+            <p className="eyebrow">Latest requests · {selectedRange.label}</p>
+            {runLoading ? <><h3>Loading requests…</h3><p>Reading the latest synchronized batch from quote history.</p></> : runDetails?.run ? <>
+              <h3>{runDetails.quotes.length} partner request{runDetails.quotes.length === 1 ? "" : "s"}</h3>
+              <p>Captured {formatTime(runDetails.run.initiatedAt)} · ${runDetails.run.sourceAmountUsd.toLocaleString()} input · {runDetails.run.mode}</p>
+              <div className="request-list">
+                {runDetails.quotes.map((quote) => (
+                  <details key={quote.id}>
+                    <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong>{quote.status}</strong></summary>
+                    <dl>
+                      <div><dt>Requested</dt><dd>{formatTime(quote.requestStartedAt)}</dd></div>
+                      <div><dt>HTTP status</dt><dd>{quote.responseHttpStatus ?? "—"}</dd></div>
+                      <div><dt>Expected output</dt><dd>{quote.expectedOutputFormatted ?? quote.expectedOutputBaseUnits ?? "—"}</dd></div>
+                      <div><dt>Quote expiry</dt><dd>{formatTime(quote.quoteExpiresAt ?? undefined)}</dd></div>
+                    </dl>
+                    <span className="json-label">Request</span><pre>{quote.requestPayloadJson ?? quote.requestUrl ?? "No request payload stored"}</pre>
+                    <span className="json-label">Response</span><pre>{quote.rawResponseJson ?? quote.errorMessage ?? "No response payload stored"}</pre>
+                  </details>
+                ))}
+              </div>
+            </> : <>
+              <h3>No captured requests yet</h3>
+              <p>{runDetails?.error ?? "Once collection starts, this panel will list every partner request from the latest synchronized batch."}</p>
+              <dl>
+                <div><dt>Request timestamp</dt><dd>—</dd></div>
+                <div><dt>Exact input amount</dt><dd>—</dd></div>
+                <div><dt>Response latency</dt><dd>—</dd></div>
+                <div><dt>Quote expiry</dt><dd>—</dd></div>
+                <div><dt>Raw request / response</dt><dd>Available after first run</dd></div>
+              </dl>
+            </>}
+          </aside>
         </div>
       </section>
 
-      <footer>
-        <span>QuoteTool</span>
-        <p>Comparable inputs. Transparent execution. Auditable winners.</p>
-        <a href="#top">Back to top ↑</a>
-      </footer>
+      <section className="collection-section" id="collection">
+        <div><p className="eyebrow">Collection design</p><h2>A complete audit trail,<br />without pretending scale is free.</h2></div>
+        <div className="collection-list">
+          <article><span>01</span><div><h3>Popularity refresh</h3><p>Re-rank the THORChain route universe using current 24-hour pool activity before each collection cycle.</p></div><b>Top 20 routes</b></article>
+          <article><span>02</span><div><h3>15-minute quote sweep</h3><p>One representative midpoint per range, launched as synchronized batches only for partners supporting that exact route.</p></div><b>~{requestEstimate.toLocaleString()} requests</b></article>
+          <article><span>03</span><div><h3>Deep range scan</h3><p>Low, geometric midpoint, and high samples for a selected route and range, with crossover refinement when winners differ.</p></div><b>On demand</b></article>
+        </div>
+      </section>
+
+      <section className="partner-health">
+        <div><p className="eyebrow">Metadata endpoints</p><h2>Partner status</h2></div>
+        <div className="health-grid">
+          {partners.map((partner) => {
+            const status = catalog?.statuses?.[partner.id];
+            return <article key={partner.id}><PartnerMark id={partner.id} /><div><b>{partner.name}</b><small>{status?.available ? "Catalog connected" : loading ? "Checking…" : "Catalog unavailable"}</small></div><span className={status?.available ? "online" : "offline"} /></article>;
+          })}
+        </div>
+      </section>
+
+      <footer><b>QuoteTool</b><span>Real requests. Stored responses. Explainable winners.</span><a href="#top">Back to top ↑</a></footer>
     </main>
   );
 }

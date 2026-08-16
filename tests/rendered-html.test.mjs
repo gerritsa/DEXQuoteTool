@@ -15,10 +15,11 @@ test("server-renders the QuoteTool dashboard", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /<title>QuoteTool/);
-  assert.match(html, /See where every trade/);
-  assert.match(html, /Standard execution leader/);
-  assert.match(html, /Best-output leader/);
-  assert.match(html, /Illustrative preview values/);
+  assert.match(html, /Every route/);
+  assert.match(html, /Real data only/);
+  assert.match(html, /Routes in scope/);
+  assert.match(html, /No captured requests yet/);
+  assert.doesNotMatch(html, /Illustrative preview values/);
   assert.doesNotMatch(html, /codex-preview/);
   assert.doesNotMatch(html, /react-loading-skeleton/);
 });

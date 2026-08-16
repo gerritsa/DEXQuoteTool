@@ -115,7 +115,7 @@ export async function runSelectedBenchmark(routeId: string, rangeId: string) {
     requestStartedAt: quote.requestStartedAt,
     responseReceivedAt: quote.responseReceivedAt,
     quoteExpiresAt: quote.quoteExpiresAt,
-    rawResponseJson: JSON.stringify(quote.rawResponse),
+    rawResponseJson: quote.rawResponse == null ? undefined : JSON.stringify(quote.rawResponse),
     requestUrl: quote.requestUrl,
     requestPayloadJson: quote.requestPayload ? JSON.stringify(quote.requestPayload) : undefined,
     responseHttpStatus: quote.responseHttpStatus,

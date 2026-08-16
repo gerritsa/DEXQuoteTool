@@ -203,9 +203,52 @@ export function routesFromAssets(assets: CatalogAsset[]) {
   return routes;
 }
 
-export function topThorRoutes(assets: CatalogAsset[], limit = 20) {
-  return routesFromAssets(assets)
-    .filter((route) => route.popularityScore > 0)
-    .sort((a, b) => b.popularityScore - a.popularityScore)
+export const fixedRouteSet = {
+  id: "thorchain-pool-activity-2026-08-16",
+  selectedAt: "2026-08-16T22:32:01Z",
+  metric: "geometric_mean_pool_volume_24h",
+  description: "Fixed snapshot ranked by the geometric mean of each asset's trailing 24-hour THORChain pool volume.",
+};
+
+const fixedThorAssetPairs: Array<[string, string]> = [
+  ["BTC.BTC", "ETH.ETH"],
+  ["ETH.ETH", "BTC.BTC"],
+  ["BTC.BTC", "TRON.TRX"],
+  ["TRON.TRX", "BTC.BTC"],
+  ["ETH.ETH", "TRON.TRX"],
+  ["TRON.TRX", "ETH.ETH"],
+  ["BTC.BTC", "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48"],
+  ["ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", "BTC.BTC"],
+  ["ETH.ETH", "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48"],
+  ["ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", "ETH.ETH"],
+  ["BTC.BTC", "ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7"],
+  ["ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7", "BTC.BTC"],
+  ["ETH.ETH", "ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7"],
+  ["ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7", "ETH.ETH"],
+  ["BTC.BTC", "TRON.USDT-TR7NHQJEKQXGTCI8Q8ZY4PL8OTSZGJLJ6T"],
+  ["TRON.USDT-TR7NHQJEKQXGTCI8Q8ZY4PL8OTSZGJLJ6T", "BTC.BTC"],
+  ["ETH.ETH", "TRON.USDT-TR7NHQJEKQXGTCI8Q8ZY4PL8OTSZGJLJ6T"],
+  ["TRON.USDT-TR7NHQJEKQXGTCI8Q8ZY4PL8OTSZGJLJ6T", "ETH.ETH"],
+  ["AVAX.AVAX", "BTC.BTC"],
+  ["BTC.BTC", "AVAX.AVAX"],
+  ["AVAX.AVAX", "ETH.ETH"],
+  ["ETH.ETH", "AVAX.AVAX"],
+  ["BTC.BTC", "ETH.LINK-0X514910771AF9CA656AF840DFF83E8264ECF986CA"],
+  ["ETH.LINK-0X514910771AF9CA656AF840DFF83E8264ECF986CA", "BTC.BTC"],
+  ["ETH.ETH", "ETH.LINK-0X514910771AF9CA656AF840DFF83E8264ECF986CA"],
+  ["ETH.LINK-0X514910771AF9CA656AF840DFF83E8264ECF986CA", "ETH.ETH"],
+  ["BTC.BTC", "THOR.TCY"],
+  ["THOR.TCY", "BTC.BTC"],
+  ["ETH.ETH", "THOR.TCY"],
+  ["THOR.TCY", "ETH.ETH"],
+];
+
+export function topThorRoutes(assets: CatalogAsset[], limit = 30) {
+  const routesByAssets = new Map(
+    routesFromAssets(assets).map((route) => [`${route.source.thorAsset}__${route.destination.thorAsset}`, route])
+  );
+  return fixedThorAssetPairs
+    .map(([source, destination]) => routesByAssets.get(`${source}__${destination}`))
+    .filter((route): route is CatalogRoute => Boolean(route))
     .slice(0, limit);
 }

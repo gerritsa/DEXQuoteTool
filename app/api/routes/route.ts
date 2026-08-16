@@ -1,4 +1,4 @@
-import { getCatalog, routesFromAssets, topThorRoutes } from "../../../lib/routes/catalog";
+import { fixedRouteSet, getCatalog, routesFromAssets, topThorRoutes } from "../../../lib/routes/catalog";
 
 export async function GET(request: Request) {
   try {
@@ -27,7 +27,8 @@ export async function GET(request: Request) {
         partnerRouteCounts,
         scheduledRequests: topRoutes.reduce((total, route) => total + route.partners.length * 8, 0),
       },
-      ranking: { metric: "geometric_mean_pool_volume_24h", description: "Ranked by the geometric mean of each route asset's trailing 24-hour THORChain pool volume." },
+      routeSet: fixedRouteSet,
+      ranking: { metric: fixedRouteSet.metric, description: fixedRouteSet.description },
       routes: filtered,
       page: 1,
       pages: 1,

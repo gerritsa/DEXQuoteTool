@@ -8,12 +8,12 @@ export async function GET(request: Request) {
     await ensureBenchmarkSchema();
     const url = new URL(request.url);
     const routeId = url.searchParams.get("routeId")?.trim();
-    const rangeId = url.searchParams.get("rangeId")?.trim();
-    if (!routeId || !rangeId) return Response.json({ error: "routeId and rangeId are required" }, { status: 400 });
+    const amountId = (url.searchParams.get("amountId") ?? url.searchParams.get("rangeId"))?.trim();
+    if (!routeId || !amountId) return Response.json({ error: "routeId and amountId are required" }, { status: 400 });
 
     const db = getDb();
     const [run] = await db.select().from(benchmarkRuns)
-      .where(and(eq(benchmarkRuns.pairId, routeId), eq(benchmarkRuns.rangeId, rangeId)))
+      .where(and(eq(benchmarkRuns.pairId, routeId), eq(benchmarkRuns.rangeId, amountId)))
       .orderBy(desc(benchmarkRuns.createdAt), desc(benchmarkRuns.id)).limit(1);
     if (!run) return Response.json({ run: null, quotes: [] });
 
@@ -32,11 +32,11 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json() as { routeId?: string; rangeId?: string };
+    const body = await request.json() as { routeId?: string; amountId?: string; rangeId?: string };
     const routeId = body.routeId?.trim();
-    const rangeId = body.rangeId?.trim();
-    if (!routeId || !rangeId) return Response.json({ error: "routeId and rangeId are required" }, { status: 400 });
-    const result = await runSelectedBenchmark(routeId, rangeId);
+    const amountId = (body.amountId ?? body.rangeId)?.trim();
+    if (!routeId || !amountId) return Response.json({ error: "routeId and amountId are required" }, { status: 400 });
+    const result = await runSelectedBenchmark(routeId, amountId);
     return Response.json(result, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Test run failed";

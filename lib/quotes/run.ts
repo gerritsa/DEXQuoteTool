@@ -6,7 +6,7 @@ import { getCatalog, topThorRoutes, type CatalogAsset, type PartnerId } from "..
 import { getChainflipQuote } from "./adapters/chainflip";
 import { getNearIntentsQuote } from "./adapters/near-intents";
 import { getPoolProtocolQuote } from "./adapters/pool-protocol";
-import { usdRanges } from "./ranges";
+import { quoteSizes } from "./sizes";
 import type { BenchmarkRequest, ChainAsset, NormalizedQuote, ProtocolId } from "./types";
 
 const allProtocols: ProtocolId[] = ["thorchain", "chainflip", "near-intents", "maya"];
@@ -55,16 +55,16 @@ async function requestQuote(protocol: PartnerId, request: BenchmarkRequest, supp
   return getNearIntentsQuote(request, apiKey);
 }
 
-export async function runSelectedBenchmark(routeId: string, rangeId: string) {
+export async function runSelectedBenchmark(routeId: string, amountId: string) {
   await ensureBenchmarkSchema();
   const catalog = await getCatalog();
   const route = topThorRoutes(catalog.assets).find((candidate) => candidate.id === routeId);
-  if (!route) throw new Error("Select one of the current top-20 THORChain routes");
-  const range = usdRanges.find((candidate) => candidate.id === rangeId);
-  if (!range) throw new Error("Unknown quote range");
+  if (!route) throw new Error("Select one of the fixed 30 THORChain routes");
+  const quoteSize = quoteSizes.find((candidate) => candidate.id === amountId);
+  if (!quoteSize) throw new Error("Unknown quote amount");
   if (!route.source.priceUsd || route.source.priceUsd <= 0) throw new Error("Source asset USD price is unavailable");
 
-  const sourceAmountUsd = Math.sqrt(range.min * range.max);
+  const sourceAmountUsd = quoteSize.amountUsd;
   const source = toChainAsset(route.source);
   const destination = toChainAsset(route.destination);
   const request: BenchmarkRequest = {
@@ -84,7 +84,7 @@ export async function runSelectedBenchmark(routeId: string, rangeId: string) {
   const db = getDb();
   const [run] = await db.insert(benchmarkRuns).values({
     pairId: route.id,
-    rangeId,
+    rangeId: amountId,
     samplePoint: "scheduled_midpoint",
     sourceAsset: route.source.thorAsset,
     destinationAsset: route.destination.thorAsset,
@@ -130,5 +130,5 @@ export async function runSelectedBenchmark(routeId: string, rangeId: string) {
     maxRequestSkewMs,
   }).where(eq(benchmarkRuns.id, run.id));
 
-  return { runId: run.id, routeId, rangeId, quoteCount: quotes.length, completedAt };
+  return { runId: run.id, routeId, amountId, quoteCount: quotes.length, completedAt };
 }

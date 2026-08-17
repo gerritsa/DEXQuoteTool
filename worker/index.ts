@@ -1,4 +1,4 @@
-/** Cloudflare Worker entry point for the DEX Quote Tool. */
+/** Cloudflare Worker entry point for SwapRank. */
 import handler from "vinext/server/app-router-entry";
 import type { CollectorBundle } from "../lib/collector";
 

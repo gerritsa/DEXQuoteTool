@@ -11,13 +11,14 @@ async function render(path = "/") {
   }, { waitUntil() {}, passThroughOnException() {} });
 }
 
-test("server-renders the DEX Quote Tool dashboard", async () => {
+test("server-renders the SwapRank dashboard", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /<title>DEX Quote Tool/);
+  assert.match(html, /<title>SwapRank/);
   assert.match(html, /href="\/favicon\.svg"/);
   assert.match(html, /Best protocol by size/);
+  assert.match(html, /Switch to light mode/);
   assert.match(html, /\$500/);
   assert.doesNotMatch(html, />\$10</);
   assert.doesNotMatch(html, />\$100</);
@@ -43,6 +44,7 @@ test("server-renders the DEX Quote Tool dashboard", async () => {
   assert.match(html, /Latest quotes/);
   assert.doesNotMatch(html, />Exact input</);
   assert.doesNotMatch(html, /Run \$.*test/);
+  assert.doesNotMatch(html, /Real requests\. Exact sizes\. Explainable winners\./);
 });
 
 test("does not expose a public collector page", async () => {

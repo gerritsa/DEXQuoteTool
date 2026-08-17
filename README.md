@@ -1,6 +1,6 @@
-# DEX Quote Tool
+# SwapRank
 
-DEX Quote Tool compares synchronized cross-chain swap quotes from THORChain,
+SwapRank compares synchronized cross-chain swap quotes from THORChain,
 Maya Protocol, Chainflip, and NEAR Intents.
 
 The benchmark covers 20 fixed directed routes, seven USD input sizes, and two

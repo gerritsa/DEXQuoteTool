@@ -7,6 +7,7 @@ import { quoteSizes, type QuoteSize } from "../lib/quotes/sizes";
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 type ViewWindow = "now" | "7d" | "14d" | "30d";
 type ExecutionMode = "standard" | "optimized";
+type Theme = "dark" | "light";
 
 type Route = {
   id: string;
@@ -219,6 +220,7 @@ export default function Home() {
   const [trend, setTrend] = useState<TrendResponse | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
+  const [theme, setTheme] = useState<Theme>("dark");
   const activePartners = useMemo(() => partners.filter((partner) => enabledProtocols.includes(partner.id)), [enabledProtocols]);
   const protocolParam = enabledProtocols.join(",");
 
@@ -294,6 +296,13 @@ export default function Home() {
   }, [executionMode, protocolParam, selectedRoute, selectedSize.id, trendDays]);
 
   useEffect(() => {
+    const saved = window.localStorage.getItem("swaprank-theme");
+    const initial = saved === "light" ? "light" : "dark";
+    document.documentElement.dataset.theme = initial;
+    setTheme(initial);
+  }, []);
+
+  useEffect(() => {
     if (!requestsOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setRequestsOpen(false); };
     window.addEventListener("keydown", closeOnEscape);
@@ -325,14 +334,21 @@ export default function Home() {
     });
   }
 
+  function toggleTheme() {
+    const next: Theme = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    document.documentElement.dataset.theme = next;
+    window.localStorage.setItem("swaprank-theme", next);
+  }
+
   return <main className="app-shell" id="top">
     <header className="topbar">
-      <a className="brand" href="#top"><span className="brand-symbol"><i /><i /><i /></span><span>DEX Quote <span>Tool</span></span></a>
-      <nav aria-label="Primary navigation"><a className="active" href="#leaderboard">Leaderboard</a><a href="#analysis">Route analysis</a></nav>
+      <a className="brand" href="#top" aria-label="SwapRank home"><span className="brand-symbol"><i /><i /><i /></span><span>Swap<span>Rank</span></span></a>
+      <div className="top-actions"><nav aria-label="Primary navigation"><a className="active" href="#leaderboard">Leaderboard</a><a href="#analysis">Route analysis</a></nav><button className="theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}><span className="theme-glyph" aria-hidden="true" /><b>{theme === "dark" ? "Light" : "Dark"}</b></button></div>
     </header>
 
     <section className="route-section" id="leaderboard">
-      <div className="leaderboard-intro"><p className="eyebrow">Quote leaderboard</p><h2>Best protocol by size</h2></div>
+      <div className="leaderboard-intro"><div><p className="eyebrow">Quote leaderboard</p><h2>Best protocol by size</h2></div><span className="intro-mark" aria-hidden="true"><i /><i /><i /></span></div>
 
       <div className="filter-bar leaderboard-tools">
         <fieldset className="protocol-filter"><legend>Compare protocols</legend><div>{partners.map((partner) => <button key={partner.id} className={enabledProtocols.includes(partner.id) ? "selected" : ""} onClick={() => toggleProtocol(partner.id)} aria-pressed={enabledProtocols.includes(partner.id)} disabled={enabledProtocols.length <= 2 && enabledProtocols.includes(partner.id)}><PartnerMark id={partner.id} muted={!enabledProtocols.includes(partner.id)} /><span>{partner.name}</span></button>)}</div><small>Choose at least two. Results recalculate using only enabled protocols.</small></fieldset>
@@ -383,6 +399,6 @@ export default function Home() {
       </div>}
     </section>
 
-    <footer><b>DEX Quote Tool</b><span>Real requests. Exact sizes. Explainable winners.</span><a href="#top">Back to top ↑</a></footer>
+    <footer><a className="footer-brand" href="#top"><span className="brand-symbol"><i /><i /><i /></span><b>SwapRank</b></a><a href="#top">Back to top ↑</a></footer>
   </main>;
 }

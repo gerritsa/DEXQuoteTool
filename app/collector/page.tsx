@@ -7,8 +7,9 @@ type CollectorRoute = { id: string };
 type CollectorStatus = "idle" | "loading" | "running" | "complete" | "skipped" | "failed";
 
 const lockKey = "quote-tool-overnight-sweep";
-const lockDurationMs = 14 * 60 * 1000;
+const lockDurationMs = 30 * 60 * 1000;
 const concurrency = 8;
+const modes = ["standard", "optimized"] as const;
 
 export default function CollectorPage() {
   const [status, setStatus] = useState<CollectorStatus>("idle");
@@ -38,7 +39,7 @@ export default function CollectorPage() {
       const routePayload = await routeResponse.json() as { routes?: CollectorRoute[]; error?: string };
       if (!routeResponse.ok || !routePayload.routes) throw new Error(routePayload.error ?? "Route catalog unavailable");
 
-      const jobs = routePayload.routes.flatMap((route) => quoteSizes.map((size) => ({ routeId: route.id, amountId: size.id })));
+      const jobs = routePayload.routes.flatMap((route) => quoteSizes.flatMap((size) => modes.map((mode) => ({ routeId: route.id, amountId: size.id, mode }))));
       setTotal(jobs.length);
       setStatus("running");
       setMessage(`Collecting ${jobs.length} route-and-size batches with ${concurrency} parallel workers…`);
@@ -91,7 +92,7 @@ export default function CollectorPage() {
       <h1>{status === "complete" ? "Sweep complete" : status === "skipped" ? "Sweep already running" : status === "failed" ? "Sweep finished with errors" : "Full quote sweep"}</h1>
       <p>{message}</p>
       <div className="collector-progress" aria-label={`${percent}% complete`}><i style={{ width: `${percent}%` }} /></div>
-      <dl><div><dt>Progress</dt><dd>{completed} / {total || 240}</dd></div><div><dt>Failed batches</dt><dd>{failed}</dd></div><div><dt>Parallel workers</dt><dd>{concurrency}</dd></div></dl>
+      <dl><div><dt>Progress</dt><dd>{completed} / {total || 480}</dd></div><div><dt>Modes</dt><dd>Instant + time-sliced</dd></div><div><dt>Failed batches</dt><dd>{failed}</dd></div><div><dt>Parallel workers</dt><dd>{concurrency}</dd></div></dl>
       <button className="run-button" onClick={runSweep} disabled={status === "loading" || status === "running"}>{status === "loading" || status === "running" ? "Sweep running…" : "Run full sweep"}</button>
     </section>
   </main>;

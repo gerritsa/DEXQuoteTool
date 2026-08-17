@@ -5,6 +5,7 @@ import { quoteSizes, type QuoteSize } from "../lib/quotes/sizes";
 
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 type ViewWindow = "now" | "7d" | "14d" | "30d";
+type ExecutionMode = "standard" | "optimized";
 
 type Route = {
   id: string;
@@ -185,6 +186,7 @@ export default function Home() {
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("standard");
   const [viewWindow, setViewWindow] = useState<ViewWindow>("now");
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
   const [comparisonLoading, setComparisonLoading] = useState(true);
@@ -221,7 +223,7 @@ export default function Home() {
   useEffect(() => {
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) setComparisonLoading(true); });
-    fetch(`/api/comparison?window=${viewWindow}`, { signal: controller.signal })
+    fetch(`/api/comparison?${new URLSearchParams({ window: viewWindow, mode: executionMode })}`, { signal: controller.signal })
       .then(async (response) => {
         const data = await response.json() as ComparisonResponse;
         if (!response.ok) throw new Error(data.error ?? "Comparison data unavailable");
@@ -232,13 +234,13 @@ export default function Home() {
       })
       .finally(() => { if (!controller.signal.aborted) setComparisonLoading(false); });
     return () => controller.abort();
-  }, [comparisonRefresh, viewWindow]);
+  }, [comparisonRefresh, executionMode, viewWindow]);
 
   useEffect(() => {
     if (!selectedRoute) return;
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) setRunLoading(true); });
-    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id });
+    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode });
     fetch(`/api/runs?${params}`, { signal: controller.signal })
       .then(async (response) => {
         const data = await response.json() as RunResponse;
@@ -250,13 +252,13 @@ export default function Home() {
       })
       .finally(() => { if (!controller.signal.aborted) setRunLoading(false); });
     return () => controller.abort();
-  }, [selectedRoute, selectedSize.id]);
+  }, [executionMode, selectedRoute, selectedSize.id]);
 
   useEffect(() => {
     if (!selectedRoute) return;
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) { setTrendLoading(true); setTrendError(null); } });
-    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, days: String(trendDays) });
+    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode, days: String(trendDays) });
     fetch(`/api/trends?${params}`, { signal: controller.signal })
       .then(async (response) => {
         const data = await response.json() as TrendResponse;
@@ -268,7 +270,7 @@ export default function Home() {
       })
       .finally(() => { if (!controller.signal.aborted) setTrendLoading(false); });
     return () => controller.abort();
-  }, [comparisonRefresh, selectedRoute, selectedSize.id, trendDays]);
+  }, [comparisonRefresh, executionMode, selectedRoute, selectedSize.id, trendDays]);
 
   const cells = useMemo(() => new Map((comparison?.cells ?? []).map((cell) => [`${cell.pairId}::${cell.amountId}`, cell])), [comparison]);
   const winnerProtocol = useMemo(() => (runDetails?.quotes ?? [])
@@ -296,11 +298,11 @@ export default function Home() {
       const response = await fetch("/api/runs", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ routeId: selectedRoute.id, amountId: selectedSize.id }),
+        body: JSON.stringify({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode }),
       });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error ?? "Test run failed");
-      const latest = await fetch(`/api/runs?${new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id })}`);
+      const latest = await fetch(`/api/runs?${new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode })}`);
       const data = await latest.json() as RunResponse;
       if (!latest.ok) throw new Error(data.error ?? "Quote history unavailable");
       setRunDetails(data);
@@ -326,11 +328,12 @@ export default function Home() {
     <section className="route-section" id="leaderboard">
       <div className="section-heading">
         <div><p className="eyebrow">Quote leaderboard</p><h2>Best protocol by size</h2></div>
-        <p>{viewWindow === "now" ? "Now uses the latest synchronized batch and shows the winner’s advantage over second place in basis points." : `${viewWindow.slice(0, -1)} days ranks protocols by their average quote edge versus each synchronized batch median. At least 80% coverage is required.`}</p>
+        <p>{viewWindow === "now" ? `Now uses the latest synchronized ${executionMode === "standard" ? "instant" : "time-sliced"} batch and shows the winner’s advantage over second place in basis points.` : `${viewWindow.slice(0, -1)} days ranks ${executionMode === "standard" ? "instant" : "time-sliced"} quotes by their average edge versus each synchronized batch median. At least 80% coverage is required.`}</p>
       </div>
 
       <div className="filter-bar leaderboard-tools">
         <label><span>Search 30 fixed routes</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="BTC, ETH, USDC…" /></label>
+        <fieldset><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Instant</button><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Time-sliced</button></div></fieldset>
         <fieldset><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Now" : window.replace("d", " days")}</button>)}</div></fieldset>
       </div>
 
@@ -344,13 +347,13 @@ export default function Home() {
         </table>
         {!loading && catalog?.routes.length === 0 && <div className="empty-table">No fixed routes match this search.</div>}
       </div>}
-      <div className="pagination"><span>{catalog?.counts?.filteredRoutes ?? 0} of 30 routes shown</span><b>Direction is treated separately · instant quote mode</b></div>
+      <div className="pagination"><span>{catalog?.counts?.filteredRoutes ?? 0} of 30 routes shown</span><b>Direction is treated separately · {executionMode === "standard" ? "instant" : "streaming / DCA"} mode</b></div>
     </section>
 
     <section className="route-detail" id="requests">
       <div className="detail-header">
-        <div><p className="eyebrow">Latest synchronized batch</p>{selectedRoute ? <h2 className="detail-route"><span>{selectedRoute.source.symbol}<small>{selectedRoute.source.chain}</small></span><i>→</i><span>{selectedRoute.destination.symbol}<small>{selectedRoute.destination.chain}</small></span></h2> : <h2>Select a route</h2>}</div>
-        {selectedRoute && <div className="detail-actions"><div className="coverage-summary"><span>Quote partners</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id)} />)}</div></div><button className="run-button" onClick={runTestQuote} disabled={runSubmitting || runLoading}>{runSubmitting ? "Running four quotes…" : `Run ${selectedSize.label} test`}</button></div>}
+        <div><p className="eyebrow">Latest synchronized {executionMode === "standard" ? "instant" : "time-sliced"} batch</p>{selectedRoute ? <h2 className="detail-route"><span>{selectedRoute.source.symbol}<small>{selectedRoute.source.chain}</small></span><i>→</i><span>{selectedRoute.destination.symbol}<small>{selectedRoute.destination.chain}</small></span></h2> : <h2>Select a route</h2>}</div>
+        {selectedRoute && <div className="detail-actions"><div className="coverage-summary"><span>Quote partners</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id)} />)}</div></div><button className="run-button" onClick={runTestQuote} disabled={runSubmitting || runLoading}>{runSubmitting ? "Running four quotes…" : `Run ${selectedSize.label} ${executionMode === "standard" ? "instant" : "time-sliced"} test`}</button></div>}
       </div>
 
       <div className="range-layout">
@@ -371,7 +374,7 @@ export default function Home() {
 
       <section className="trend-card" aria-labelledby="trend-title">
         <header className="trend-header">
-          <div><p className="eyebrow">Historical quote edge · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} leads over {trendDays} days</> : <>Performance over {trendDays} days</>}</h3><p>{trend?.leader ? `${formatBps(trend.leader.averageEdgeBps)} average edge · ${Math.round(trend.leader.winRate * 100)}% wins · ${Math.round(trend.leader.availability * 100)}% coverage · ${trend.leader.sampleCount} synchronized checks` : "A period leader appears after enough synchronized batches reach 80% quote coverage."}</p></div>
+          <div><p className="eyebrow">Historical {executionMode === "standard" ? "instant" : "time-sliced"} quote edge · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} leads over {trendDays} days</> : <>Performance over {trendDays} days</>}</h3><p>{trend?.leader ? `${formatBps(trend.leader.averageEdgeBps)} average edge · ${Math.round(trend.leader.winRate * 100)}% wins · ${Math.round(trend.leader.availability * 100)}% coverage · ${trend.leader.sampleCount} synchronized checks` : "A period leader appears after enough synchronized batches reach 80% quote coverage."}</p></div>
           <div className="trend-controls">
             <fieldset><legend>Period</legend><div className="segmented light">{([7, 14, 30] as const).map((days) => <button key={days} className={trendDays === days ? "selected" : ""} onClick={() => setTrendDays(days)}>{days}d</button>)}</div></fieldset>
           </div>

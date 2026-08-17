@@ -2,6 +2,11 @@ import { and, desc, eq } from "drizzle-orm";
 import { ensureBenchmarkSchema, getDb } from "../../../db";
 import { benchmarkRuns, protocolQuotes } from "../../../db/schema";
 import { runSelectedBenchmark } from "../../../lib/quotes/run";
+import type { ExecutionMode } from "../../../lib/quotes/types";
+
+function executionMode(value: unknown): ExecutionMode {
+  return value === "optimized" ? "optimized" : "standard";
+}
 
 export async function GET(request: Request) {
   try {
@@ -9,11 +14,12 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const routeId = url.searchParams.get("routeId")?.trim();
     const amountId = (url.searchParams.get("amountId") ?? url.searchParams.get("rangeId"))?.trim();
+    const mode = executionMode(url.searchParams.get("mode"));
     if (!routeId || !amountId) return Response.json({ error: "routeId and amountId are required" }, { status: 400 });
 
     const db = getDb();
     const [run] = await db.select().from(benchmarkRuns)
-      .where(and(eq(benchmarkRuns.pairId, routeId), eq(benchmarkRuns.rangeId, amountId)))
+      .where(and(eq(benchmarkRuns.pairId, routeId), eq(benchmarkRuns.rangeId, amountId), eq(benchmarkRuns.mode, mode)))
       .orderBy(desc(benchmarkRuns.createdAt), desc(benchmarkRuns.id)).limit(1);
     if (!run) return Response.json({ run: null, quotes: [] });
 
@@ -32,11 +38,11 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json() as { routeId?: string; amountId?: string; rangeId?: string };
+    const body = await request.json() as { routeId?: string; amountId?: string; rangeId?: string; mode?: string };
     const routeId = body.routeId?.trim();
     const amountId = (body.amountId ?? body.rangeId)?.trim();
     if (!routeId || !amountId) return Response.json({ error: "routeId and amountId are required" }, { status: 400 });
-    const result = await runSelectedBenchmark(routeId, amountId);
+    const result = await runSelectedBenchmark(routeId, amountId, executionMode(body.mode));
     return Response.json(result, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Test run failed";

@@ -45,7 +45,7 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
     const responseLatencyMs = Date.now() - started;
     const quotes = Array.isArray(rawResponse) ? rawResponse : [];
     const requestedType = request.mode === "optimized" ? "DCA" : "REGULAR";
-    const quote = quotes.find((candidate) => candidate.type === requestedType) ?? quotes[0];
+    const quote = quotes.find((candidate) => candidate.type === requestedType);
 
     if (!response.ok || !quote || typeof quote.egressAmount !== "string") {
       return {

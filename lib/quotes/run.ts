@@ -6,8 +6,9 @@ import { getCatalog, topThorRoutes, type CatalogAsset, type PartnerId } from "..
 import { getChainflipQuote } from "./adapters/chainflip";
 import { getNearIntentsQuote } from "./adapters/near-intents";
 import { getPoolProtocolQuote } from "./adapters/pool-protocol";
+import { strategyFor } from "./protocols";
 import { quoteSizes } from "./sizes";
-import type { BenchmarkRequest, ChainAsset, NormalizedQuote, ProtocolId } from "./types";
+import type { BenchmarkRequest, ChainAsset, ExecutionMode, NormalizedQuote, ProtocolId } from "./types";
 
 const allProtocols: ProtocolId[] = ["thorchain", "chainflip", "near-intents", "maya"];
 
@@ -40,22 +41,21 @@ function usdToBaseUnits(amountUsd: number, priceUsd: number, decimals: number) {
   return (usd * (10n ** BigInt(decimals)) / price).toString();
 }
 
-function unavailable(protocol: PartnerId, requestStartedAt: string): NormalizedQuote {
-  const strategies = { thorchain: "single", chainflip: "regular", "near-intents": "solver", maya: "single" } as const;
-  return { protocol, strategy: strategies[protocol], status: "unavailable", requestStartedAt, errorCode: "UNSUPPORTED_PAIR", errorMessage: "This protocol does not support the selected route.", rawResponse: null };
+function unavailable(protocol: PartnerId, requestStartedAt: string, mode: ExecutionMode): NormalizedQuote {
+  return { protocol, strategy: strategyFor(protocol, { mode }), status: "unavailable", requestStartedAt, errorCode: "UNSUPPORTED_PAIR", errorMessage: "This protocol does not support the selected route.", rawResponse: null };
 }
 
 async function requestQuote(protocol: PartnerId, request: BenchmarkRequest, supported: boolean, apiKey?: string) {
-  if (!supported) return unavailable(protocol, new Date().toISOString());
+  if (!supported) return unavailable(protocol, new Date().toISOString(), request.mode);
   if (protocol === "thorchain" || protocol === "maya") return getPoolProtocolQuote(protocol, request);
   if (protocol === "chainflip") return getChainflipQuote(request);
   if (!apiKey) {
-    return { ...unavailable(protocol, new Date().toISOString()), status: "error" as const, errorCode: "MISSING_API_KEY", errorMessage: "NEAR Intents API key is not configured." };
+    return { ...unavailable(protocol, new Date().toISOString(), request.mode), status: "error" as const, errorCode: "MISSING_API_KEY", errorMessage: "NEAR Intents API key is not configured." };
   }
   return getNearIntentsQuote(request, apiKey);
 }
 
-export async function runSelectedBenchmark(routeId: string, amountId: string) {
+export async function runSelectedBenchmark(routeId: string, amountId: string, mode: ExecutionMode = "standard") {
   await ensureBenchmarkSchema();
   const catalog = await getCatalog();
   const route = topThorRoutes(catalog.assets).find((candidate) => candidate.id === routeId);
@@ -74,7 +74,7 @@ export async function runSelectedBenchmark(routeId: string, amountId: string) {
     sourceAmountBaseUnits: usdToBaseUnits(sourceAmountUsd, route.source.priceUsd, source.decimals),
     sourceAmountUsd,
     sourcePriceUsd: route.source.priceUsd,
-    mode: "standard",
+    mode,
     recipient: addressByChain[destination.chain] ?? "intents.near",
     refundAddress: addressByChain[source.chain] ?? "intents.near",
     slippageToleranceBps: 100,
@@ -91,7 +91,7 @@ export async function runSelectedBenchmark(routeId: string, amountId: string) {
     sourceAmountBaseUnits: request.sourceAmountBaseUnits,
     sourceAmountUsd,
     sourcePriceUsd: route.source.priceUsd,
-    mode: "standard",
+    mode,
     status: "pending",
     initiatedAt,
   }).returning({ id: benchmarkRuns.id });
@@ -130,5 +130,5 @@ export async function runSelectedBenchmark(routeId: string, amountId: string) {
     maxRequestSkewMs,
   }).where(eq(benchmarkRuns.id, run.id));
 
-  return { runId: run.id, routeId, amountId, quoteCount: quotes.length, completedAt };
+  return { runId: run.id, routeId, amountId, mode, quoteCount: quotes.length, completedAt };
 }

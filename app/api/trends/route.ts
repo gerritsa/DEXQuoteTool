@@ -1,6 +1,7 @@
 import { ensureBenchmarkSchema, getD1 } from "../../../db";
 
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
+type ExecutionMode = "standard" | "optimized";
 type ScoredRow = { runId: number; initiatedAt: string; protocol: PartnerId; output: number; medianOutput: number; bestOutput: number; thorOutput: number | null };
 const protocols: PartnerId[] = ["thorchain", "chainflip", "near-intents", "maya"];
 
@@ -19,6 +20,7 @@ export async function GET(request: Request) {
     const amountId = url.searchParams.get("amountId")?.trim();
     const requestedDays = Number(url.searchParams.get("days") ?? 7);
     const days = [7, 14, 30].includes(requestedDays) ? requestedDays : 7;
+    const mode: ExecutionMode = url.searchParams.get("mode") === "optimized" ? "optimized" : "standard";
     if (!routeId || !amountId) return Response.json({ error: "routeId and amountId are required" }, { status: 400 });
 
     const endAt = Date.now();
@@ -31,8 +33,8 @@ export async function GET(request: Request) {
           CAST(q.expected_output_formatted AS REAL) AS output
         FROM benchmark_runs r
         JOIN protocol_quotes q ON q.run_id = r.id
-        WHERE r.mode = 'standard' AND r.pair_id = ?1 AND r.range_id = ?2
-          AND r.initiated_at >= ?3 AND q.status = 'quoted'
+        WHERE r.mode = ?1 AND r.pair_id = ?2 AND r.range_id = ?3
+          AND r.initiated_at >= ?4 AND q.status = 'quoted'
           AND CAST(q.expected_output_formatted AS REAL) > 0
       ), ranked AS (
         SELECT *, ROW_NUMBER() OVER (PARTITION BY run_id ORDER BY output) AS output_rank,
@@ -54,7 +56,7 @@ export async function GET(request: Request) {
         ranked.best_output AS bestOutput, ranked.thor_output AS thorOutput
       FROM ranked JOIN medians ON medians.run_id = ranked.run_id
       ORDER BY ranked.initiated_at, ranked.protocol
-    `).bind(routeId, amountId, cutoff).all<ScoredRow>();
+    `).bind(mode, routeId, amountId, cutoff).all<ScoredRow>();
 
     const rows = result.results.map((row) => ({
       ...row,
@@ -98,7 +100,7 @@ export async function GET(request: Request) {
     });
 
     return Response.json({
-      routeId, amountId, days, baseline: "batch_median",
+      routeId, amountId, mode, days, baseline: "batch_median",
       comparisonRule: "Every synchronized batch is compared with its median output; results within 2 bps of the best share the win.",
       minimumAvailability: 0.8, bucketMs,
       startAt: new Date(startAt).toISOString(), endAt: new Date(endAt).toISOString(),

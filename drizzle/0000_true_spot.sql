@@ -1,7 +1,9 @@
 CREATE TABLE IF NOT EXISTS `benchmark_runs` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`cycle_id` integer,
 	`pair_id` text NOT NULL,
-	`amount_id` text NOT NULL,
+	`range_id` text DEFAULT 'unassigned' NOT NULL,
+	`sample_point` text DEFAULT 'scheduled_midpoint' NOT NULL,
 	`source_asset` text NOT NULL,
 	`destination_asset` text NOT NULL,
 	`source_amount_base_units` text NOT NULL,
@@ -12,11 +14,13 @@ CREATE TABLE IF NOT EXISTS `benchmark_runs` (
 	`initiated_at` text NOT NULL,
 	`completed_at` text,
 	`max_request_skew_ms` integer,
-	`sweep_id` text,
-	`bundle_index` integer,
 	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 --> statement-breakpoint
+ALTER TABLE `benchmark_runs` ADD `amount_id` text DEFAULT 'unassigned' NOT NULL;--> statement-breakpoint
+UPDATE `benchmark_runs` SET `amount_id` = `range_id` WHERE `amount_id` = 'unassigned';--> statement-breakpoint
+ALTER TABLE `benchmark_runs` ADD `sweep_id` text;--> statement-breakpoint
+ALTER TABLE `benchmark_runs` ADD `bundle_index` integer;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS `idx_benchmark_runs_pair_created` ON `benchmark_runs` (`pair_id`,`created_at`);--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS `idx_benchmark_runs_pair_amount_created` ON `benchmark_runs` (`pair_id`,`amount_id`,`created_at`);--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_benchmark_runs_sweep_job` ON `benchmark_runs` (`sweep_id`,`pair_id`,`amount_id`,`mode`);--> statement-breakpoint

@@ -110,7 +110,7 @@ export const dailyComparisonMetrics = sqliteTable("daily_comparison_metrics", {
   successes: integer("successes").notNull(),
   comparableSamples: integer("comparable_samples").notNull(),
   edgeSumBps: real("edge_sum_bps").notNull().default(0),
-  wins: integer("wins").notNull(),
+  wins: real("wins").notNull(),
   latestAt: text("latest_at").notNull(),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [

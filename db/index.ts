@@ -115,7 +115,7 @@ export function ensureBenchmarkSchema() {
         successes INTEGER NOT NULL,
         comparable_samples INTEGER NOT NULL,
         edge_sum_bps REAL DEFAULT 0 NOT NULL,
-        wins INTEGER NOT NULL,
+        wins REAL NOT NULL,
         latest_at TEXT NOT NULL,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
       )`),

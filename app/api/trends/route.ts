@@ -2,7 +2,7 @@ import { ensureBenchmarkSchema, getD1 } from "../../../db";
 
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 type ExecutionMode = "standard" | "optimized";
-type ScoredRow = { runId: number; initiatedAt: string; protocol: PartnerId; output: number; medianOutput: number; bestOutput: number; thorOutput: number | null };
+type ScoredRow = { runId: number; initiatedAt: string; protocol: PartnerId; output: number; medianOutput: number; bestOutput: number; winnerCount: number };
 const protocols: PartnerId[] = ["near-intents", "chainflip", "thorchain", "maya"];
 
 function median(values: number[]) {
@@ -36,15 +36,20 @@ export async function GET(request: Request) {
           CAST(q.expected_output_formatted AS REAL) AS output
         FROM benchmark_runs r
         JOIN protocol_quotes q ON q.run_id = r.id
-        WHERE r.mode = ? AND r.pair_id = ? AND r.range_id = ?
+        WHERE r.mode = ? AND r.pair_id = ? AND r.amount_id = ?
           AND r.initiated_at >= ? AND q.protocol IN (${protocolPlaceholders}) AND q.status = 'quoted'
           AND CAST(q.expected_output_formatted AS REAL) > 0
       ), ranked AS (
         SELECT *, ROW_NUMBER() OVER (PARTITION BY run_id ORDER BY output) AS output_rank,
           COUNT(*) OVER (PARTITION BY run_id) AS valid_count,
-          MAX(output) OVER (PARTITION BY run_id) AS best_output,
-          MAX(CASE WHEN protocol = 'thorchain' THEN output END) OVER (PARTITION BY run_id) AS thor_output
+          MAX(output) OVER (PARTITION BY run_id) AS best_output
         FROM valid
+      ), run_stats AS (
+        SELECT run_id, MAX(best_output) AS best_output,
+          SUM(CASE WHEN output = best_output THEN 1 ELSE 0 END) AS winner_count
+        FROM ranked
+        WHERE valid_count >= 2
+        GROUP BY run_id
       ), medians AS (
         SELECT run_id, AVG(output) AS median_output
         FROM ranked
@@ -56,8 +61,10 @@ export async function GET(request: Request) {
       )
       SELECT ranked.run_id AS runId, ranked.initiated_at AS initiatedAt, ranked.protocol AS protocol,
         ranked.output AS output, medians.median_output AS medianOutput,
-        ranked.best_output AS bestOutput, ranked.thor_output AS thorOutput
-      FROM ranked JOIN medians ON medians.run_id = ranked.run_id
+        run_stats.best_output AS bestOutput, run_stats.winner_count AS winnerCount
+      FROM ranked
+      JOIN medians ON medians.run_id = ranked.run_id
+      JOIN run_stats ON run_stats.run_id = ranked.run_id
       ORDER BY ranked.initiated_at, ranked.protocol
     `).bind(mode, routeId, amountId, cutoff, ...selectedProtocols).all<ScoredRow>();
 
@@ -65,8 +72,7 @@ export async function GET(request: Request) {
       ...row,
       timestamp: new Date(row.initiatedAt).getTime(),
       edgeBps: ((Number(row.output) / Number(row.medianOutput)) - 1) * 10_000,
-      vsThorBps: row.thorOutput && row.thorOutput > 0 ? ((Number(row.output) / Number(row.thorOutput)) - 1) * 10_000 : null,
-      won: Number(row.output) === Number(row.bestOutput),
+      winCredit: Number(row.output) === Number(row.bestOutput) ? 1 / Number(row.winnerCount) : 0,
     }));
     const comparableRuns = new Set(rows.map((row) => row.runId)).size;
     const summary = selectedProtocols.map((protocol) => {
@@ -76,13 +82,15 @@ export async function GET(request: Request) {
         protocol,
         averageEdgeBps: edges.length ? edges.reduce((sum, value) => sum + value, 0) / edges.length : null,
         medianEdgeBps: median(edges),
-        winRate: protocolRows.length ? protocolRows.filter((row) => row.won).length / protocolRows.length : null,
+        winRate: comparableRuns ? protocolRows.reduce((sum, row) => sum + row.winCredit, 0) / comparableRuns : null,
         sampleCount: protocolRows.length,
         availability: comparableRuns ? protocolRows.length / comparableRuns : 0,
       };
     });
-    const leader = [...summary].filter((item) => item.sampleCount > 0 && item.availability >= 0.8 && item.averageEdgeBps != null)
-      .sort((a, b) => Number(b.averageEdgeBps) - Number(a.averageEdgeBps))[0] ?? null;
+    const leader = [...summary].filter((item) => item.sampleCount > 0 && item.winRate != null)
+      .sort((a, b) => Number(b.winRate) - Number(a.winRate)
+        || Number(b.averageEdgeBps ?? -Infinity) - Number(a.averageEdgeBps ?? -Infinity)
+        || b.availability - a.availability)[0] ?? null;
 
     const bucketStarts: number[] = [];
     for (let bucket = Math.floor(startAt / bucketMs) * bucketMs; bucket <= endAt; bucket += bucketMs) bucketStarts.push(bucket);
@@ -90,22 +98,22 @@ export async function GET(request: Request) {
       const bucketRows = rows.filter((row) => Math.floor(row.timestamp / bucketMs) * bucketMs === timestamp);
       const points = selectedProtocols.map((protocol) => {
         const protocolRows = bucketRows.filter((row) => row.protocol === protocol);
+        const bucketRuns = new Set(bucketRows.map((row) => row.runId)).size;
         return {
           protocol,
           edgeBps: median(protocolRows.map((row) => row.edgeBps)),
-          vsThorBps: median(protocolRows.flatMap((row) => row.vsThorBps == null ? [] : [row.vsThorBps])),
           sampleCount: protocolRows.length,
-          winRate: protocolRows.length ? protocolRows.filter((row) => row.won).length / protocolRows.length : null,
+          winRate: bucketRuns ? protocolRows.reduce((sum, row) => sum + row.winCredit, 0) / bucketRuns : null,
         };
       });
-      const winner = [...points].filter((point) => point.edgeBps != null).sort((a, b) => Number(b.edgeBps) - Number(a.edgeBps))[0]?.protocol ?? null;
-      return { timestamp, winner, points };
+      return { timestamp, points };
     });
 
     return Response.json({
       routeId, amountId, mode, protocols: selectedProtocols, days, baseline: "batch_median",
-      comparisonRule: "Every synchronized batch is compared with its median output; only exactly equal best outputs share the win.",
-      minimumAvailability: 0.8, bucketMs,
+      ranking: "overall_win_share",
+      comparisonRule: "The period leader has the highest share of comparable batch wins. Unavailable quotes cannot win, and exact ties split the win equally.",
+      bucketMs,
       startAt: new Date(startAt).toISOString(), endAt: new Date(endAt).toISOString(),
       comparableRuns, leader, summary, buckets,
     }, { headers: { "cache-control": "private, max-age=60" } });

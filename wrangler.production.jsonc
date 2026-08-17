@@ -1,0 +1,49 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dex-quote-tool",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-08-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "no_bundle": true,
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "dist/client"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "dex-quote-tool",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ARCHIVE",
+      "bucket_name": "dex-quote-tool-archive"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "BENCHMARK_QUEUE",
+        "queue": "dex-quote-tool-jobs"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "dex-quote-tool-jobs",
+        "max_batch_size": 1,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "dead_letter_queue": "dex-quote-tool-dead-letter",
+        "max_concurrency": 4
+      }
+    ]
+  },
+  "triggers": {
+    "crons": ["*/30 * * * *", "15 0 * * *"]
+  },
+  "observability": {
+    "enabled": true
+  }
+}

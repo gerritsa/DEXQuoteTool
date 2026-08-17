@@ -1,27 +1,10 @@
 import { sql } from "drizzle-orm";
-import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
-
-export const benchmarkCycles = sqliteTable("benchmark_cycles", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  scope: text("scope").notNull().default("thorchain_top_20"),
-  rankingWindow: text("ranking_window").notNull().default("24h_pool_activity"),
-  status: text("status", { enum: ["pending", "running", "complete", "partial", "failed"] }).notNull().default("pending"),
-  routeCount: integer("route_count").notNull().default(20),
-  requestCount: integer("request_count").notNull().default(0),
-  successfulQuoteCount: integer("successful_quote_count").notNull().default(0),
-  startedAt: text("started_at").notNull(),
-  completedAt: text("completed_at"),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-}, (table) => [
-  index("idx_benchmark_cycles_created").on(table.createdAt),
-]);
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const benchmarkRuns = sqliteTable("benchmark_runs", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  cycleId: integer("cycle_id").references(() => benchmarkCycles.id),
   pairId: text("pair_id").notNull(),
-  rangeId: text("range_id").notNull().default("unassigned"),
-  samplePoint: text("sample_point", { enum: ["scheduled_midpoint", "low", "midpoint", "high", "crossover"] }).notNull().default("scheduled_midpoint"),
+  amountId: text("amount_id").notNull(),
   sourceAsset: text("source_asset").notNull(),
   destinationAsset: text("destination_asset").notNull(),
   sourceAmountBaseUnits: text("source_amount_base_units").notNull(),
@@ -32,11 +15,13 @@ export const benchmarkRuns = sqliteTable("benchmark_runs", {
   initiatedAt: text("initiated_at").notNull(),
   completedAt: text("completed_at"),
   maxRequestSkewMs: integer("max_request_skew_ms"),
+  sweepId: text("sweep_id"),
+  bundleIndex: integer("bundle_index"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
   index("idx_benchmark_runs_pair_created").on(table.pairId, table.createdAt),
-  index("idx_benchmark_runs_pair_range_created").on(table.pairId, table.rangeId, table.createdAt),
-  index("idx_benchmark_runs_cycle").on(table.cycleId),
+  index("idx_benchmark_runs_pair_amount_created").on(table.pairId, table.amountId, table.createdAt),
+  uniqueIndex("idx_benchmark_runs_sweep_job").on(table.sweepId, table.pairId, table.amountId, table.mode),
 ]);
 
 export const protocolQuotes = sqliteTable("protocol_quotes", {
@@ -52,9 +37,7 @@ export const protocolQuotes = sqliteTable("protocol_quotes", {
   requestStartedAt: text("request_started_at").notNull(),
   responseReceivedAt: text("response_received_at"),
   quoteExpiresAt: text("quote_expires_at"),
-  rawResponseJson: text("raw_response_json"),
   requestUrl: text("request_url"),
-  requestPayloadJson: text("request_payload_json"),
   responseHttpStatus: integer("response_http_status"),
   responseLatencyMs: integer("response_latency_ms"),
   errorCode: text("error_code"),
@@ -62,4 +45,75 @@ export const protocolQuotes = sqliteTable("protocol_quotes", {
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
   index("idx_protocol_quotes_run_protocol").on(table.runId, table.protocol),
+]);
+
+export const collectorSweeps = sqliteTable("collector_sweeps", {
+  id: text("id").primaryKey(),
+  scheduledFor: text("scheduled_for").notNull(),
+  status: text("status", { enum: ["pending", "running", "complete", "partial", "failed"] }).notNull().default("pending"),
+  routeCount: integer("route_count").notNull(),
+  jobCount: integer("job_count").notNull(),
+  bundleCount: integer("bundle_count").notNull(),
+  completedJobs: integer("completed_jobs").notNull().default(0),
+  failedJobs: integer("failed_jobs").notNull().default(0),
+  startedAt: text("started_at").notNull(),
+  completedAt: text("completed_at"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_collector_sweeps_scheduled").on(table.scheduledFor),
+]);
+
+export const collectorBundles = sqliteTable("collector_bundles", {
+  id: text("id").primaryKey(),
+  sweepId: text("sweep_id").notNull().references(() => collectorSweeps.id),
+  bundleIndex: integer("bundle_index").notNull(),
+  status: text("status", { enum: ["pending", "running", "complete", "partial", "failed"] }).notNull().default("pending"),
+  jobCount: integer("job_count").notNull(),
+  completedJobs: integer("completed_jobs").notNull().default(0),
+  failedJobs: integer("failed_jobs").notNull().default(0),
+  attempts: integer("attempts").notNull().default(0),
+  normalizedArchiveKey: text("normalized_archive_key"),
+  rawArchiveKey: text("raw_archive_key"),
+  startedAt: text("started_at"),
+  completedAt: text("completed_at"),
+  errorMessage: text("error_message"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_collector_bundles_sweep").on(table.sweepId, table.bundleIndex),
+]);
+
+export const latestQuotePayloads = sqliteTable("latest_quote_payloads", {
+  id: text("id").primaryKey(),
+  runId: integer("run_id").notNull().references(() => benchmarkRuns.id),
+  pairId: text("pair_id").notNull(),
+  amountId: text("amount_id").notNull(),
+  mode: text("mode", { enum: ["standard", "optimized"] }).notNull(),
+  protocol: text("protocol", { enum: ["thorchain", "chainflip", "near-intents", "maya"] }).notNull(),
+  requestUrl: text("request_url"),
+  requestPayloadJson: text("request_payload_json"),
+  rawResponseJson: text("raw_response_json"),
+  errorMessage: text("error_message"),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  index("idx_latest_quote_payloads_lookup").on(table.pairId, table.amountId, table.mode),
+]);
+
+export const dailyComparisonMetrics = sqliteTable("daily_comparison_metrics", {
+  id: text("id").primaryKey(),
+  day: text("day").notNull(),
+  pairId: text("pair_id").notNull(),
+  amountId: text("amount_id").notNull(),
+  mode: text("mode", { enum: ["standard", "optimized"] }).notNull(),
+  protocolMask: text("protocol_mask").notNull(),
+  protocol: text("protocol", { enum: ["thorchain", "chainflip", "near-intents", "maya"] }).notNull(),
+  attempts: integer("attempts").notNull(),
+  successes: integer("successes").notNull(),
+  comparableSamples: integer("comparable_samples").notNull(),
+  edgeSumBps: real("edge_sum_bps").notNull().default(0),
+  wins: integer("wins").notNull(),
+  latestAt: text("latest_at").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_daily_metrics_lookup").on(table.pairId, table.amountId, table.mode, table.day),
+  index("idx_daily_metrics_day_mask").on(table.day, table.protocolMask),
 ]);

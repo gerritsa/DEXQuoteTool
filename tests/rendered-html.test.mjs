@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function render(path = "/") {
@@ -16,11 +17,6 @@ test("server-renders the DEX Quote Tool dashboard", async () => {
   const html = await response.text();
   assert.match(html, /<title>DEX Quote Tool/);
   assert.match(html, /href="\/favicon\.svg"/);
-  assert.doesNotMatch(html, /See who wins/);
-  assert.doesNotMatch(html, /Cross-chain quote benchmark/);
-  assert.doesNotMatch(html, /Thirty fixed THORChain routes/);
-  assert.doesNotMatch(html, /Now uses the latest synchronized/);
-  assert.doesNotMatch(html, /Real quotes only/);
   assert.match(html, /Best protocol by size/);
   assert.match(html, /\$500/);
   assert.doesNotMatch(html, />\$10</);
@@ -30,7 +26,8 @@ test("server-renders the DEX Quote Tool dashboard", async () => {
   assert.match(html, /14 days/);
   assert.match(html, /30 days/);
   assert.match(html, /Latest check/);
-  assert.match(html, /Batch median/);
+  assert.match(html, /Win share ranks the leader/);
+  assert.match(html, /exact ties split it equally/);
   assert.match(html, /Execution mode/);
   assert.match(html, /Compare protocols/);
   assert.match(html, /Standard swap/);
@@ -42,29 +39,23 @@ test("server-renders the DEX Quote Tool dashboard", async () => {
   assert.match(html, /\/partners\/maya\.svg/);
   assert.match(html, /MAYA PROTOCOL/);
   assert.match(html, /THORCHAIN[\s\S]*MAYA PROTOCOL[\s\S]*CHAINFLIP[\s\S]*NEAR/);
-  assert.doesNotMatch(html, /Search 30 fixed routes/);
-  assert.doesNotMatch(html, /30 fixed routes shown/);
-  assert.doesNotMatch(html, /Direction is treated separately/);
-  assert.doesNotMatch(html, /colour strip/);
-  assert.doesNotMatch(html, /Route set frozen/);
-  assert.doesNotMatch(html, /THORChain reference/);
-  assert.doesNotMatch(html, /Metadata endpoints/);
-  assert.doesNotMatch(html, /Partner status/);
   assert.match(html, /Route analysis/);
   assert.match(html, /Latest quotes/);
   assert.doesNotMatch(html, />Exact input</);
   assert.doesNotMatch(html, /Run \$.*test/);
-  assert.doesNotMatch(html, /A complete audit trail/);
-  assert.doesNotMatch(html, /THORChain assets/);
-  assert.doesNotMatch(html, /Illustrative preview values/);
-  assert.doesNotMatch(html, /codex-preview/);
-  assert.doesNotMatch(html, /react-loading-skeleton/);
 });
 
-test("server-renders the overnight collector", async () => {
+test("does not expose a public collector page", async () => {
   const response = await render("/collector");
-  assert.equal(response.status, 200);
-  const html = await response.text();
-  assert.match(html, /Full quote sweep/);
-  assert.match(html, /Run full sweep/);
+  assert.equal(response.status, 404);
+});
+
+test("build includes the production collection bindings", async () => {
+  const config = JSON.parse(await readFile(new URL("../dist/server/wrangler.json", import.meta.url), "utf8"));
+  assert.deepEqual(config.triggers.crons, ["*/30 * * * *", "15 0 * * *"]);
+  assert.equal(config.r2_buckets[0].binding, "ARCHIVE");
+  assert.equal(config.queues.producers[0].binding, "BENCHMARK_QUEUE");
+  assert.equal(config.queues.consumers[0].max_batch_size, 1);
+  assert.equal(config.queues.consumers[0].max_concurrency, 4);
+  assert.equal(config.queues.consumers[0].dead_letter_queue, "dex-quote-tool-dead-letter");
 });

@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element -- small static logos are served directly by the Worker */
 
 import { useEffect, useMemo, useState } from "react";
 import { quoteSizes, type QuoteSize } from "../lib/quotes/sizes";
@@ -15,11 +16,7 @@ type Route = {
 };
 
 type CatalogResponse = {
-  generatedAt: string;
-  statuses: Record<PartnerId, { available: boolean; error?: string }>;
-  counts: { filteredRoutes: number; scheduledRoutes: number };
   routes: Route[];
-  routeSet?: { id: string; selectedAt: string; metric: string; description: string };
   error?: string;
 };
 
@@ -35,13 +32,11 @@ type ComparisonCell = {
   winRate?: number | null;
   sampleCount?: number;
   availability?: number | null;
-  coverageQualified?: boolean;
 };
 
 type TrendPoint = {
   protocol: PartnerId;
   edgeBps: number | null;
-  vsThorBps: number | null;
   sampleCount: number;
   winRate: number | null;
 };
@@ -54,7 +49,7 @@ type TrendResponse = {
   comparableRuns: number;
   leader: null | { protocol: PartnerId; averageEdgeBps: number; medianEdgeBps: number; winRate: number; sampleCount: number; availability: number };
   summary: Array<{ protocol: PartnerId; averageEdgeBps: number | null; medianEdgeBps: number | null; winRate: number | null; sampleCount: number; availability: number }>;
-  buckets: Array<{ timestamp: number; winner: PartnerId | null; points: TrendPoint[] }>;
+  buckets: Array<{ timestamp: number; points: TrendPoint[] }>;
   error?: string;
 };
 
@@ -130,10 +125,10 @@ function formatBps(value?: number | null) {
 }
 
 function ComparisonResult({ cell, window }: { cell?: ComparisonCell; window: ViewWindow }) {
-  if (!cell?.leader) return <span className="cell-empty"><b>—</b><small>{cell?.sampleCount ? "Low coverage" : "No run"}</small></span>;
+  if (!cell?.leader) return <span className="cell-empty"><b>—</b><small>{cell?.sampleCount ? "No winner" : "No run"}</small></span>;
   const partner = partners.find((item) => item.id === cell.leader)!;
   if (window !== "now") {
-    return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span><strong>{formatBps(cell.averageEdgeBps)}</strong><small>{Math.round((cell.winRate ?? 0) * 100)}% wins</small></span>;
+    return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span><strong>{Math.round((cell.winRate ?? 0) * 100)}% wins</strong><small>{formatBps(cell.averageEdgeBps)} avg</small></span>;
   }
   return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "Only quote" : cell.tie ? "Exact tie" : formatBps(cell.marginBps)}</strong><small>{cell.successfulQuotes ?? 0} valid quotes</small></span>;
 }
@@ -202,7 +197,7 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
     </svg>
     <div className="trend-legend">{activePartners.map((partner) => {
       const summary = data.summary.find((item) => item.protocol === partner.id);
-      return <span key={partner.id}><i style={{ background: partner.color }} /><b>{partner.name}</b><small>{summary?.sampleCount ? `${formatBps(summary.averageEdgeBps)} avg · ${Math.round(summary.availability * 100)}% coverage` : "No data"}</small></span>;
+      return <span key={partner.id}><i style={{ background: partner.color }} /><b>{partner.name}</b><small>{summary?.sampleCount ? `${Math.round((summary.winRate ?? 0) * 100)}% wins · ${formatBps(summary.averageEdgeBps)} avg · ${Math.round(summary.availability * 100)}% availability` : "No data"}</small></span>;
     })}</div>
   </div>;
 }
@@ -370,16 +365,17 @@ export default function Home() {
 
       <section className="trend-card" aria-labelledby="trend-title">
         <header className="trend-header">
-          <div><p className="eyebrow">Historical {executionLabel(executionMode)} quote edge · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} leads over {trendDays} days</> : <>Performance over {trendDays} days</>}</h3><p>{trend?.leader ? `${formatBps(trend.leader.averageEdgeBps)} average edge · ${Math.round(trend.leader.winRate * 100)}% wins · ${Math.round(trend.leader.availability * 100)}% coverage · ${trend.leader.sampleCount} synchronized checks` : "A period leader appears after enough synchronized batches reach 80% quote coverage."}</p></div>
+          <div><p className="eyebrow">Historical {executionLabel(executionMode)} quote edge · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} won most quotes over {trendDays} days</> : <>Performance over {trendDays} days</>}</h3><p>{trend?.leader ? `${Math.round(trend.leader.winRate * 100)}% overall win share · ${formatBps(trend.leader.averageEdgeBps)} average edge · ${Math.round(trend.leader.availability * 100)}% quote availability · ${trend.comparableRuns} comparisons` : "A period leader appears after the first comparable quote batch."}</p></div>
           <div className="trend-controls">
             <fieldset><legend>Period</legend><div className="segmented light">{([7, 14, 30] as const).map((days) => <button key={days} className={trendDays === days ? "selected" : ""} onClick={() => setTrendDays(days)}>{days}d</button>)}</div></fieldset>
           </div>
         </header>
         {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} activePartners={activePartners} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
-        <div className="trend-note"><b>Batch median baseline</b><span>Each protocol is measured against the median output from that exact synchronized batch. Positive basis points mean more destination asset.</span></div>
+        <div className="trend-note"><b>Win share ranks the leader</b><span>Each comparable batch awards one win; exact ties split it equally. The lines show each protocol’s basis-point edge versus that batch’s median output.</span></div>
       </section>
 
-      {requestsOpen && <div className="request-drawer-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setRequestsOpen(false); }}>
+      {requestsOpen && <div className="request-drawer-backdrop">
+        <button className="request-drawer-dismiss" onClick={() => setRequestsOpen(false)} aria-label="Close latest quotes" />
         <aside className="request-drawer" role="dialog" aria-modal="true" aria-labelledby="request-drawer-title">
           <header><div><p className="eyebrow">Quote audit</p><h2 id="request-drawer-title">{selectedRoute ? `${selectedRoute.source.symbol} → ${selectedRoute.destination.symbol}` : "Latest quotes"}</h2></div><button onClick={() => setRequestsOpen(false)} aria-label="Close latest quotes">×</button></header>
           <RequestDetails runDetails={runDetails} runLoading={runLoading} selectedSize={selectedSize} />

@@ -42,10 +42,3 @@ export type NormalizedQuote = {
   responseLatencyMs?: number;
   rawResponse: unknown;
 };
-
-export type BenchmarkBatch = {
-  initiatedAt: string;
-  request: BenchmarkRequest;
-  maxRequestSkewMs: number;
-  quotes: NormalizedQuote[];
-};

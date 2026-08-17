@@ -1,6 +1,6 @@
 export type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 
-type ThorPool = { asset: string; status: string; assetPriceUSD?: string; nativeDecimal?: string; volume24h?: string };
+type ThorPool = { asset: string; status: string; assetPriceUSD?: string; nativeDecimal?: string };
 type MayaPool = { asset: string; status: string };
 type NearToken = { assetId: string; blockchain: string; symbol: string; contractAddress?: string | null; decimals: number };
 type ChainflipNetworkInfo = {
@@ -27,7 +27,6 @@ export type CatalogAsset = {
   symbol: string;
   thorAsset: string;
   priceUsd: number | null;
-  volume24hRune: number;
   decimals: number;
   support: Record<PartnerId, { source: boolean; destination: boolean; assetId?: string }>;
 };
@@ -37,10 +36,7 @@ export type CatalogRoute = {
   source: CatalogAsset;
   destination: CatalogAsset;
   partners: PartnerId[];
-  popularityScore: number;
 };
-
-type PartnerStatus = Record<PartnerId, { available: boolean; error?: string }>;
 
 const THOR_MIDGARD_POOLS = "https://gateway.liquify.com/chain/thorchain_midgard/v2/pools";
 const MAYA_POOLS = "https://mayanode.mayachain.info/mayachain/pools";
@@ -52,38 +48,17 @@ const CHAINFLIP_NETWORK_INFO = "https://chainflip-swap.chainflip.io/api/networkI
 const CHAINFLIP_ASSETS: ChainflipAssetDefinition[] = [
   { chainflipId: "Usdc", chain: "Ethereum", symbol: "USDC", contractAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" },
   { chainflipId: "Eth", chain: "Ethereum", symbol: "ETH" },
-  { chainflipId: "Wbtc", chain: "Ethereum", symbol: "WBTC", contractAddress: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599" },
-  { chainflipId: "ArbUsdc", chain: "Arbitrum", symbol: "USDC", contractAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" },
-  { chainflipId: "SolUsdc", chain: "Solana", symbol: "USDC", contractAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" },
-  { chainflipId: "Flip", chain: "Ethereum", symbol: "FLIP", contractAddress: "0x826180541412D574cf1336d22c0C0a287822678A" },
-  { chainflipId: "ArbEth", chain: "Arbitrum", symbol: "ETH" },
-  { chainflipId: "HubUsdc", chain: "Assethub", symbol: "USDC" },
   { chainflipId: "Btc", chain: "Bitcoin", symbol: "BTC" },
-  { chainflipId: "HubUsdt", chain: "Assethub", symbol: "USDT" },
-  { chainflipId: "Sol", chain: "Solana", symbol: "SOL" },
   { chainflipId: "TrxUsdt", chain: "Tron", symbol: "USDT", contractAddress: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t" },
   { chainflipId: "Usdt", chain: "Ethereum", symbol: "USDT", contractAddress: "0xdAC17F958D2ee523a2206206994597C13D831ec7" },
   { chainflipId: "Trx", chain: "Tron", symbol: "TRX" },
-  { chainflipId: "HubDot", chain: "Assethub", symbol: "DOT" },
-  { chainflipId: "SolUsdt", chain: "Solana", symbol: "USDT", contractAddress: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB" },
-  { chainflipId: "ArbUsdt", chain: "Arbitrum", symbol: "USDT", contractAddress: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9" },
 ];
 
 const chainAliases: Record<string, string> = {
   BTC: "bitcoin", Bitcoin: "bitcoin", btc: "bitcoin",
   ETH: "ethereum", Ethereum: "ethereum", eth: "ethereum",
-  ARB: "arbitrum", Arbitrum: "arbitrum", arb: "arbitrum",
   AVAX: "avalanche", avax: "avalanche",
-  BASE: "base", base: "base",
-  BSC: "bsc", bsc: "bsc",
-  SOL: "solana", Solana: "solana", sol: "solana",
   TRON: "tron", Tron: "tron", tron: "tron",
-  DOGE: "doge", doge: "doge",
-  LTC: "litecoin", ltc: "litecoin",
-  BCH: "bitcoin-cash", bch: "bitcoin-cash",
-  XRP: "xrp", xrp: "xrp",
-  GAIA: "cosmos", THOR: "thorchain", MAYA: "mayachain",
-  DASH: "dash", dash: "dash", ZEC: "zec", zec: "zec", ADA: "cardano", cardano: "cardano",
 };
 
 function normalizeChain(chain: string) {
@@ -105,7 +80,7 @@ function parsePoolAsset(asset: string) {
 }
 
 async function fetchJson<T>(url: string, headers: Record<string, string> = {}): Promise<T> {
-  const response = await fetch(url, { headers: { accept: "application/json", ...headers } });
+  const response = await fetch(url, { signal: AbortSignal.timeout(15_000), headers: { accept: "application/json", ...headers } });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json() as Promise<T>;
 }
@@ -121,13 +96,6 @@ async function buildCatalog() {
   ]);
 
   if (thorResult.status === "rejected") throw new Error(`THORChain catalog unavailable: ${thorResult.reason}`);
-
-  const statuses: PartnerStatus = {
-    thorchain: { available: true },
-    maya: mayaResult.status === "fulfilled" ? { available: true } : { available: false, error: String(mayaResult.reason) },
-    "near-intents": nearResult.status === "fulfilled" ? { available: true } : { available: false, error: String(nearResult.reason) },
-    chainflip: chainflipResult.status === "fulfilled" ? { available: true } : { available: false, error: String(chainflipResult.reason) },
-  };
 
   const maya = mayaResult.status === "fulfilled" ? mayaResult.value : [];
   const near = nearResult.status === "fulfilled" ? nearResult.value : [];
@@ -149,10 +117,7 @@ async function buildCatalog() {
     return status?.egressEnabled ? [[canonicalAsset(asset.chain, asset.symbol, asset.contractAddress), `${asset.chain}:${asset.symbol}`] as const] : [];
   }));
 
-  const thorPools = thorResult.value.filter((pool) => pool.status.toLowerCase() === "available");
-  if (!thorPools.some((pool) => pool.asset === "THOR.RUNE")) {
-    thorPools.push({ asset: "THOR.RUNE", status: "available", nativeDecimal: "8", volume24h: "0" });
-  }
+  const thorPools = thorResult.value.filter((pool) => pool.status.toLowerCase() === "available" && fixedThorAssets.has(pool.asset));
 
   const assets: CatalogAsset[] = thorPools.map((pool) => {
     const parsed = parsePoolAsset(pool.asset);
@@ -167,7 +132,6 @@ async function buildCatalog() {
       symbol: parsed.symbol,
       thorAsset: pool.asset,
       priceUsd: pool.assetPriceUSD ? Number(pool.assetPriceUSD) : null,
-      volume24hRune: Number(pool.volume24h ?? 0) / 1e8,
       decimals: Number(pool.nativeDecimal ?? 8),
       support: {
         thorchain: { source: true, destination: true, assetId: pool.asset },
@@ -178,7 +142,7 @@ async function buildCatalog() {
     };
   }).sort((a, b) => a.label.localeCompare(b.label));
 
-  return { generatedAt: new Date().toISOString(), assets, statuses };
+  return { assets };
 }
 
 export async function getCatalog() {
@@ -187,28 +151,6 @@ export async function getCatalog() {
   cache = { value, expiresAt: Date.now() + 5 * 60_000 };
   return value;
 }
-
-export function routesFromAssets(assets: CatalogAsset[]) {
-  const routes: CatalogRoute[] = [];
-  for (const source of assets) {
-    for (const destination of assets) {
-      if (source.id === destination.id) continue;
-      const partners = (["thorchain", "chainflip", "near-intents", "maya"] as PartnerId[]).filter((partner) =>
-        source.support[partner].source && destination.support[partner].destination
-      );
-      const popularityScore = Math.sqrt(source.volume24hRune * destination.volume24hRune);
-      routes.push({ id: `${source.id}__${destination.id}`, source, destination, partners, popularityScore });
-    }
-  }
-  return routes;
-}
-
-export const fixedRouteSet = {
-  id: "thorchain-comparable-pool-activity-2026-08-17",
-  selectedAt: "2026-08-17T00:34:00Z",
-  metric: "geometric_mean_pool_volume_24h",
-  description: "Fixed snapshot of the 30 highest-ranked directed routes with at least two supported quote protocols, using the geometric mean of each asset's trailing 24-hour THORChain pool volume.",
-};
 
 const fixedThorAssetPairs: Array<[string, string]> = [
   ["BTC.BTC", "ETH.ETH"],
@@ -231,24 +173,22 @@ const fixedThorAssetPairs: Array<[string, string]> = [
   ["TRON.USDT-TR7NHQJEKQXGTCI8Q8ZY4PL8OTSZGJLJ6T", "ETH.ETH"],
   ["AVAX.AVAX", "BTC.BTC"],
   ["BTC.BTC", "AVAX.AVAX"],
-  ["AVAX.AVAX", "ETH.ETH"],
-  ["ETH.ETH", "AVAX.AVAX"],
-  ["BTC.BTC", "ETH.LINK-0X514910771AF9CA656AF840DFF83E8264ECF986CA"],
-  ["ETH.LINK-0X514910771AF9CA656AF840DFF83E8264ECF986CA", "BTC.BTC"],
-  ["ETH.ETH", "ETH.LINK-0X514910771AF9CA656AF840DFF83E8264ECF986CA"],
-  ["ETH.LINK-0X514910771AF9CA656AF840DFF83E8264ECF986CA", "ETH.ETH"],
-  ["BTC.BTC", "ETH.WBTC-0X2260FAC5E5542A773AA44FBCFEDF7C193BC2C599"],
-  ["ETH.WBTC-0X2260FAC5E5542A773AA44FBCFEDF7C193BC2C599", "BTC.BTC"],
-  ["BTC.BTC", "LTC.LTC"],
-  ["LTC.LTC", "BTC.BTC"],
 ];
+const fixedThorAssets = new Set(fixedThorAssetPairs.flat());
 
-export function topThorRoutes(assets: CatalogAsset[], limit = 30) {
-  const routesByAssets = new Map(
-    routesFromAssets(assets).map((route) => [`${route.source.thorAsset}__${route.destination.thorAsset}`, route])
-  );
+export function topThorRoutes(assets: CatalogAsset[], limit = 20) {
+  const assetsByThorId = new Map(assets.map((asset) => [asset.thorAsset, asset]));
   return fixedThorAssetPairs
-    .map(([source, destination]) => routesByAssets.get(`${source}__${destination}`))
+    .map(([sourceId, destinationId]) => {
+      const source = assetsByThorId.get(sourceId);
+      const destination = assetsByThorId.get(destinationId);
+      if (!source || !destination) return null;
+      const partners = (["thorchain", "chainflip", "near-intents", "maya"] as PartnerId[]).filter((partner) =>
+        source.support[partner].source && destination.support[partner].destination
+      );
+      return { id: `${source.id}__${destination.id}`, source, destination, partners };
+    })
     .filter((route): route is CatalogRoute => Boolean(route))
+    .filter((route) => route.partners.length > 1)
     .slice(0, limit);
 }

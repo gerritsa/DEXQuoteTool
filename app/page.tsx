@@ -5,7 +5,6 @@ import { quoteSizes, type QuoteSize } from "../lib/quotes/sizes";
 
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 type ViewWindow = "now" | "7d" | "14d" | "30d";
-type TrendBaseline = "median" | "thorchain";
 
 type Route = {
   id: string;
@@ -129,13 +128,12 @@ function ComparisonResult({ cell, window }: { cell?: ComparisonCell; window: Vie
   return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "Only quote" : cell.tie ? "≤ 2 bps" : formatBps(cell.marginBps)}</strong><small>{cell.successfulQuotes ?? 0} valid quotes</small></span>;
 }
 
-function TrendChart({ data, baseline }: { data: TrendResponse; baseline: TrendBaseline }) {
+function TrendChart({ data }: { data: TrendResponse }) {
   const width = 920;
   const height = 300;
   const padding = { top: 24, right: 18, bottom: 30, left: 58 };
-  const valueFor = (point: TrendPoint) => baseline === "median" ? point.edgeBps : point.vsThorBps;
   const plotted = data.buckets.flatMap((bucket) => bucket.points.flatMap((point) => {
-    const value = valueFor(point);
+    const value = point.edgeBps;
     return value == null ? [] : [{ timestamp: bucket.timestamp, value, point }];
   }));
   if (!plotted.length) return <div className="trend-empty"><b>No trend line yet</b><span>Run this exact route and size at least twice to start the chart.</span></div>;
@@ -152,13 +150,13 @@ function TrendChart({ data, baseline }: { data: TrendResponse; baseline: TrendBa
     partner,
     points: data.buckets.flatMap((bucket) => {
       const point = bucket.points.find((item) => item.protocol === partner.id);
-      const value = point ? valueFor(point) : null;
+      const value = point?.edgeBps ?? null;
       return point && value != null ? [{ timestamp: bucket.timestamp, value, point }] : [];
     }),
   }));
 
   return <div className="trend-visual">
-    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${data.days}-day quote edge in basis points ${baseline === "median" ? "versus the batch median" : "versus THORChain"}`}>
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${data.days}-day quote edge in basis points versus the synchronized batch median`}>
       {[bound, bound / 2, 0, -bound / 2, -bound].map((value) => <g key={value}><line x1={padding.left} x2={width - padding.right} y1={y(value)} y2={y(value)} className={value === 0 ? "zero-line" : "grid-line"} /><text x={padding.left - 9} y={y(value) + 3} textAnchor="end">{value > 0 ? "+" : ""}{Math.round(value)}</text></g>)}
       <text x={padding.left} y={height - 7}>{new Date(start).toLocaleDateString([], { month: "short", day: "numeric" })}</text>
       <text x={width - padding.right} y={height - 7} textAnchor="end">{new Date(end).toLocaleDateString([], { month: "short", day: "numeric" })}</text>
@@ -197,7 +195,6 @@ export default function Home() {
   const [runLoading, setRunLoading] = useState(false);
   const [runSubmitting, setRunSubmitting] = useState(false);
   const [trendDays, setTrendDays] = useState<7 | 14 | 30>(7);
-  const [trendBaseline, setTrendBaseline] = useState<TrendBaseline>("median");
   const [trend, setTrend] = useState<TrendResponse | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
@@ -335,7 +332,6 @@ export default function Home() {
       <div className="filter-bar leaderboard-tools">
         <label><span>Search 30 fixed routes</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="BTC, ETH, USDC…" /></label>
         <fieldset><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Now" : window.replace("d", " days")}</button>)}</div></fieldset>
-        <div className="catalog-stamp"><span>Route set frozen</span><b>{formatTime(catalog?.routeSet?.selectedAt)}</b></div>
       </div>
 
       {catalog?.error ? <div className="error-state"><b>Route catalog unavailable</b><span>{catalog.error}</span></div> : <div className={`leaderboard-wrap ${loading || comparisonLoading ? "loading" : ""}`}>
@@ -378,11 +374,10 @@ export default function Home() {
           <div><p className="eyebrow">Historical quote edge · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} leads over {trendDays} days</> : <>Performance over {trendDays} days</>}</h3><p>{trend?.leader ? `${formatBps(trend.leader.averageEdgeBps)} average edge · ${Math.round(trend.leader.winRate * 100)}% wins · ${Math.round(trend.leader.availability * 100)}% coverage · ${trend.leader.sampleCount} synchronized checks` : "A period leader appears after enough synchronized batches reach 80% quote coverage."}</p></div>
           <div className="trend-controls">
             <fieldset><legend>Period</legend><div className="segmented light">{([7, 14, 30] as const).map((days) => <button key={days} className={trendDays === days ? "selected" : ""} onClick={() => setTrendDays(days)}>{days}d</button>)}</div></fieldset>
-            <fieldset><legend>Baseline</legend><div className="segmented light"><button className={trendBaseline === "median" ? "selected" : ""} onClick={() => setTrendBaseline("median")}>Batch median</button><button className={trendBaseline === "thorchain" ? "selected" : ""} onClick={() => setTrendBaseline("thorchain")}>THORChain</button></div></fieldset>
           </div>
         </header>
-        {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} baseline={trendBaseline} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
-        <div className="trend-note"><b>{trendBaseline === "median" ? "Neutral baseline" : "THORChain reference"}</b><span>{trendBaseline === "median" ? "Each protocol is measured against the median output from that exact synchronized batch. Positive basis points mean more destination asset." : "Every protocol is measured directly against THORChain at the same timestamp. A missing THORChain quote creates a gap."}</span><small>The colour strip shows the strongest median-relative protocol in each hour for 7d, or each four-hour bucket for 14d and 30d.</small></div>
+        {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
+        <div className="trend-note"><b>Batch median baseline</b><span>Each protocol is measured against the median output from that exact synchronized batch. Positive basis points mean more destination asset.</span><small>The colour strip shows the strongest protocol in each hour for 7d, or each four-hour bucket for 14d and 30d.</small></div>
       </section>
     </section>
 

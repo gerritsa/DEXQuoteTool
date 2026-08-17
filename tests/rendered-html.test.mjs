@@ -23,6 +23,8 @@ test("server-renders the QuoteTool dashboard", async () => {
   assert.match(html, /14 days/);
   assert.match(html, /30 days/);
   assert.match(html, /Batch median/);
+  assert.doesNotMatch(html, /Route set frozen/);
+  assert.doesNotMatch(html, /THORChain reference/);
   assert.match(html, /No captured requests yet/);
   assert.doesNotMatch(html, /A complete audit trail/);
   assert.doesNotMatch(html, /THORChain assets/);

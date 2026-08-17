@@ -133,9 +133,9 @@ function ComparisonResult({ cell, window }: { cell?: ComparisonCell; window: Vie
   if (!cell?.leader) return <span className="cell-empty"><b>—</b><small>{cell?.sampleCount ? "Low coverage" : "No run"}</small></span>;
   const partner = partners.find((item) => item.id === cell.leader)!;
   if (window !== "now") {
-    return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span><strong>{formatBps(cell.averageEdgeBps)}</strong><small>{Math.round((cell.winRate ?? 0) * 100)}% wins · {cell.sampleCount ?? 0} checks</small></span>;
+    return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span><strong>{formatBps(cell.averageEdgeBps)}</strong><small>{Math.round((cell.winRate ?? 0) * 100)}% wins</small></span>;
   }
-  return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "Only quote" : cell.tie ? "≤ 2 bps" : formatBps(cell.marginBps)}</strong><small>{cell.successfulQuotes ?? 0} valid quotes</small></span>;
+  return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "Only quote" : cell.tie ? "Exact tie" : formatBps(cell.marginBps)}</strong><small>{cell.successfulQuotes ?? 0} valid quotes</small></span>;
 }
 
 function RequestDetails({ runDetails, runLoading, selectedSize }: { runDetails: RunResponse | null; runLoading: boolean; selectedSize: QuoteSize }) {
@@ -145,7 +145,7 @@ function RequestDetails({ runDetails, runLoading, selectedSize }: { runDetails: 
   const orderedQuotes = [...(runDetails?.quotes ?? [])].sort((a, b) => partners.findIndex((partner) => partner.id === a.protocol) - partners.findIndex((partner) => partner.id === b.protocol));
 
   return <div className={`request-panel ${runDetails?.quotes.length ? "has-quotes" : ""}`}>
-    <p className="eyebrow">Latest synchronized requests · {selectedSize.label}</p>
+    <p className="eyebrow">Latest synchronized quotes · {selectedSize.label}</p>
     {runLoading ? <><h3>Loading requests…</h3><p>Reading the latest synchronized batch from quote history.</p></> : runDetails?.run ? <>
       <h3>{runDetails.quotes.length} protocol results</h3>
       <p>Captured {formatTime(runDetails.run.initiatedAt)} · ${runDetails.run.sourceAmountUsd.toLocaleString()} exact input · synchronized within {runDetails.run.maxRequestSkewMs ?? "—"} ms</p>
@@ -342,7 +342,7 @@ export default function Home() {
       <div className="filter-bar leaderboard-tools">
         <fieldset className="protocol-filter"><legend>Compare protocols</legend><div>{partners.map((partner) => <button key={partner.id} className={enabledProtocols.includes(partner.id) ? "selected" : ""} onClick={() => toggleProtocol(partner.id)} aria-pressed={enabledProtocols.includes(partner.id)} disabled={enabledProtocols.length <= 2 && enabledProtocols.includes(partner.id)}><PartnerMark id={partner.id} muted={!enabledProtocols.includes(partner.id)} /><span>{partner.name}</span></button>)}</div><small>Choose at least two. Results recalculate using only enabled protocols.</small></fieldset>
         <fieldset><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Streaming/DCA</button><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Standard swap</button></div></fieldset>
-        <fieldset><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Now" : window.replace("d", " days")}</button>)}</div></fieldset>
+        <fieldset><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Latest check" : window.replace("d", " days")}</button>)}</div></fieldset>
       </div>
 
       {catalog?.error ? <div className="error-state"><b>Route catalog unavailable</b><span>{catalog.error}</span></div> : <div className={`leaderboard-wrap ${loading || comparisonLoading ? "loading" : ""}`}>
@@ -364,8 +364,8 @@ export default function Home() {
       </div>
 
       <div className="analysis-toolbar">
-        <div className="size-selectors" role="group" aria-label="Exact USD input for route analysis">{quoteSizes.map((size) => <button key={size.id} className={selectedSize.id === size.id ? "selected" : ""} onClick={() => setSelectedSize(size)} aria-pressed={selectedSize.id === size.id}><strong>{size.label}</strong><small>Exact input</small></button>)}</div>
-        <button className="latest-request-button" onClick={() => setRequestsOpen(true)}><span>Latest requests</span><b>{runLoading ? "Loading…" : runDetails?.run ? formatTime(runDetails.run.initiatedAt) : "No batch yet"}</b></button>
+        <div className="size-selectors" role="group" aria-label="Exact USD input for route analysis">{quoteSizes.map((size) => <button key={size.id} className={selectedSize.id === size.id ? "selected" : ""} onClick={() => setSelectedSize(size)} aria-pressed={selectedSize.id === size.id}><strong>{size.label}</strong></button>)}</div>
+        <button className="latest-request-button" onClick={() => setRequestsOpen(true)}><span>Latest quotes</span><b>{runLoading ? "Loading…" : runDetails?.run ? formatTime(runDetails.run.initiatedAt) : "No batch yet"}</b></button>
       </div>
 
       <section className="trend-card" aria-labelledby="trend-title">
@@ -381,7 +381,7 @@ export default function Home() {
 
       {requestsOpen && <div className="request-drawer-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setRequestsOpen(false); }}>
         <aside className="request-drawer" role="dialog" aria-modal="true" aria-labelledby="request-drawer-title">
-          <header><div><p className="eyebrow">Request audit</p><h2 id="request-drawer-title">{selectedRoute ? `${selectedRoute.source.symbol} → ${selectedRoute.destination.symbol}` : "Latest requests"}</h2></div><button onClick={() => setRequestsOpen(false)} aria-label="Close latest requests">×</button></header>
+          <header><div><p className="eyebrow">Quote audit</p><h2 id="request-drawer-title">{selectedRoute ? `${selectedRoute.source.symbol} → ${selectedRoute.destination.symbol}` : "Latest quotes"}</h2></div><button onClick={() => setRequestsOpen(false)} aria-label="Close latest quotes">×</button></header>
           <RequestDetails runDetails={runDetails} runLoading={runLoading} selectedSize={selectedSize} />
         </aside>
       </div>}

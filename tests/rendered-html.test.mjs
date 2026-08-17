@@ -29,6 +29,7 @@ test("server-renders the DEX Quote Tool dashboard", async () => {
   assert.match(html, /7 days/);
   assert.match(html, /14 days/);
   assert.match(html, /30 days/);
+  assert.match(html, /Latest check/);
   assert.match(html, /Batch median/);
   assert.match(html, /Execution mode/);
   assert.match(html, /Compare protocols/);
@@ -50,7 +51,8 @@ test("server-renders the DEX Quote Tool dashboard", async () => {
   assert.doesNotMatch(html, /Metadata endpoints/);
   assert.doesNotMatch(html, /Partner status/);
   assert.match(html, /Route analysis/);
-  assert.match(html, /Latest requests/);
+  assert.match(html, /Latest quotes/);
+  assert.doesNotMatch(html, />Exact input</);
   assert.doesNotMatch(html, /Run \$.*test/);
   assert.doesNotMatch(html, /A complete audit trail/);
   assert.doesNotMatch(html, /THORChain assets/);

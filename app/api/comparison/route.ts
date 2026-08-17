@@ -40,13 +40,14 @@ async function latestComparison(mode: ExecutionMode, selectedProtocols: PartnerI
     const winner = quoted[0];
     const runnerUp = quoted[1];
     const marginBps = winner && runnerUp ? ((Number(winner.output) / Number(runnerUp.output)) - 1) * 10_000 : null;
+    const exactTie = Boolean(winner && runnerUp && Number(winner.output) === Number(runnerUp.output));
     return {
       pairId: rows[0].pairId,
       amountId: rows[0].amountId,
       capturedAt: rows[0].initiatedAt,
       leader: quoted.length >= 2 ? winner.protocol : null,
       marginBps,
-      tie: marginBps != null && marginBps <= 2,
+      tie: exactTie,
       successfulQuotes: quoted.length,
       results: rows.map((row) => ({ protocol: row.protocol, status: row.status, output: row.output })),
     };
@@ -87,7 +88,7 @@ async function periodComparison(window: Exclude<WindowName, "now">, mode: Execut
       SUM(CASE WHEN status = 'quoted' THEN 1 ELSE 0 END) AS successes,
       SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 THEN 1 ELSE 0 END) AS comparableSamples,
       AVG(CASE WHEN status = 'quoted' AND valid_count >= 2 THEN ((output / median_output) - 1) * 10000 END) AS averageEdgeBps,
-      SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 AND ((best_output - output) / best_output) * 10000 <= 2 THEN 1 ELSE 0 END) AS wins,
+      SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 AND output = best_output THEN 1 ELSE 0 END) AS wins,
       MAX(initiated_at) AS latestAt
     FROM scored
     GROUP BY pair_id, amount_id, protocol

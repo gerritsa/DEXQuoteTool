@@ -66,7 +66,7 @@ export async function GET(request: Request) {
       timestamp: new Date(row.initiatedAt).getTime(),
       edgeBps: ((Number(row.output) / Number(row.medianOutput)) - 1) * 10_000,
       vsThorBps: row.thorOutput && row.thorOutput > 0 ? ((Number(row.output) / Number(row.thorOutput)) - 1) * 10_000 : null,
-      won: ((Number(row.bestOutput) - Number(row.output)) / Number(row.bestOutput)) * 10_000 <= 2,
+      won: Number(row.output) === Number(row.bestOutput),
     }));
     const comparableRuns = new Set(rows.map((row) => row.runId)).size;
     const summary = selectedProtocols.map((protocol) => {
@@ -104,7 +104,7 @@ export async function GET(request: Request) {
 
     return Response.json({
       routeId, amountId, mode, protocols: selectedProtocols, days, baseline: "batch_median",
-      comparisonRule: "Every synchronized batch is compared with its median output; results within 2 bps of the best share the win.",
+      comparisonRule: "Every synchronized batch is compared with its median output; only exactly equal best outputs share the win.",
       minimumAvailability: 0.8, bucketMs,
       startAt: new Date(startAt).toISOString(), endAt: new Date(endAt).toISOString(),
       comparableRuns, leader, summary, buckets,

@@ -5,8 +5,7 @@ export type QuoteSize = {
 };
 
 export const quoteSizes: QuoteSize[] = [
-  { id: "10", amountUsd: 10, label: "$10" },
-  { id: "100", amountUsd: 100, label: "$100" },
+  { id: "500", amountUsd: 500, label: "$500" },
   { id: "1000", amountUsd: 1_000, label: "$1K" },
   { id: "10000", amountUsd: 10_000, label: "$10K" },
   { id: "50000", amountUsd: 50_000, label: "$50K" },

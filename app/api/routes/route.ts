@@ -1,4 +1,5 @@
 import { fixedRouteSet, getCatalog, routesFromAssets, topThorRoutes } from "../../../lib/routes/catalog";
+import { quoteSizes } from "../../../lib/quotes/sizes";
 
 export async function GET(request: Request) {
   try {
@@ -25,7 +26,7 @@ export async function GET(request: Request) {
         scheduledRoutes: topRoutes.length,
         filteredRoutes: filtered.length,
         partnerRouteCounts,
-        scheduledRequests: topRoutes.reduce((total, route) => total + route.partners.length * 8, 0),
+        scheduledRequests: topRoutes.reduce((total, route) => total + route.partners.length * quoteSizes.length, 0),
       },
       routeSet: fixedRouteSet,
       ranking: { metric: fixedRouteSet.metric, description: fixedRouteSet.description },

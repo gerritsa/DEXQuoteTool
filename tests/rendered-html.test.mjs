@@ -17,7 +17,8 @@ test("server-renders the SwapRank dashboard", async () => {
   const html = await response.text();
   assert.match(html, /<title>SwapRank/);
   assert.match(html, /href="\/favicon\.svg"/);
-  assert.match(html, /Best protocol by size/);
+  assert.match(html, /DEX swap quotes,/);
+  assert.match(html, /compared by size/);
   assert.match(html, /Switch to light mode/);
   assert.match(html, /\$500/);
   assert.doesNotMatch(html, />\$10</);

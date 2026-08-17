@@ -93,7 +93,7 @@ const partners: Array<{ id: PartnerId; name: string; cellName: string; color: st
   { id: "thorchain", name: "THORCHAIN", cellName: "THORCHAIN", color: "#17b897", logo: "/partners/thorchain.png" },
   { id: "maya", name: "MAYA PROTOCOL", cellName: "MAYA PROTOCOL", color: "#ef6a38", logo: "/partners/maya.svg" },
   { id: "chainflip", name: "CHAINFLIP", cellName: "CHAINFLIP", color: "#ed49c9", logo: "/partners/chainflip.svg" },
-  { id: "near-intents", name: "NEAR", cellName: "NEAR", color: "#171817", logo: "/partners/near.svg" },
+  { id: "near-intents", name: "NEAR", cellName: "NEAR", color: "var(--near-series)", logo: "/partners/near.svg" },
 ];
 
 function PartnerMark({ id, muted = false }: { id: PartnerId; muted?: boolean }) {
@@ -348,7 +348,7 @@ export default function Home() {
     </header>
 
     <section className="route-section" id="leaderboard">
-      <div className="leaderboard-intro"><div><p className="eyebrow">Quote leaderboard</p><h2>Best protocol by size</h2></div><span className="intro-mark" aria-hidden="true"><i /><i /><i /></span></div>
+      <div className="leaderboard-intro"><div><p className="eyebrow">Quote leaderboard</p><h2>DEX swap quotes,<br />compared by size</h2></div><span className="intro-mark" aria-hidden="true"><i /><i /><i /></span></div>
 
       <div className="filter-bar leaderboard-tools">
         <fieldset className="protocol-filter"><legend>Compare protocols</legend><div>{partners.map((partner) => <button key={partner.id} className={enabledProtocols.includes(partner.id) ? "selected" : ""} onClick={() => toggleProtocol(partner.id)} aria-pressed={enabledProtocols.includes(partner.id)} disabled={enabledProtocols.length <= 2 && enabledProtocols.includes(partner.id)}><PartnerMark id={partner.id} muted={!enabledProtocols.includes(partner.id)} /><span>{partner.name}</span></button>)}</div><small>Choose at least two. Results recalculate using only enabled protocols.</small></fieldset>

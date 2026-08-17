@@ -318,7 +318,6 @@ export default function Home() {
     <header className="topbar">
       <a className="brand" href="#top"><span className="brand-symbol"><i /><i /><i /></span><span>Quote<span>Tool</span></span></a>
       <nav aria-label="Primary navigation"><a className="active" href="#leaderboard">Leaderboard</a><a href="#requests">Quote details</a></nav>
-      <span className="truth-pill"><i /> Real quotes only</span>
     </header>
 
     <section className="hero">
@@ -328,12 +327,12 @@ export default function Home() {
     <section className="route-section" id="leaderboard">
       <div className="section-heading">
         <div><p className="eyebrow">Quote leaderboard</p><h2>Best protocol by size</h2></div>
-        <p>{viewWindow === "now" ? `Now uses the latest synchronized ${executionMode === "standard" ? "instant" : "time-sliced"} batch and shows the winner’s advantage over second place in basis points.` : `${viewWindow.slice(0, -1)} days ranks ${executionMode === "standard" ? "instant" : "time-sliced"} quotes by their average edge versus each synchronized batch median. At least 80% coverage is required.`}</p>
+        <p>{viewWindow === "now" ? `Now uses the latest synchronized ${executionMode === "standard" ? "instant" : "Streaming/DCA"} batch and shows the winner’s advantage over second place in basis points.` : `${viewWindow.slice(0, -1)} days ranks ${executionMode === "standard" ? "instant" : "Streaming/DCA"} quotes by their average edge versus each synchronized batch median. At least 80% coverage is required.`}</p>
       </div>
 
       <div className="filter-bar leaderboard-tools">
         <label><span>Search 30 fixed routes</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="BTC, ETH, USDC…" /></label>
-        <fieldset><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Instant</button><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Time-sliced</button></div></fieldset>
+        <fieldset><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Instant</button><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Streaming/DCA</button></div></fieldset>
         <fieldset><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Now" : window.replace("d", " days")}</button>)}</div></fieldset>
       </div>
 
@@ -347,13 +346,13 @@ export default function Home() {
         </table>
         {!loading && catalog?.routes.length === 0 && <div className="empty-table">No fixed routes match this search.</div>}
       </div>}
-      <div className="pagination"><span>{catalog?.counts?.filteredRoutes ?? 0} of 30 routes shown</span><b>Direction is treated separately · {executionMode === "standard" ? "instant" : "streaming / DCA"} mode</b></div>
+      <div className="pagination"><span>{catalog?.counts?.filteredRoutes ?? 0} of 30 routes shown</span><b>Direction is treated separately · {executionMode === "standard" ? "instant" : "Streaming/DCA"} mode</b></div>
     </section>
 
     <section className="route-detail" id="requests">
       <div className="detail-header">
-        <div><p className="eyebrow">Latest synchronized {executionMode === "standard" ? "instant" : "time-sliced"} batch</p>{selectedRoute ? <h2 className="detail-route"><span>{selectedRoute.source.symbol}<small>{selectedRoute.source.chain}</small></span><i>→</i><span>{selectedRoute.destination.symbol}<small>{selectedRoute.destination.chain}</small></span></h2> : <h2>Select a route</h2>}</div>
-        {selectedRoute && <div className="detail-actions"><div className="coverage-summary"><span>Quote partners</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id)} />)}</div></div><button className="run-button" onClick={runTestQuote} disabled={runSubmitting || runLoading}>{runSubmitting ? "Running four quotes…" : `Run ${selectedSize.label} ${executionMode === "standard" ? "instant" : "time-sliced"} test`}</button></div>}
+        <div><p className="eyebrow">Latest synchronized {executionMode === "standard" ? "instant" : "Streaming/DCA"} batch</p>{selectedRoute ? <h2 className="detail-route"><span>{selectedRoute.source.symbol}<small>{selectedRoute.source.chain}</small></span><i>→</i><span>{selectedRoute.destination.symbol}<small>{selectedRoute.destination.chain}</small></span></h2> : <h2>Select a route</h2>}</div>
+        {selectedRoute && <div className="detail-actions"><div className="coverage-summary"><span>Quote partners</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id)} />)}</div></div><button className="run-button" onClick={runTestQuote} disabled={runSubmitting || runLoading}>{runSubmitting ? "Running four quotes…" : `Run ${selectedSize.label} ${executionMode === "standard" ? "instant" : "Streaming/DCA"} test`}</button></div>}
       </div>
 
       <div className="range-layout">
@@ -374,7 +373,7 @@ export default function Home() {
 
       <section className="trend-card" aria-labelledby="trend-title">
         <header className="trend-header">
-          <div><p className="eyebrow">Historical {executionMode === "standard" ? "instant" : "time-sliced"} quote edge · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} leads over {trendDays} days</> : <>Performance over {trendDays} days</>}</h3><p>{trend?.leader ? `${formatBps(trend.leader.averageEdgeBps)} average edge · ${Math.round(trend.leader.winRate * 100)}% wins · ${Math.round(trend.leader.availability * 100)}% coverage · ${trend.leader.sampleCount} synchronized checks` : "A period leader appears after enough synchronized batches reach 80% quote coverage."}</p></div>
+          <div><p className="eyebrow">Historical {executionMode === "standard" ? "instant" : "Streaming/DCA"} quote edge · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} leads over {trendDays} days</> : <>Performance over {trendDays} days</>}</h3><p>{trend?.leader ? `${formatBps(trend.leader.averageEdgeBps)} average edge · ${Math.round(trend.leader.winRate * 100)}% wins · ${Math.round(trend.leader.availability * 100)}% coverage · ${trend.leader.sampleCount} synchronized checks` : "A period leader appears after enough synchronized batches reach 80% quote coverage."}</p></div>
           <div className="trend-controls">
             <fieldset><legend>Period</legend><div className="segmented light">{([7, 14, 30] as const).map((days) => <button key={days} className={trendDays === days ? "selected" : ""} onClick={() => setTrendDays(days)}>{days}d</button>)}</div></fieldset>
           </div>
@@ -384,7 +383,6 @@ export default function Home() {
       </section>
     </section>
 
-    <section className="partner-health"><div><p className="eyebrow">Metadata endpoints</p><h2>Partner status</h2></div><div className="health-grid">{partners.map((partner) => { const status = catalog?.statuses?.[partner.id]; return <article key={partner.id}><PartnerMark id={partner.id} /><div><b>{partner.name}</b><small>{status?.available ? "Catalog connected" : loading ? "Checking…" : "Catalog unavailable"}</small></div><span className={status?.available ? "online" : "offline"} /></article>; })}</div></section>
     <footer><b>QuoteTool</b><span>Real requests. Exact sizes. Explainable winners.</span><a href="#top">Back to top ↑</a></footer>
   </main>;
 }

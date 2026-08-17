@@ -92,7 +92,7 @@ export default function CollectorPage() {
       <h1>{status === "complete" ? "Sweep complete" : status === "skipped" ? "Sweep already running" : status === "failed" ? "Sweep finished with errors" : "Full quote sweep"}</h1>
       <p>{message}</p>
       <div className="collector-progress" aria-label={`${percent}% complete`}><i style={{ width: `${percent}%` }} /></div>
-      <dl><div><dt>Progress</dt><dd>{completed} / {total || 480}</dd></div><div><dt>Modes</dt><dd>Instant + time-sliced</dd></div><div><dt>Failed batches</dt><dd>{failed}</dd></div><div><dt>Parallel workers</dt><dd>{concurrency}</dd></div></dl>
+      <dl><div><dt>Progress</dt><dd>{completed} / {total || 480}</dd></div><div><dt>Modes</dt><dd>Instant + Streaming/DCA</dd></div><div><dt>Failed batches</dt><dd>{failed}</dd></div><div><dt>Parallel workers</dt><dd>{concurrency}</dd></div></dl>
       <button className="run-button" onClick={runSweep} disabled={status === "loading" || status === "running"}>{status === "loading" || status === "running" ? "Sweep running…" : "Run full sweep"}</button>
     </section>
   </main>;

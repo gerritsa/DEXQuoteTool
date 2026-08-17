@@ -16,7 +16,10 @@ test("server-renders the DEX Quote Tool dashboard", async () => {
   const html = await response.text();
   assert.match(html, /<title>DEX Quote Tool/);
   assert.match(html, /href="\/favicon\.svg"/);
-  assert.match(html, /See who wins/);
+  assert.doesNotMatch(html, /See who wins/);
+  assert.doesNotMatch(html, /Cross-chain quote benchmark/);
+  assert.doesNotMatch(html, /Thirty fixed THORChain routes/);
+  assert.doesNotMatch(html, /Now uses the latest synchronized/);
   assert.doesNotMatch(html, /Real quotes only/);
   assert.match(html, /Best protocol by size/);
   assert.match(html, /\$500/);

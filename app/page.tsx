@@ -336,15 +336,8 @@ export default function Home() {
       <nav aria-label="Primary navigation"><a className="active" href="#leaderboard">Leaderboard</a><a href="#analysis">Route analysis</a></nav>
     </header>
 
-    <section className="hero">
-      <div><p className="eyebrow">Cross-chain quote benchmark</p><h1>See who wins.<br /><em>At every size.</em></h1><p>Thirty fixed THORChain routes. Seven exact USD trade sizes. Every cell identifies the best comparable quote—or shows that no synchronized run exists yet.</p></div>
-    </section>
-
     <section className="route-section" id="leaderboard">
-      <div className="section-heading">
-        <div><p className="eyebrow">Quote leaderboard</p><h2>Best protocol by size</h2></div>
-        <p>{viewWindow === "now" ? `Now uses the latest synchronized ${executionLabel(executionMode)} batch and shows the winner’s advantage over second place in basis points.` : `${viewWindow.slice(0, -1)} days ranks ${executionLabel(executionMode)} quotes by their average edge versus each synchronized batch median. At least 80% coverage is required.`}</p>
-      </div>
+      <div className="leaderboard-intro"><p className="eyebrow">Quote leaderboard</p><h2>Best protocol by size</h2></div>
 
       <div className="filter-bar leaderboard-tools">
         <fieldset className="protocol-filter"><legend>Compare protocols</legend><div>{partners.map((partner) => <button key={partner.id} className={enabledProtocols.includes(partner.id) ? "selected" : ""} onClick={() => toggleProtocol(partner.id)} aria-pressed={enabledProtocols.includes(partner.id)} disabled={enabledProtocols.length <= 2 && enabledProtocols.includes(partner.id)}><PartnerMark id={partner.id} muted={!enabledProtocols.includes(partner.id)} /><span>{partner.name}</span></button>)}</div><small>Choose at least two. Results recalculate using only enabled protocols.</small></fieldset>

@@ -2,6 +2,8 @@ import { ensureBenchmarkSchema, getD1 } from "../../../db";
 
 type WindowName = "now" | "7d" | "14d" | "30d";
 type ExecutionMode = "standard" | "optimized";
+type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
+const protocols: PartnerId[] = ["near-intents", "chainflip", "thorchain", "maya"];
 type NowRow = { pairId: string; amountId: string; initiatedAt: string; protocol: string; status: string; output: number | null };
 type HistoryRow = { pairId: string; amountId: string; protocol: string; attempts: number; successes: number; comparableSamples: number; averageEdgeBps: number | null; wins: number; latestAt: string };
 
@@ -14,12 +16,13 @@ function groupByCell<T extends { pairId: string; amountId: string }>(rows: T[]) 
   return grouped;
 }
 
-async function latestComparison(mode: ExecutionMode) {
+async function latestComparison(mode: ExecutionMode, selectedProtocols: PartnerId[]) {
+  const protocolPlaceholders = selectedProtocols.map(() => "?").join(", ");
   const result = await getD1().prepare(`
     WITH latest AS (
       SELECT pair_id, range_id, MAX(id) AS run_id
       FROM benchmark_runs
-      WHERE mode = ?1
+      WHERE mode = ?
       GROUP BY pair_id, range_id
     )
     SELECT r.pair_id AS pairId, r.range_id AS amountId, r.initiated_at AS initiatedAt,
@@ -27,8 +30,9 @@ async function latestComparison(mode: ExecutionMode) {
     FROM latest l
     JOIN benchmark_runs r ON r.id = l.run_id
     JOIN protocol_quotes q ON q.run_id = r.id
+    WHERE q.protocol IN (${protocolPlaceholders})
     ORDER BY r.pair_id, r.range_id, q.protocol
-  `).bind(mode).all<NowRow>();
+  `).bind(mode, ...selectedProtocols).all<NowRow>();
 
   const cells = [...groupByCell(result.results).values()].map((rows) => {
     const quoted = rows.filter((row) => row.status === "quoted" && row.output != null && row.output > 0)
@@ -50,9 +54,10 @@ async function latestComparison(mode: ExecutionMode) {
   return { window: "now" as const, mode, cells };
 }
 
-async function periodComparison(window: Exclude<WindowName, "now">, mode: ExecutionMode) {
+async function periodComparison(window: Exclude<WindowName, "now">, mode: ExecutionMode, selectedProtocols: PartnerId[]) {
   const days = Number(window.slice(0, -1));
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const protocolPlaceholders = selectedProtocols.map(() => "?").join(", ");
   const result = await getD1().prepare(`
     WITH attempts AS (
       SELECT r.id AS run_id, r.pair_id AS pair_id, r.range_id AS amount_id,
@@ -60,7 +65,7 @@ async function periodComparison(window: Exclude<WindowName, "now">, mode: Execut
         CAST(q.expected_output_formatted AS REAL) AS output
       FROM benchmark_runs r
       JOIN protocol_quotes q ON q.run_id = r.id
-      WHERE r.mode = ?1 AND r.initiated_at >= ?2
+      WHERE r.mode = ? AND r.initiated_at >= ? AND q.protocol IN (${protocolPlaceholders})
     ), valid AS (
       SELECT *, ROW_NUMBER() OVER (PARTITION BY run_id ORDER BY output) AS output_rank,
         COUNT(*) OVER (PARTITION BY run_id) AS valid_count,
@@ -87,7 +92,7 @@ async function periodComparison(window: Exclude<WindowName, "now">, mode: Execut
     FROM scored
     GROUP BY pair_id, amount_id, protocol
     ORDER BY pair_id, amount_id, protocol
-  `).bind(mode, cutoff).all<HistoryRow>();
+  `).bind(mode, cutoff, ...selectedProtocols).all<HistoryRow>();
 
   const cells = [...groupByCell(result.results).values()].map((rows) => {
     const measured = rows.map((row) => ({ ...row, availability: row.attempts ? row.successes / row.attempts : 0 }));
@@ -117,7 +122,9 @@ export async function GET(request: Request) {
     const requested = url.searchParams.get("window") as WindowName | null;
     const window: WindowName = requested && ["now", "7d", "14d", "30d"].includes(requested) ? requested : "now";
     const mode: ExecutionMode = url.searchParams.get("mode") === "optimized" ? "optimized" : "standard";
-    const payload = window === "now" ? await latestComparison(mode) : await periodComparison(window, mode);
+    const requestedProtocols = (url.searchParams.get("protocols") ?? "").split(",").filter((value): value is PartnerId => protocols.includes(value as PartnerId));
+    const selectedProtocols = requestedProtocols.length >= 2 ? protocols.filter((protocol) => requestedProtocols.includes(protocol)) : protocols;
+    const payload = window === "now" ? await latestComparison(mode, selectedProtocols) : await periodComparison(window, mode, selectedProtocols);
     return Response.json(payload, { headers: { "cache-control": "private, max-age=15" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Comparison data unavailable";

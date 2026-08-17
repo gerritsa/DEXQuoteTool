@@ -93,16 +93,20 @@ type RunResponse = {
   error?: string;
 };
 
-const partners: Array<{ id: PartnerId; name: string; cellName: string; short: string; color: string }> = [
-  { id: "thorchain", name: "THORChain", cellName: "THOR", short: "T", color: "#17b897" },
-  { id: "chainflip", name: "Chainflip", cellName: "Flip", short: "C", color: "#ed49c9" },
-  { id: "near-intents", name: "NEAR Intents", cellName: "NEAR", short: "N", color: "#171817" },
-  { id: "maya", name: "Maya", cellName: "Maya", short: "M", color: "#ef6a38" },
+const partners: Array<{ id: PartnerId; name: string; cellName: string; color: string; logo: string }> = [
+  { id: "near-intents", name: "NEAR", cellName: "NEAR", color: "#171817", logo: "/partners/near.svg" },
+  { id: "chainflip", name: "CHAINFLIP", cellName: "CHAINFLIP", color: "#ed49c9", logo: "/partners/chainflip.svg" },
+  { id: "thorchain", name: "THORCHAIN", cellName: "THORCHAIN", color: "#17b897", logo: "/partners/thorchain.png" },
+  { id: "maya", name: "MAYA PROTOCOL", cellName: "MAYA PROTOCOL", color: "#ef6a38", logo: "/partners/maya.svg" },
 ];
 
 function PartnerMark({ id, muted = false }: { id: PartnerId; muted?: boolean }) {
   const partner = partners.find((item) => item.id === id)!;
-  return <span className={`partner-mark ${muted ? "muted" : ""}`} style={{ background: muted ? undefined : partner.color }} title={partner.name}>{partner.short}</span>;
+  return <span className={`partner-mark logo-${id} ${muted ? "muted" : ""}`} role="img" aria-label={partner.name} title={partner.name}><img src={partner.logo} alt="" /></span>;
+}
+
+function executionLabel(mode: ExecutionMode) {
+  return mode === "standard" ? "Standard swap" : "Streaming/DCA";
 }
 
 function RoutePair({ route }: { route: Route }) {
@@ -129,7 +133,7 @@ function ComparisonResult({ cell, window }: { cell?: ComparisonCell; window: Vie
   return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "Only quote" : cell.tie ? "≤ 2 bps" : formatBps(cell.marginBps)}</strong><small>{cell.successfulQuotes ?? 0} valid quotes</small></span>;
 }
 
-function TrendChart({ data }: { data: TrendResponse }) {
+function TrendChart({ data, activePartners }: { data: TrendResponse; activePartners: typeof partners }) {
   const width = 920;
   const height = 300;
   const padding = { top: 24, right: 18, bottom: 30, left: 58 };
@@ -147,7 +151,7 @@ function TrendChart({ data }: { data: TrendResponse }) {
   const x = (timestamp: number) => padding.left + ((timestamp - start) / Math.max(1, end - start)) * (width - padding.left - padding.right);
   const y = (value: number) => padding.top + ((bound - Math.max(-bound, Math.min(bound, value))) / (bound * 2)) * (height - padding.top - padding.bottom);
 
-  const series = partners.map((partner) => ({
+  const series = activePartners.map((partner) => ({
     partner,
     points: data.buckets.flatMap((bucket) => {
       const point = bucket.points.find((item) => item.protocol === partner.id);
@@ -175,7 +179,7 @@ function TrendChart({ data }: { data: TrendResponse }) {
       const partner = partners.find((item) => item.id === bucket.winner);
       return <span key={bucket.timestamp} style={{ background: partner?.color ?? "#e3e6df" }} title={`${formatTime(new Date(bucket.timestamp).toISOString())}: ${partner?.name ?? "No comparable data"}`} />;
     })}</div>
-    <div className="trend-legend">{partners.map((partner) => {
+    <div className="trend-legend">{activePartners.map((partner) => {
       const summary = data.summary.find((item) => item.protocol === partner.id);
       return <span key={partner.id}><i style={{ background: partner.color }} /><b>{partner.name}</b><small>{summary?.sampleCount ? `${formatBps(summary.averageEdgeBps)} avg · ${Math.round(summary.availability * 100)}% coverage` : "No data"}</small></span>;
     })}</div>
@@ -185,8 +189,8 @@ function TrendChart({ data }: { data: TrendResponse }) {
 export default function Home() {
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [executionMode, setExecutionMode] = useState<ExecutionMode>("standard");
+  const [enabledProtocols, setEnabledProtocols] = useState<PartnerId[]>(() => partners.map((partner) => partner.id));
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("optimized");
   const [viewWindow, setViewWindow] = useState<ViewWindow>("now");
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
   const [comparisonLoading, setComparisonLoading] = useState(true);
@@ -200,13 +204,15 @@ export default function Home() {
   const [trend, setTrend] = useState<TrendResponse | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
+  const activePartners = useMemo(() => partners.filter((partner) => enabledProtocols.includes(partner.id)), [enabledProtocols]);
+  const protocolParam = enabledProtocols.join(",");
 
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setLoading(true);
       try {
-        const response = await fetch(`/api/routes?${new URLSearchParams({ search })}`, { signal: controller.signal });
+        const response = await fetch("/api/routes", { signal: controller.signal });
         const data = await response.json() as CatalogResponse;
         if (!response.ok) throw new Error(data.error ?? "Route catalog unavailable");
         setCatalog(data);
@@ -218,12 +224,12 @@ export default function Home() {
       }
     }, 200);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [search]);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) setComparisonLoading(true); });
-    fetch(`/api/comparison?${new URLSearchParams({ window: viewWindow, mode: executionMode })}`, { signal: controller.signal })
+    fetch(`/api/comparison?${new URLSearchParams({ window: viewWindow, mode: executionMode, protocols: protocolParam })}`, { signal: controller.signal })
       .then(async (response) => {
         const data = await response.json() as ComparisonResponse;
         if (!response.ok) throw new Error(data.error ?? "Comparison data unavailable");
@@ -234,7 +240,7 @@ export default function Home() {
       })
       .finally(() => { if (!controller.signal.aborted) setComparisonLoading(false); });
     return () => controller.abort();
-  }, [comparisonRefresh, executionMode, viewWindow]);
+  }, [comparisonRefresh, executionMode, protocolParam, viewWindow]);
 
   useEffect(() => {
     if (!selectedRoute) return;
@@ -258,7 +264,7 @@ export default function Home() {
     if (!selectedRoute) return;
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) { setTrendLoading(true); setTrendError(null); } });
-    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode, days: String(trendDays) });
+    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode, days: String(trendDays), protocols: protocolParam });
     fetch(`/api/trends?${params}`, { signal: controller.signal })
       .then(async (response) => {
         const data = await response.json() as TrendResponse;
@@ -270,7 +276,7 @@ export default function Home() {
       })
       .finally(() => { if (!controller.signal.aborted) setTrendLoading(false); });
     return () => controller.abort();
-  }, [comparisonRefresh, executionMode, selectedRoute, selectedSize.id, trendDays]);
+  }, [comparisonRefresh, executionMode, protocolParam, selectedRoute, selectedSize.id, trendDays]);
 
   const cells = useMemo(() => new Map((comparison?.cells ?? []).map((cell) => [`${cell.pairId}::${cell.amountId}`, cell])), [comparison]);
   const winnerProtocol = useMemo(() => (runDetails?.quotes ?? [])
@@ -288,6 +294,15 @@ export default function Home() {
   function changeWindow(window: ViewWindow) {
     setViewWindow(window);
     if (window !== "now") setTrendDays(Number(window.slice(0, -1)) as 7 | 14 | 30);
+  }
+
+  function toggleProtocol(id: PartnerId) {
+    setEnabledProtocols((current) => {
+      if (current.includes(id)) {
+        return current.length <= 2 ? current : current.filter((protocol) => protocol !== id);
+      }
+      return partners.filter((partner) => [...current, id].includes(partner.id)).map((partner) => partner.id);
+    });
   }
 
   async function runTestQuote() {
@@ -321,18 +336,18 @@ export default function Home() {
     </header>
 
     <section className="hero">
-      <div><p className="eyebrow">Cross-chain quote benchmark</p><h1>See who wins.<br /><em>At every size.</em></h1><p>Thirty fixed THORChain routes. Eight exact USD trade sizes. Every cell identifies the best comparable instant quote—or shows that no synchronized run exists yet.</p></div>
+      <div><p className="eyebrow">Cross-chain quote benchmark</p><h1>See who wins.<br /><em>At every size.</em></h1><p>Thirty fixed THORChain routes. Seven exact USD trade sizes. Every cell identifies the best comparable quote—or shows that no synchronized run exists yet.</p></div>
     </section>
 
     <section className="route-section" id="leaderboard">
       <div className="section-heading">
         <div><p className="eyebrow">Quote leaderboard</p><h2>Best protocol by size</h2></div>
-        <p>{viewWindow === "now" ? `Now uses the latest synchronized ${executionMode === "standard" ? "instant" : "Streaming/DCA"} batch and shows the winner’s advantage over second place in basis points.` : `${viewWindow.slice(0, -1)} days ranks ${executionMode === "standard" ? "instant" : "Streaming/DCA"} quotes by their average edge versus each synchronized batch median. At least 80% coverage is required.`}</p>
+        <p>{viewWindow === "now" ? `Now uses the latest synchronized ${executionLabel(executionMode)} batch and shows the winner’s advantage over second place in basis points.` : `${viewWindow.slice(0, -1)} days ranks ${executionLabel(executionMode)} quotes by their average edge versus each synchronized batch median. At least 80% coverage is required.`}</p>
       </div>
 
       <div className="filter-bar leaderboard-tools">
-        <label><span>Search 30 fixed routes</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="BTC, ETH, USDC…" /></label>
-        <fieldset><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Instant</button><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Streaming/DCA</button></div></fieldset>
+        <fieldset className="protocol-filter"><legend>Compare protocols</legend><div>{partners.map((partner) => <button key={partner.id} className={enabledProtocols.includes(partner.id) ? "selected" : ""} onClick={() => toggleProtocol(partner.id)} aria-pressed={enabledProtocols.includes(partner.id)} disabled={enabledProtocols.length <= 2 && enabledProtocols.includes(partner.id)}><PartnerMark id={partner.id} muted={!enabledProtocols.includes(partner.id)} /><span>{partner.name}</span></button>)}</div><small>Choose at least two. Results recalculate using only enabled protocols.</small></fieldset>
+        <fieldset><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Standard swap</button><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Streaming/DCA</button></div></fieldset>
         <fieldset><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Now" : window.replace("d", " days")}</button>)}</div></fieldset>
       </div>
 
@@ -340,19 +355,19 @@ export default function Home() {
         <table className="leaderboard-table">
           <thead><tr><th>Directed route</th>{quoteSizes.map((size) => <th key={size.id}>{size.label}</th>)}</tr></thead>
           <tbody>{(catalog?.routes ?? []).map((route, index) => <tr key={route.id}>
-            <th><button className="route-cell" onClick={() => inspect(route, selectedSize)}><small>{String(index + 1).padStart(2, "0")}</small><RoutePair route={route} /><span className="coverage-dots">{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!route.partners.includes(partner.id)} />)}</span></button></th>
+            <th><button className="route-cell" onClick={() => inspect(route, selectedSize)}><small>{String(index + 1).padStart(2, "0")}</small><RoutePair route={route} /><span className="coverage-dots">{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!route.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</span></button></th>
             {quoteSizes.map((size) => <td key={size.id}><button className="result-button" onClick={() => inspect(route, size)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol} at ${size.label}`}><ComparisonResult cell={cells.get(`${route.id}::${size.id}`)} window={viewWindow} /></button></td>)}
           </tr>)}</tbody>
         </table>
-        {!loading && catalog?.routes.length === 0 && <div className="empty-table">No fixed routes match this search.</div>}
+        {!loading && catalog?.routes.length === 0 && <div className="empty-table">No fixed routes are available.</div>}
       </div>}
-      <div className="pagination"><span>{catalog?.counts?.filteredRoutes ?? 0} of 30 routes shown</span><b>Direction is treated separately · {executionMode === "standard" ? "instant" : "Streaming/DCA"} mode</b></div>
+      <div className="pagination"><span>{catalog?.counts?.filteredRoutes ?? 0} fixed routes shown</span><b>Direction is treated separately · {executionLabel(executionMode)} mode</b></div>
     </section>
 
     <section className="route-detail" id="requests">
       <div className="detail-header">
-        <div><p className="eyebrow">Latest synchronized {executionMode === "standard" ? "instant" : "Streaming/DCA"} batch</p>{selectedRoute ? <h2 className="detail-route"><span>{selectedRoute.source.symbol}<small>{selectedRoute.source.chain}</small></span><i>→</i><span>{selectedRoute.destination.symbol}<small>{selectedRoute.destination.chain}</small></span></h2> : <h2>Select a route</h2>}</div>
-        {selectedRoute && <div className="detail-actions"><div className="coverage-summary"><span>Quote partners</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id)} />)}</div></div><button className="run-button" onClick={runTestQuote} disabled={runSubmitting || runLoading}>{runSubmitting ? "Running four quotes…" : `Run ${selectedSize.label} ${executionMode === "standard" ? "instant" : "Streaming/DCA"} test`}</button></div>}
+        <div><p className="eyebrow">Latest synchronized {executionLabel(executionMode)} batch</p>{selectedRoute ? <h2 className="detail-route"><span>{selectedRoute.source.symbol}<small>{selectedRoute.source.chain}</small></span><i>→</i><span>{selectedRoute.destination.symbol}<small>{selectedRoute.destination.chain}</small></span></h2> : <h2>Select a route</h2>}</div>
+        {selectedRoute && <div className="detail-actions"><div className="coverage-summary"><span>Quote partners</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</div></div><button className="run-button" onClick={runTestQuote} disabled={runSubmitting || runLoading}>{runSubmitting ? "Running four quotes…" : `Run ${selectedSize.label} ${executionLabel(executionMode)} test`}</button></div>}
       </div>
 
       <div className="range-layout">
@@ -362,7 +377,7 @@ export default function Home() {
           {runLoading ? <><h3>Loading requests…</h3><p>Reading the latest synchronized batch from quote history.</p></> : runDetails?.run ? <>
             <h3>{runDetails.quotes.length} protocol results</h3>
             <p>Captured {formatTime(runDetails.run.initiatedAt)} · ${runDetails.run.sourceAmountUsd.toLocaleString()} exact input · synchronized within {runDetails.run.maxRequestSkewMs ?? "—"} ms</p>
-            <div className="request-list">{runDetails.quotes.map((quote) => <details key={quote.id}>
+            <div className="request-list">{[...runDetails.quotes].sort((a, b) => partners.findIndex((partner) => partner.id === a.protocol) - partners.findIndex((partner) => partner.id === b.protocol)).map((quote) => <details key={quote.id}>
               <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quote.status}</strong></summary>
               <dl><div><dt>Requested</dt><dd>{formatTime(quote.requestStartedAt)}</dd></div><div><dt>HTTP status</dt><dd>{quote.responseHttpStatus ?? "—"}</dd></div><div><dt>Expected output</dt><dd>{quote.expectedOutputFormatted ?? quote.expectedOutputBaseUnits ?? "—"}</dd></div><div><dt>Quote expiry</dt><dd>{formatTime(quote.quoteExpiresAt ?? undefined)}</dd></div></dl>
               <span className="json-label">Request</span><pre>{quote.requestPayloadJson ?? quote.requestUrl ?? "No request payload stored"}</pre><span className="json-label">Response</span><pre>{quote.rawResponseJson ?? quote.errorMessage ?? "No response payload stored"}</pre>
@@ -373,12 +388,12 @@ export default function Home() {
 
       <section className="trend-card" aria-labelledby="trend-title">
         <header className="trend-header">
-          <div><p className="eyebrow">Historical {executionMode === "standard" ? "instant" : "Streaming/DCA"} quote edge · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} leads over {trendDays} days</> : <>Performance over {trendDays} days</>}</h3><p>{trend?.leader ? `${formatBps(trend.leader.averageEdgeBps)} average edge · ${Math.round(trend.leader.winRate * 100)}% wins · ${Math.round(trend.leader.availability * 100)}% coverage · ${trend.leader.sampleCount} synchronized checks` : "A period leader appears after enough synchronized batches reach 80% quote coverage."}</p></div>
+          <div><p className="eyebrow">Historical {executionLabel(executionMode)} quote edge · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} leads over {trendDays} days</> : <>Performance over {trendDays} days</>}</h3><p>{trend?.leader ? `${formatBps(trend.leader.averageEdgeBps)} average edge · ${Math.round(trend.leader.winRate * 100)}% wins · ${Math.round(trend.leader.availability * 100)}% coverage · ${trend.leader.sampleCount} synchronized checks` : "A period leader appears after enough synchronized batches reach 80% quote coverage."}</p></div>
           <div className="trend-controls">
             <fieldset><legend>Period</legend><div className="segmented light">{([7, 14, 30] as const).map((days) => <button key={days} className={trendDays === days ? "selected" : ""} onClick={() => setTrendDays(days)}>{days}d</button>)}</div></fieldset>
           </div>
         </header>
-        {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
+        {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} activePartners={activePartners} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
         <div className="trend-note"><b>Batch median baseline</b><span>Each protocol is measured against the median output from that exact synchronized batch. Positive basis points mean more destination asset.</span><small>The colour strip shows the strongest protocol in each hour for 7d, or each four-hour bucket for 14d and 30d.</small></div>
       </section>
     </section>

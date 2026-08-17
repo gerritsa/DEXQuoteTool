@@ -27,7 +27,15 @@ test("server-renders the QuoteTool dashboard", async () => {
   assert.match(html, /30 days/);
   assert.match(html, /Batch median/);
   assert.match(html, /Execution mode/);
+  assert.match(html, /Compare protocols/);
+  assert.match(html, /Standard swap/);
   assert.match(html, /Streaming\/DCA/);
+  assert.match(html, /\/partners\/near\.svg/);
+  assert.match(html, /\/partners\/chainflip\.svg/);
+  assert.match(html, /\/partners\/thorchain\.png/);
+  assert.match(html, /\/partners\/maya\.svg/);
+  assert.match(html, /MAYA PROTOCOL/);
+  assert.doesNotMatch(html, /Search 30 fixed routes/);
   assert.doesNotMatch(html, /Route set frozen/);
   assert.doesNotMatch(html, /THORChain reference/);
   assert.doesNotMatch(html, /Metadata endpoints/);

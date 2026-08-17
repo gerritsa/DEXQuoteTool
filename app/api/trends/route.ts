@@ -3,7 +3,7 @@ import { ensureBenchmarkSchema, getD1 } from "../../../db";
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 type ExecutionMode = "standard" | "optimized";
 type ScoredRow = { runId: number; initiatedAt: string; protocol: PartnerId; output: number; medianOutput: number; bestOutput: number; thorOutput: number | null };
-const protocols: PartnerId[] = ["thorchain", "chainflip", "near-intents", "maya"];
+const protocols: PartnerId[] = ["near-intents", "chainflip", "thorchain", "maya"];
 
 function median(values: number[]) {
   if (!values.length) return null;
@@ -21,20 +21,23 @@ export async function GET(request: Request) {
     const requestedDays = Number(url.searchParams.get("days") ?? 7);
     const days = [7, 14, 30].includes(requestedDays) ? requestedDays : 7;
     const mode: ExecutionMode = url.searchParams.get("mode") === "optimized" ? "optimized" : "standard";
+    const requestedProtocols = (url.searchParams.get("protocols") ?? "").split(",").filter((value): value is PartnerId => protocols.includes(value as PartnerId));
+    const selectedProtocols = requestedProtocols.length >= 2 ? protocols.filter((protocol) => requestedProtocols.includes(protocol)) : protocols;
     if (!routeId || !amountId) return Response.json({ error: "routeId and amountId are required" }, { status: 400 });
 
     const endAt = Date.now();
     const startAt = endAt - days * 24 * 60 * 60 * 1000;
     const cutoff = new Date(startAt).toISOString();
     const bucketMs = days === 7 ? 60 * 60 * 1000 : 4 * 60 * 60 * 1000;
+    const protocolPlaceholders = selectedProtocols.map(() => "?").join(", ");
     const result = await getD1().prepare(`
       WITH valid AS (
         SELECT r.id AS run_id, r.initiated_at AS initiated_at, q.protocol AS protocol,
           CAST(q.expected_output_formatted AS REAL) AS output
         FROM benchmark_runs r
         JOIN protocol_quotes q ON q.run_id = r.id
-        WHERE r.mode = ?1 AND r.pair_id = ?2 AND r.range_id = ?3
-          AND r.initiated_at >= ?4 AND q.status = 'quoted'
+        WHERE r.mode = ? AND r.pair_id = ? AND r.range_id = ?
+          AND r.initiated_at >= ? AND q.protocol IN (${protocolPlaceholders}) AND q.status = 'quoted'
           AND CAST(q.expected_output_formatted AS REAL) > 0
       ), ranked AS (
         SELECT *, ROW_NUMBER() OVER (PARTITION BY run_id ORDER BY output) AS output_rank,
@@ -56,7 +59,7 @@ export async function GET(request: Request) {
         ranked.best_output AS bestOutput, ranked.thor_output AS thorOutput
       FROM ranked JOIN medians ON medians.run_id = ranked.run_id
       ORDER BY ranked.initiated_at, ranked.protocol
-    `).bind(mode, routeId, amountId, cutoff).all<ScoredRow>();
+    `).bind(mode, routeId, amountId, cutoff, ...selectedProtocols).all<ScoredRow>();
 
     const rows = result.results.map((row) => ({
       ...row,
@@ -66,7 +69,7 @@ export async function GET(request: Request) {
       won: ((Number(row.bestOutput) - Number(row.output)) / Number(row.bestOutput)) * 10_000 <= 2,
     }));
     const comparableRuns = new Set(rows.map((row) => row.runId)).size;
-    const summary = protocols.map((protocol) => {
+    const summary = selectedProtocols.map((protocol) => {
       const protocolRows = rows.filter((row) => row.protocol === protocol);
       const edges = protocolRows.map((row) => row.edgeBps);
       return {
@@ -85,7 +88,7 @@ export async function GET(request: Request) {
     for (let bucket = Math.floor(startAt / bucketMs) * bucketMs; bucket <= endAt; bucket += bucketMs) bucketStarts.push(bucket);
     const buckets = bucketStarts.map((timestamp) => {
       const bucketRows = rows.filter((row) => Math.floor(row.timestamp / bucketMs) * bucketMs === timestamp);
-      const points = protocols.map((protocol) => {
+      const points = selectedProtocols.map((protocol) => {
         const protocolRows = bucketRows.filter((row) => row.protocol === protocol);
         return {
           protocol,
@@ -100,7 +103,7 @@ export async function GET(request: Request) {
     });
 
     return Response.json({
-      routeId, amountId, mode, days, baseline: "batch_median",
+      routeId, amountId, mode, protocols: selectedProtocols, days, baseline: "batch_median",
       comparisonRule: "Every synchronized batch is compared with its median output; results within 2 bps of the best share the win.",
       minimumAvailability: 0.8, bucketMs,
       startAt: new Date(startAt).toISOString(), endAt: new Date(endAt).toISOString(),

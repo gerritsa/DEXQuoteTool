@@ -109,8 +109,13 @@ function executionLabel(mode: ExecutionMode) {
   return mode === "standard" ? "Standard swap" : "Streaming/DCA";
 }
 
+function AssetMark({ asset }: { asset: Route["source"] }) {
+  const symbol = asset.symbol.toLowerCase();
+  return <span className="asset-mark" role="img" aria-label={`${asset.symbol} logo`}><img src={`/assets/${symbol}.png`} alt="" /></span>;
+}
+
 function RoutePair({ route }: { route: Route }) {
-  return <span className="route-pair"><span><b>{route.source.symbol}</b><small>{route.source.chain}</small></span><i aria-hidden="true">→</i><span><b>{route.destination.symbol}</b><small>{route.destination.chain}</small></span></span>;
+  return <span className="route-pair"><span className="route-asset"><AssetMark asset={route.source} /><span><b>{route.source.symbol}</b><small>{route.source.chain}</small></span></span><i aria-hidden="true">→</i><span className="route-asset"><AssetMark asset={route.destination} /><span><b>{route.destination.symbol}</b><small>{route.destination.chain}</small></span></span></span>;
 }
 
 function formatTime(value?: string) {
@@ -131,6 +136,26 @@ function ComparisonResult({ cell, window }: { cell?: ComparisonCell; window: Vie
     return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span><strong>{formatBps(cell.averageEdgeBps)}</strong><small>{Math.round((cell.winRate ?? 0) * 100)}% wins · {cell.sampleCount ?? 0} checks</small></span>;
   }
   return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "Only quote" : cell.tie ? "≤ 2 bps" : formatBps(cell.marginBps)}</strong><small>{cell.successfulQuotes ?? 0} valid quotes</small></span>;
+}
+
+function RequestDetails({ runDetails, runLoading, selectedSize }: { runDetails: RunResponse | null; runLoading: boolean; selectedSize: QuoteSize }) {
+  const winnerProtocol = [...(runDetails?.quotes ?? [])]
+    .filter((quote) => quote.status === "quoted" && quote.expectedOutputFormatted)
+    .sort((a, b) => Number(b.expectedOutputFormatted) - Number(a.expectedOutputFormatted))[0]?.protocol;
+  const orderedQuotes = [...(runDetails?.quotes ?? [])].sort((a, b) => partners.findIndex((partner) => partner.id === a.protocol) - partners.findIndex((partner) => partner.id === b.protocol));
+
+  return <div className={`request-panel ${runDetails?.quotes.length ? "has-quotes" : ""}`}>
+    <p className="eyebrow">Latest synchronized requests · {selectedSize.label}</p>
+    {runLoading ? <><h3>Loading requests…</h3><p>Reading the latest synchronized batch from quote history.</p></> : runDetails?.run ? <>
+      <h3>{runDetails.quotes.length} protocol results</h3>
+      <p>Captured {formatTime(runDetails.run.initiatedAt)} · ${runDetails.run.sourceAmountUsd.toLocaleString()} exact input · synchronized within {runDetails.run.maxRequestSkewMs ?? "—"} ms</p>
+      <div className="request-list">{orderedQuotes.map((quote) => <details key={quote.id}>
+        <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quote.status}</strong></summary>
+        <dl><div><dt>Requested</dt><dd>{formatTime(quote.requestStartedAt)}</dd></div><div><dt>HTTP status</dt><dd>{quote.responseHttpStatus ?? "—"}</dd></div><div><dt>Expected output</dt><dd>{quote.expectedOutputFormatted ?? quote.expectedOutputBaseUnits ?? "—"}</dd></div><div><dt>Quote expiry</dt><dd>{formatTime(quote.quoteExpiresAt ?? undefined)}</dd></div></dl>
+        <span className="json-label">Request</span><pre>{quote.requestPayloadJson ?? quote.requestUrl ?? "No request payload stored"}</pre><span className="json-label">Response</span><pre>{quote.rawResponseJson ?? quote.errorMessage ?? "No response payload stored"}</pre>
+      </details>)}</div>
+    </> : <><h3>No captured requests yet</h3><p>{runDetails?.error ?? "The latest scheduled sweep for this route, size, and execution mode will appear here when available."}</p><dl><div><dt>Request timestamp</dt><dd>—</dd></div><div><dt>Exact input amount</dt><dd>{selectedSize.label}</dd></div><div><dt>Raw request / response</dt><dd>Available after collection</dd></div></dl></>}
+  </div>;
 }
 
 function TrendChart({ data, activePartners }: { data: TrendResponse; activePartners: typeof partners }) {
@@ -194,12 +219,11 @@ export default function Home() {
   const [viewWindow, setViewWindow] = useState<ViewWindow>("now");
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
   const [comparisonLoading, setComparisonLoading] = useState(true);
-  const [comparisonRefresh, setComparisonRefresh] = useState(0);
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
   const [selectedSize, setSelectedSize] = useState<QuoteSize>(quoteSizes[3]);
   const [runDetails, setRunDetails] = useState<RunResponse | null>(null);
   const [runLoading, setRunLoading] = useState(false);
-  const [runSubmitting, setRunSubmitting] = useState(false);
+  const [requestsOpen, setRequestsOpen] = useState(false);
   const [trendDays, setTrendDays] = useState<7 | 14 | 30>(7);
   const [trend, setTrend] = useState<TrendResponse | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
@@ -240,7 +264,7 @@ export default function Home() {
       })
       .finally(() => { if (!controller.signal.aborted) setComparisonLoading(false); });
     return () => controller.abort();
-  }, [comparisonRefresh, executionMode, protocolParam, viewWindow]);
+  }, [executionMode, protocolParam, viewWindow]);
 
   useEffect(() => {
     if (!selectedRoute) return;
@@ -276,19 +300,24 @@ export default function Home() {
       })
       .finally(() => { if (!controller.signal.aborted) setTrendLoading(false); });
     return () => controller.abort();
-  }, [comparisonRefresh, executionMode, protocolParam, selectedRoute, selectedSize.id, trendDays]);
+  }, [executionMode, protocolParam, selectedRoute, selectedSize.id, trendDays]);
+
+  useEffect(() => {
+    if (!requestsOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setRequestsOpen(false); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [requestsOpen]);
 
   const cells = useMemo(() => new Map((comparison?.cells ?? []).map((cell) => [`${cell.pairId}::${cell.amountId}`, cell])), [comparison]);
-  const winnerProtocol = useMemo(() => (runDetails?.quotes ?? [])
-    .filter((quote) => quote.status === "quoted" && quote.expectedOutputFormatted)
-    .sort((a, b) => Number(b.expectedOutputFormatted) - Number(a.expectedOutputFormatted))[0]?.protocol, [runDetails]);
   const trendLeaderPartner = partners.find((partner) => partner.id === trend?.leader?.protocol);
 
   function inspect(route: Route, size: QuoteSize) {
     setSelectedRoute(route);
     setSelectedSize(size);
     if (viewWindow !== "now") setTrendDays(Number(viewWindow.slice(0, -1)) as 7 | 14 | 30);
-    window.requestAnimationFrame(() => document.getElementById("requests")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    setRequestsOpen(false);
+    window.requestAnimationFrame(() => document.getElementById("analysis")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
 
   function changeWindow(window: ViewWindow) {
@@ -305,34 +334,10 @@ export default function Home() {
     });
   }
 
-  async function runTestQuote() {
-    if (!selectedRoute) return;
-    setRunSubmitting(true);
-    setRunDetails(null);
-    try {
-      const response = await fetch("/api/runs", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode }),
-      });
-      const result = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(result.error ?? "Test run failed");
-      const latest = await fetch(`/api/runs?${new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode })}`);
-      const data = await latest.json() as RunResponse;
-      if (!latest.ok) throw new Error(data.error ?? "Quote history unavailable");
-      setRunDetails(data);
-      setComparisonRefresh((value) => value + 1);
-    } catch (error) {
-      setRunDetails({ run: null, quotes: [], error: error instanceof Error ? error.message : "Test run failed" });
-    } finally {
-      setRunSubmitting(false);
-    }
-  }
-
   return <main className="app-shell" id="top">
     <header className="topbar">
       <a className="brand" href="#top"><span className="brand-symbol"><i /><i /><i /></span><span>Quote<span>Tool</span></span></a>
-      <nav aria-label="Primary navigation"><a className="active" href="#leaderboard">Leaderboard</a><a href="#requests">Quote details</a></nav>
+      <nav aria-label="Primary navigation"><a className="active" href="#leaderboard">Leaderboard</a><a href="#analysis">Route analysis</a></nav>
     </header>
 
     <section className="hero">
@@ -364,26 +369,15 @@ export default function Home() {
       <div className="pagination"><span>{catalog?.counts?.filteredRoutes ?? 0} fixed routes shown</span><b>Direction is treated separately · {executionLabel(executionMode)} mode</b></div>
     </section>
 
-    <section className="route-detail" id="requests">
-      <div className="detail-header">
-        <div><p className="eyebrow">Latest synchronized {executionLabel(executionMode)} batch</p>{selectedRoute ? <h2 className="detail-route"><span>{selectedRoute.source.symbol}<small>{selectedRoute.source.chain}</small></span><i>→</i><span>{selectedRoute.destination.symbol}<small>{selectedRoute.destination.chain}</small></span></h2> : <h2>Select a route</h2>}</div>
-        {selectedRoute && <div className="detail-actions"><div className="coverage-summary"><span>Quote partners</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</div></div><button className="run-button" onClick={runTestQuote} disabled={runSubmitting || runLoading}>{runSubmitting ? "Running four quotes…" : `Run ${selectedSize.label} ${executionLabel(executionMode)} test`}</button></div>}
+    <section className="route-detail" id="analysis">
+      <div className="detail-header compact">
+        <div><p className="eyebrow">Route analysis · {executionLabel(executionMode)}</p>{selectedRoute ? <h2 className="detail-route"><RoutePair route={selectedRoute} /></h2> : <h2>Select a route</h2>}</div>
+        {selectedRoute && <div className="detail-actions"><div className="coverage-summary"><span>Compared protocols</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</div></div></div>}
       </div>
 
-      <div className="range-layout">
-        <div className="range-grid amount-grid">{quoteSizes.map((size) => <button key={size.id} className={selectedSize.id === size.id ? "selected" : ""} onClick={() => setSelectedSize(size)}><span>{size.label}</span><b>Exact USD input</b><small>{selectedSize.id === size.id && runDetails?.run ? `Last run ${formatTime(runDetails.run.initiatedAt)}` : "Same notional every run"}</small></button>)}</div>
-        <aside className={`request-panel ${runDetails?.quotes.length ? "has-quotes" : ""}`}>
-          <p className="eyebrow">Latest requests · {selectedSize.label}</p>
-          {runLoading ? <><h3>Loading requests…</h3><p>Reading the latest synchronized batch from quote history.</p></> : runDetails?.run ? <>
-            <h3>{runDetails.quotes.length} protocol results</h3>
-            <p>Captured {formatTime(runDetails.run.initiatedAt)} · ${runDetails.run.sourceAmountUsd.toLocaleString()} exact input · synchronized within {runDetails.run.maxRequestSkewMs ?? "—"} ms</p>
-            <div className="request-list">{[...runDetails.quotes].sort((a, b) => partners.findIndex((partner) => partner.id === a.protocol) - partners.findIndex((partner) => partner.id === b.protocol)).map((quote) => <details key={quote.id}>
-              <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quote.status}</strong></summary>
-              <dl><div><dt>Requested</dt><dd>{formatTime(quote.requestStartedAt)}</dd></div><div><dt>HTTP status</dt><dd>{quote.responseHttpStatus ?? "—"}</dd></div><div><dt>Expected output</dt><dd>{quote.expectedOutputFormatted ?? quote.expectedOutputBaseUnits ?? "—"}</dd></div><div><dt>Quote expiry</dt><dd>{formatTime(quote.quoteExpiresAt ?? undefined)}</dd></div></dl>
-              <span className="json-label">Request</span><pre>{quote.requestPayloadJson ?? quote.requestUrl ?? "No request payload stored"}</pre><span className="json-label">Response</span><pre>{quote.rawResponseJson ?? quote.errorMessage ?? "No response payload stored"}</pre>
-            </details>)}</div>
-          </> : <><h3>No captured requests yet</h3><p>{runDetails?.error ?? "Choose an exact trade size and run a test. All four protocol results—including unsupported and failed requests—will appear together."}</p><dl><div><dt>Request timestamp</dt><dd>—</dd></div><div><dt>Exact input amount</dt><dd>{selectedSize.label}</dd></div><div><dt>Response latency</dt><dd>—</dd></div><div><dt>Raw request / response</dt><dd>Available after first run</dd></div></dl></>}
-        </aside>
+      <div className="analysis-toolbar">
+        <div className="size-selectors" role="group" aria-label="Exact USD input for route analysis">{quoteSizes.map((size) => <button key={size.id} className={selectedSize.id === size.id ? "selected" : ""} onClick={() => setSelectedSize(size)} aria-pressed={selectedSize.id === size.id}><strong>{size.label}</strong><small>Exact input</small></button>)}</div>
+        <button className="latest-request-button" onClick={() => setRequestsOpen(true)}><span>Latest requests</span><b>{runLoading ? "Loading…" : runDetails?.run ? formatTime(runDetails.run.initiatedAt) : "No batch yet"}</b></button>
       </div>
 
       <section className="trend-card" aria-labelledby="trend-title">
@@ -396,6 +390,13 @@ export default function Home() {
         {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} activePartners={activePartners} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
         <div className="trend-note"><b>Batch median baseline</b><span>Each protocol is measured against the median output from that exact synchronized batch. Positive basis points mean more destination asset.</span><small>The colour strip shows the strongest protocol in each hour for 7d, or each four-hour bucket for 14d and 30d.</small></div>
       </section>
+
+      {requestsOpen && <div className="request-drawer-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setRequestsOpen(false); }}>
+        <aside className="request-drawer" role="dialog" aria-modal="true" aria-labelledby="request-drawer-title">
+          <header><div><p className="eyebrow">Request audit</p><h2 id="request-drawer-title">{selectedRoute ? `${selectedRoute.source.symbol} → ${selectedRoute.destination.symbol}` : "Latest requests"}</h2></div><button onClick={() => setRequestsOpen(false)} aria-label="Close latest requests">×</button></header>
+          <RequestDetails runDetails={runDetails} runLoading={runLoading} selectedSize={selectedSize} />
+        </aside>
+      </div>}
     </section>
 
     <footer><b>QuoteTool</b><span>Real requests. Exact sizes. Explainable winners.</span><a href="#top">Back to top ↑</a></footer>

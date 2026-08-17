@@ -40,7 +40,9 @@ test("server-renders the QuoteTool dashboard", async () => {
   assert.doesNotMatch(html, /THORChain reference/);
   assert.doesNotMatch(html, /Metadata endpoints/);
   assert.doesNotMatch(html, /Partner status/);
-  assert.match(html, /No captured requests yet/);
+  assert.match(html, /Route analysis/);
+  assert.match(html, /Latest requests/);
+  assert.doesNotMatch(html, /Run \$.*test/);
   assert.doesNotMatch(html, /A complete audit trail/);
   assert.doesNotMatch(html, /THORChain assets/);
   assert.doesNotMatch(html, /Illustrative preview values/);

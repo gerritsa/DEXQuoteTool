@@ -94,10 +94,10 @@ type RunResponse = {
 };
 
 const partners: Array<{ id: PartnerId; name: string; cellName: string; color: string; logo: string }> = [
-  { id: "near-intents", name: "NEAR", cellName: "NEAR", color: "#171817", logo: "/partners/near.svg" },
-  { id: "chainflip", name: "CHAINFLIP", cellName: "CHAINFLIP", color: "#ed49c9", logo: "/partners/chainflip.svg" },
   { id: "thorchain", name: "THORCHAIN", cellName: "THORCHAIN", color: "#17b897", logo: "/partners/thorchain.png" },
   { id: "maya", name: "MAYA PROTOCOL", cellName: "MAYA PROTOCOL", color: "#ef6a38", logo: "/partners/maya.svg" },
+  { id: "chainflip", name: "CHAINFLIP", cellName: "CHAINFLIP", color: "#ed49c9", logo: "/partners/chainflip.svg" },
+  { id: "near-intents", name: "NEAR", cellName: "NEAR", color: "#171817", logo: "/partners/near.svg" },
 ];
 
 function PartnerMark({ id, muted = false }: { id: PartnerId; muted?: boolean }) {
@@ -200,10 +200,6 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
         return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => <circle key={point.timestamp} cx={x(point.timestamp)} cy={y(point.value)} r="3" fill={partner.color}><title>{partner.name} · {formatBps(point.value)} · {point.point.sampleCount} samples in bucket</title></circle>)}</g>;
       })}
     </svg>
-    <div className="winner-strip" aria-label="Winning protocol by time bucket">{data.buckets.map((bucket) => {
-      const partner = partners.find((item) => item.id === bucket.winner);
-      return <span key={bucket.timestamp} style={{ background: partner?.color ?? "#e3e6df" }} title={`${formatTime(new Date(bucket.timestamp).toISOString())}: ${partner?.name ?? "No comparable data"}`} />;
-    })}</div>
     <div className="trend-legend">{activePartners.map((partner) => {
       const summary = data.summary.find((item) => item.protocol === partner.id);
       return <span key={partner.id}><i style={{ background: partner.color }} /><b>{partner.name}</b><small>{summary?.sampleCount ? `${formatBps(summary.averageEdgeBps)} avg · ${Math.round(summary.availability * 100)}% coverage` : "No data"}</small></span>;
@@ -336,7 +332,7 @@ export default function Home() {
 
   return <main className="app-shell" id="top">
     <header className="topbar">
-      <a className="brand" href="#top"><span className="brand-symbol"><i /><i /><i /></span><span>Quote<span>Tool</span></span></a>
+      <a className="brand" href="#top"><span className="brand-symbol"><i /><i /><i /></span><span>DEX Quote <span>Tool</span></span></a>
       <nav aria-label="Primary navigation"><a className="active" href="#leaderboard">Leaderboard</a><a href="#analysis">Route analysis</a></nav>
     </header>
 
@@ -352,7 +348,7 @@ export default function Home() {
 
       <div className="filter-bar leaderboard-tools">
         <fieldset className="protocol-filter"><legend>Compare protocols</legend><div>{partners.map((partner) => <button key={partner.id} className={enabledProtocols.includes(partner.id) ? "selected" : ""} onClick={() => toggleProtocol(partner.id)} aria-pressed={enabledProtocols.includes(partner.id)} disabled={enabledProtocols.length <= 2 && enabledProtocols.includes(partner.id)}><PartnerMark id={partner.id} muted={!enabledProtocols.includes(partner.id)} /><span>{partner.name}</span></button>)}</div><small>Choose at least two. Results recalculate using only enabled protocols.</small></fieldset>
-        <fieldset><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Standard swap</button><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Streaming/DCA</button></div></fieldset>
+        <fieldset><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Streaming/DCA</button><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Standard swap</button></div></fieldset>
         <fieldset><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Now" : window.replace("d", " days")}</button>)}</div></fieldset>
       </div>
 
@@ -366,7 +362,6 @@ export default function Home() {
         </table>
         {!loading && catalog?.routes.length === 0 && <div className="empty-table">No fixed routes are available.</div>}
       </div>}
-      <div className="pagination"><span>{catalog?.counts?.filteredRoutes ?? 0} fixed routes shown</span><b>Direction is treated separately · {executionLabel(executionMode)} mode</b></div>
     </section>
 
     <section className="route-detail" id="analysis">
@@ -388,7 +383,7 @@ export default function Home() {
           </div>
         </header>
         {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} activePartners={activePartners} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
-        <div className="trend-note"><b>Batch median baseline</b><span>Each protocol is measured against the median output from that exact synchronized batch. Positive basis points mean more destination asset.</span><small>The colour strip shows the strongest protocol in each hour for 7d, or each four-hour bucket for 14d and 30d.</small></div>
+        <div className="trend-note"><b>Batch median baseline</b><span>Each protocol is measured against the median output from that exact synchronized batch. Positive basis points mean more destination asset.</span></div>
       </section>
 
       {requestsOpen && <div className="request-drawer-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setRequestsOpen(false); }}>
@@ -399,6 +394,6 @@ export default function Home() {
       </div>}
     </section>
 
-    <footer><b>QuoteTool</b><span>Real requests. Exact sizes. Explainable winners.</span><a href="#top">Back to top ↑</a></footer>
+    <footer><b>DEX Quote Tool</b><span>Real requests. Exact sizes. Explainable winners.</span><a href="#top">Back to top ↑</a></footer>
   </main>;
 }

@@ -10,11 +10,12 @@ async function render(path = "/") {
   }, { waitUntil() {}, passThroughOnException() {} });
 }
 
-test("server-renders the QuoteTool dashboard", async () => {
+test("server-renders the DEX Quote Tool dashboard", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /<title>QuoteTool/);
+  assert.match(html, /<title>DEX Quote Tool/);
+  assert.match(html, /href="\/favicon\.svg"/);
   assert.match(html, /See who wins/);
   assert.doesNotMatch(html, /Real quotes only/);
   assert.match(html, /Best protocol by size/);
@@ -30,12 +31,17 @@ test("server-renders the QuoteTool dashboard", async () => {
   assert.match(html, /Compare protocols/);
   assert.match(html, /Standard swap/);
   assert.match(html, /Streaming\/DCA/);
+  assert.match(html, /Execution mode[\s\S]*Streaming\/DCA[\s\S]*Standard swap/);
   assert.match(html, /\/partners\/near\.svg/);
   assert.match(html, /\/partners\/chainflip\.svg/);
   assert.match(html, /\/partners\/thorchain\.png/);
   assert.match(html, /\/partners\/maya\.svg/);
   assert.match(html, /MAYA PROTOCOL/);
+  assert.match(html, /THORCHAIN[\s\S]*MAYA PROTOCOL[\s\S]*CHAINFLIP[\s\S]*NEAR/);
   assert.doesNotMatch(html, /Search 30 fixed routes/);
+  assert.doesNotMatch(html, /30 fixed routes shown/);
+  assert.doesNotMatch(html, /Direction is treated separately/);
+  assert.doesNotMatch(html, /colour strip/);
   assert.doesNotMatch(html, /Route set frozen/);
   assert.doesNotMatch(html, /THORChain reference/);
   assert.doesNotMatch(html, /Metadata endpoints/);

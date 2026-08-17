@@ -6,8 +6,8 @@ import "./globals.css";
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
-const title = "QuoteTool — Cross-chain quote intelligence";
-const description = "Compare synchronized instant swap quotes across 30 fixed THORChain routes and eight exact USD trade sizes.";
+const title = "DEX Quote Tool — Cross-chain quote intelligence";
+const description = "Compare synchronized cross-chain quotes across 30 fixed routes and seven exact USD trade sizes.";
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
@@ -18,7 +18,7 @@ export async function generateMetadata(): Promise<Metadata> {
     title,
     description,
     icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
-    openGraph: { title, description, type: "website", images: [{ url: imageUrl, width: 1536, height: 1024, alt: "QuoteTool — see who wins at every trade size" }] },
+    openGraph: { title, description, type: "website", images: [{ url: imageUrl, width: 1536, height: 1024, alt: "DEX Quote Tool — see who wins at every trade size" }] },
     twitter: { card: "summary_large_image", title, description, images: [imageUrl] },
   };
 }

@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { quoteSizes, type QuoteSize } from "../lib/quotes/sizes";
 
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
-type ViewWindow = "now" | "7d";
+type ViewWindow = "now" | "7d" | "14d" | "30d";
+type TrendBaseline = "median" | "thorchain";
 
 type Route = {
   id: string;
@@ -27,13 +28,34 @@ type ComparisonCell = {
   amountId: string;
   capturedAt?: string;
   leader: PartnerId | null;
-  marginPct?: number | null;
+  marginBps?: number | null;
   tie?: boolean;
   successfulQuotes?: number;
-  averageShortfallBps?: number | null;
+  averageEdgeBps?: number | null;
   winRate?: number | null;
   sampleCount?: number;
   availability?: number | null;
+  coverageQualified?: boolean;
+};
+
+type TrendPoint = {
+  protocol: PartnerId;
+  edgeBps: number | null;
+  vsThorBps: number | null;
+  sampleCount: number;
+  winRate: number | null;
+};
+
+type TrendResponse = {
+  days: number;
+  bucketMs: number;
+  startAt: string;
+  endAt: string;
+  comparableRuns: number;
+  leader: null | { protocol: PartnerId; averageEdgeBps: number; medianEdgeBps: number; winRate: number; sampleCount: number; availability: number };
+  summary: Array<{ protocol: PartnerId; averageEdgeBps: number | null; medianEdgeBps: number | null; winRate: number | null; sampleCount: number; availability: number }>;
+  buckets: Array<{ timestamp: number; winner: PartnerId | null; points: TrendPoint[] }>;
+  error?: string;
 };
 
 type ComparisonResponse = {
@@ -92,13 +114,73 @@ function formatTime(value?: string) {
   return new Date(value).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+function formatBps(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const precision = Math.abs(value) < 10 ? 1 : 0;
+  return `${value > 0 ? "+" : ""}${value.toFixed(precision)} bps`;
+}
+
 function ComparisonResult({ cell, window }: { cell?: ComparisonCell; window: ViewWindow }) {
-  if (!cell?.leader) return <span className="cell-empty"><b>—</b><small>No run</small></span>;
+  if (!cell?.leader) return <span className="cell-empty"><b>—</b><small>{cell?.sampleCount ? "Low coverage" : "No run"}</small></span>;
   const partner = partners.find((item) => item.id === cell.leader)!;
-  if (window === "7d") {
-    return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span><strong>{Math.round((cell.winRate ?? 0) * 100)}% wins</strong><small>{cell.sampleCount ?? 0} comparable samples</small></span>;
+  if (window !== "now") {
+    return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span><strong>{formatBps(cell.averageEdgeBps)}</strong><small>{Math.round((cell.winRate ?? 0) * 100)}% wins · {cell.sampleCount ?? 0} checks</small></span>;
   }
-  return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginPct == null ? "Only quote" : cell.tie ? "≤ 2 bps" : `+${cell.marginPct.toFixed(cell.marginPct < 0.1 ? 3 : 2)}%`}</strong><small>{cell.successfulQuotes ?? 0} valid quotes</small></span>;
+  return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "Only quote" : cell.tie ? "≤ 2 bps" : formatBps(cell.marginBps)}</strong><small>{cell.successfulQuotes ?? 0} valid quotes</small></span>;
+}
+
+function TrendChart({ data, baseline }: { data: TrendResponse; baseline: TrendBaseline }) {
+  const width = 920;
+  const height = 300;
+  const padding = { top: 24, right: 18, bottom: 30, left: 58 };
+  const valueFor = (point: TrendPoint) => baseline === "median" ? point.edgeBps : point.vsThorBps;
+  const plotted = data.buckets.flatMap((bucket) => bucket.points.flatMap((point) => {
+    const value = valueFor(point);
+    return value == null ? [] : [{ timestamp: bucket.timestamp, value, point }];
+  }));
+  if (!plotted.length) return <div className="trend-empty"><b>No trend line yet</b><span>Run this exact route and size at least twice to start the chart.</span></div>;
+
+  const absolute = plotted.map((point) => Math.abs(point.value)).sort((a, b) => a - b);
+  const percentile = absolute[Math.min(absolute.length - 1, Math.floor(absolute.length * 0.95))] ?? 5;
+  const bound = Math.max(5, Math.ceil(Math.min(percentile * 1.15, 1_000) / 5) * 5);
+  const start = new Date(data.startAt).getTime();
+  const end = new Date(data.endAt).getTime();
+  const x = (timestamp: number) => padding.left + ((timestamp - start) / Math.max(1, end - start)) * (width - padding.left - padding.right);
+  const y = (value: number) => padding.top + ((bound - Math.max(-bound, Math.min(bound, value))) / (bound * 2)) * (height - padding.top - padding.bottom);
+
+  const series = partners.map((partner) => ({
+    partner,
+    points: data.buckets.flatMap((bucket) => {
+      const point = bucket.points.find((item) => item.protocol === partner.id);
+      const value = point ? valueFor(point) : null;
+      return point && value != null ? [{ timestamp: bucket.timestamp, value, point }] : [];
+    }),
+  }));
+
+  return <div className="trend-visual">
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${data.days}-day quote edge in basis points ${baseline === "median" ? "versus the batch median" : "versus THORChain"}`}>
+      {[bound, bound / 2, 0, -bound / 2, -bound].map((value) => <g key={value}><line x1={padding.left} x2={width - padding.right} y1={y(value)} y2={y(value)} className={value === 0 ? "zero-line" : "grid-line"} /><text x={padding.left - 9} y={y(value) + 3} textAnchor="end">{value > 0 ? "+" : ""}{Math.round(value)}</text></g>)}
+      <text x={padding.left} y={height - 7}>{new Date(start).toLocaleDateString([], { month: "short", day: "numeric" })}</text>
+      <text x={width - padding.right} y={height - 7} textAnchor="end">{new Date(end).toLocaleDateString([], { month: "short", day: "numeric" })}</text>
+      {series.map(({ partner, points }) => {
+        const segments: typeof points[] = [];
+        for (const point of points) {
+          const current = segments[segments.length - 1];
+          if (!current || point.timestamp - current[current.length - 1].timestamp > data.bucketMs * 1.5) segments.push([point]);
+          else current.push(point);
+        }
+        return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => <circle key={point.timestamp} cx={x(point.timestamp)} cy={y(point.value)} r="3" fill={partner.color}><title>{partner.name} · {formatBps(point.value)} · {point.point.sampleCount} samples in bucket</title></circle>)}</g>;
+      })}
+    </svg>
+    <div className="winner-strip" aria-label="Winning protocol by time bucket">{data.buckets.map((bucket) => {
+      const partner = partners.find((item) => item.id === bucket.winner);
+      return <span key={bucket.timestamp} style={{ background: partner?.color ?? "#e3e6df" }} title={`${formatTime(new Date(bucket.timestamp).toISOString())}: ${partner?.name ?? "No comparable data"}`} />;
+    })}</div>
+    <div className="trend-legend">{partners.map((partner) => {
+      const summary = data.summary.find((item) => item.protocol === partner.id);
+      return <span key={partner.id}><i style={{ background: partner.color }} /><b>{partner.name}</b><small>{summary?.sampleCount ? `${formatBps(summary.averageEdgeBps)} avg · ${Math.round(summary.availability * 100)}% coverage` : "No data"}</small></span>;
+    })}</div>
+  </div>;
 }
 
 export default function Home() {
@@ -114,6 +196,11 @@ export default function Home() {
   const [runDetails, setRunDetails] = useState<RunResponse | null>(null);
   const [runLoading, setRunLoading] = useState(false);
   const [runSubmitting, setRunSubmitting] = useState(false);
+  const [trendDays, setTrendDays] = useState<7 | 14 | 30>(7);
+  const [trendBaseline, setTrendBaseline] = useState<TrendBaseline>("median");
+  const [trend, setTrend] = useState<TrendResponse | null>(null);
+  const [trendLoading, setTrendLoading] = useState(false);
+  const [trendError, setTrendError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -168,15 +255,40 @@ export default function Home() {
     return () => controller.abort();
   }, [selectedRoute, selectedSize.id]);
 
+  useEffect(() => {
+    if (!selectedRoute) return;
+    const controller = new AbortController();
+    Promise.resolve().then(() => { if (!controller.signal.aborted) { setTrendLoading(true); setTrendError(null); } });
+    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, days: String(trendDays) });
+    fetch(`/api/trends?${params}`, { signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json() as TrendResponse;
+        if (!response.ok) throw new Error(data.error ?? "Trend data unavailable");
+        setTrend(data);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) { setTrend(null); setTrendError(error instanceof Error ? error.message : "Trend data unavailable"); }
+      })
+      .finally(() => { if (!controller.signal.aborted) setTrendLoading(false); });
+    return () => controller.abort();
+  }, [comparisonRefresh, selectedRoute, selectedSize.id, trendDays]);
+
   const cells = useMemo(() => new Map((comparison?.cells ?? []).map((cell) => [`${cell.pairId}::${cell.amountId}`, cell])), [comparison]);
   const winnerProtocol = useMemo(() => (runDetails?.quotes ?? [])
     .filter((quote) => quote.status === "quoted" && quote.expectedOutputFormatted)
     .sort((a, b) => Number(b.expectedOutputFormatted) - Number(a.expectedOutputFormatted))[0]?.protocol, [runDetails]);
+  const trendLeaderPartner = partners.find((partner) => partner.id === trend?.leader?.protocol);
 
   function inspect(route: Route, size: QuoteSize) {
     setSelectedRoute(route);
     setSelectedSize(size);
+    if (viewWindow !== "now") setTrendDays(Number(viewWindow.slice(0, -1)) as 7 | 14 | 30);
     window.requestAnimationFrame(() => document.getElementById("requests")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }
+
+  function changeWindow(window: ViewWindow) {
+    setViewWindow(window);
+    if (window !== "now") setTrendDays(Number(window.slice(0, -1)) as 7 | 14 | 30);
   }
 
   async function runTestQuote() {
@@ -217,12 +329,12 @@ export default function Home() {
     <section className="route-section" id="leaderboard">
       <div className="section-heading">
         <div><p className="eyebrow">Quote leaderboard</p><h2>Best protocol by size</h2></div>
-        <p>{viewWindow === "now" ? "Now uses the latest synchronized batch and shows the winner’s advantage over second place." : "Seven days ranks each protocol by its normalized output across comparable batches; quotes are never compounded."}</p>
+        <p>{viewWindow === "now" ? "Now uses the latest synchronized batch and shows the winner’s advantage over second place in basis points." : `${viewWindow.slice(0, -1)} days ranks protocols by their average quote edge versus each synchronized batch median. At least 80% coverage is required.`}</p>
       </div>
 
       <div className="filter-bar leaderboard-tools">
         <label><span>Search 30 fixed routes</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="BTC, ETH, USDC…" /></label>
-        <fieldset><legend>Comparison window</legend><div className="segmented"><button className={viewWindow === "now" ? "selected" : ""} onClick={() => setViewWindow("now")}>Now</button><button className={viewWindow === "7d" ? "selected" : ""} onClick={() => setViewWindow("7d")}>7 days</button></div></fieldset>
+        <fieldset><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Now" : window.replace("d", " days")}</button>)}</div></fieldset>
         <div className="catalog-stamp"><span>Route set frozen</span><b>{formatTime(catalog?.routeSet?.selectedAt)}</b></div>
       </div>
 
@@ -260,6 +372,18 @@ export default function Home() {
           </> : <><h3>No captured requests yet</h3><p>{runDetails?.error ?? "Choose an exact trade size and run a test. All four protocol results—including unsupported and failed requests—will appear together."}</p><dl><div><dt>Request timestamp</dt><dd>—</dd></div><div><dt>Exact input amount</dt><dd>{selectedSize.label}</dd></div><div><dt>Response latency</dt><dd>—</dd></div><div><dt>Raw request / response</dt><dd>Available after first run</dd></div></dl></>}
         </aside>
       </div>
+
+      <section className="trend-card" aria-labelledby="trend-title">
+        <header className="trend-header">
+          <div><p className="eyebrow">Historical quote edge · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} leads over {trendDays} days</> : <>Performance over {trendDays} days</>}</h3><p>{trend?.leader ? `${formatBps(trend.leader.averageEdgeBps)} average edge · ${Math.round(trend.leader.winRate * 100)}% wins · ${Math.round(trend.leader.availability * 100)}% coverage · ${trend.leader.sampleCount} synchronized checks` : "A period leader appears after enough synchronized batches reach 80% quote coverage."}</p></div>
+          <div className="trend-controls">
+            <fieldset><legend>Period</legend><div className="segmented light">{([7, 14, 30] as const).map((days) => <button key={days} className={trendDays === days ? "selected" : ""} onClick={() => setTrendDays(days)}>{days}d</button>)}</div></fieldset>
+            <fieldset><legend>Baseline</legend><div className="segmented light"><button className={trendBaseline === "median" ? "selected" : ""} onClick={() => setTrendBaseline("median")}>Batch median</button><button className={trendBaseline === "thorchain" ? "selected" : ""} onClick={() => setTrendBaseline("thorchain")}>THORChain</button></div></fieldset>
+          </div>
+        </header>
+        {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} baseline={trendBaseline} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
+        <div className="trend-note"><b>{trendBaseline === "median" ? "Neutral baseline" : "THORChain reference"}</b><span>{trendBaseline === "median" ? "Each protocol is measured against the median output from that exact synchronized batch. Positive basis points mean more destination asset." : "Every protocol is measured directly against THORChain at the same timestamp. A missing THORChain quote creates a gap."}</span><small>The colour strip shows the strongest median-relative protocol in each hour for 7d, or each four-hour bucket for 14d and 30d.</small></div>
+      </section>
     </section>
 
     <section className="partner-health"><div><p className="eyebrow">Metadata endpoints</p><h2>Partner status</h2></div><div className="health-grid">{partners.map((partner) => { const status = catalog?.statuses?.[partner.id]; return <article key={partner.id}><PartnerMark id={partner.id} /><div><b>{partner.name}</b><small>{status?.available ? "Catalog connected" : loading ? "Checking…" : "Catalog unavailable"}</small></div><span className={status?.available ? "online" : "offline"} /></article>; })}</div></section>

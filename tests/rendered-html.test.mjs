@@ -20,6 +20,9 @@ test("server-renders the QuoteTool dashboard", async () => {
   assert.match(html, /Best protocol by size/);
   assert.match(html, /\$10K/);
   assert.match(html, /7 days/);
+  assert.match(html, /14 days/);
+  assert.match(html, /30 days/);
+  assert.match(html, /Batch median/);
   assert.match(html, /No captured requests yet/);
   assert.doesNotMatch(html, /A complete audit trail/);
   assert.doesNotMatch(html, /THORChain assets/);

@@ -204,10 +204,10 @@ export function routesFromAssets(assets: CatalogAsset[]) {
 }
 
 export const fixedRouteSet = {
-  id: "thorchain-pool-activity-2026-08-16",
-  selectedAt: "2026-08-16T22:32:01Z",
+  id: "thorchain-comparable-pool-activity-2026-08-17",
+  selectedAt: "2026-08-17T00:34:00Z",
   metric: "geometric_mean_pool_volume_24h",
-  description: "Fixed snapshot ranked by the geometric mean of each asset's trailing 24-hour THORChain pool volume.",
+  description: "Fixed snapshot of the 30 highest-ranked directed routes with at least two supported quote protocols, using the geometric mean of each asset's trailing 24-hour THORChain pool volume.",
 };
 
 const fixedThorAssetPairs: Array<[string, string]> = [
@@ -237,10 +237,10 @@ const fixedThorAssetPairs: Array<[string, string]> = [
   ["ETH.LINK-0X514910771AF9CA656AF840DFF83E8264ECF986CA", "BTC.BTC"],
   ["ETH.ETH", "ETH.LINK-0X514910771AF9CA656AF840DFF83E8264ECF986CA"],
   ["ETH.LINK-0X514910771AF9CA656AF840DFF83E8264ECF986CA", "ETH.ETH"],
-  ["BTC.BTC", "THOR.TCY"],
-  ["THOR.TCY", "BTC.BTC"],
-  ["ETH.ETH", "THOR.TCY"],
-  ["THOR.TCY", "ETH.ETH"],
+  ["BTC.BTC", "ETH.WBTC-0X2260FAC5E5542A773AA44FBCFEDF7C193BC2C599"],
+  ["ETH.WBTC-0X2260FAC5E5542A773AA44FBCFEDF7C193BC2C599", "BTC.BTC"],
+  ["BTC.BTC", "LTC.LTC"],
+  ["LTC.LTC", "BTC.BTC"],
 ];
 
 export function topThorRoutes(assets: CatalogAsset[], limit = 30) {

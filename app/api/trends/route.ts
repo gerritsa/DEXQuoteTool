@@ -1,4 +1,5 @@
 import { ensureBenchmarkSchema, getD1 } from "../../../db";
+import { publicCacheHeaders, readPublicCache, writePublicCache } from "../../../lib/http-cache";
 
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 type ExecutionMode = "standard" | "optimized";
@@ -14,6 +15,8 @@ function median(values: number[]) {
 
 export async function GET(request: Request) {
   try {
+    const cached = await readPublicCache(request);
+    if (cached) return cached;
     await ensureBenchmarkSchema();
     const url = new URL(request.url);
     const routeId = url.searchParams.get("routeId")?.trim();
@@ -109,14 +112,14 @@ export async function GET(request: Request) {
       return { timestamp, points };
     });
 
-    return Response.json({
+    return writePublicCache(request, Response.json({
       routeId, amountId, mode, protocols: selectedProtocols, days, baseline: "batch_median",
       ranking: "overall_win_share",
       comparisonRule: "The period leader has the highest share of comparable batch wins. Unavailable quotes cannot win, and exact ties split the win equally.",
       bucketMs,
       startAt: new Date(startAt).toISOString(), endAt: new Date(endAt).toISOString(),
       comparableRuns, leader, summary, buckets,
-    }, { headers: { "cache-control": "private, max-age=60" } });
+    }, { headers: publicCacheHeaders(300) }));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Trend data unavailable" }, { status: 500 });
   }

@@ -21,6 +21,7 @@ export const benchmarkRuns = sqliteTable("benchmark_runs", {
 }, (table) => [
   index("idx_benchmark_runs_pair_created").on(table.pairId, table.createdAt),
   index("idx_benchmark_runs_pair_amount_created").on(table.pairId, table.amountId, table.createdAt),
+  index("idx_benchmark_runs_initiated").on(table.initiatedAt),
   uniqueIndex("idx_benchmark_runs_sweep_job").on(table.sweepId, table.pairId, table.amountId, table.mode),
 ]);
 
@@ -58,6 +59,7 @@ export const collectorSweeps = sqliteTable("collector_sweeps", {
   failedJobs: integer("failed_jobs").notNull().default(0),
   startedAt: text("started_at").notNull(),
   completedAt: text("completed_at"),
+  missingRoutesJson: text("missing_routes_json"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
   index("idx_collector_sweeps_scheduled").on(table.scheduledFor),

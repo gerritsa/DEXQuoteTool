@@ -19,6 +19,9 @@ Before deployment, create one D1 database, one R2 bucket, the jobs queue, and
 the dead-letter queue in the Cloudflare account. Replace the placeholder D1 ID
 in `wrangler.production.jsonc`.
 
+Run `npm run db:migrate:production` before deploying application code. Runtime
+requests never create or alter production tables.
+
 Configure these Worker secrets or variables:
 
 - `NEAR_INTENTS_API_KEY`
@@ -36,6 +39,14 @@ The daily maintenance trigger runs at 00:15 UTC. It builds the previous day's
 metrics for every enabled-protocol combination, removes detailed D1 history
 older than 90 days, removes collector bookkeeping older than 90 days, and keeps
 daily metrics for 400 days.
+
+## Monitoring
+
+Monitor `GET /api/health` at least every five minutes. It returns a non-200
+status when no sweep has completed within 75 minutes, a sweep is stuck for more
+than 45 minutes, fixed routes are missing, or a partner's two-hour quote error
+rate exceeds 20 percent. Configure alerts for the dead-letter queue, Worker
+exceptions, D1 usage, R2 usage, and Queue operations in the Cloudflare account.
 
 Apply `infra/r2-lifecycle.json` to the production archive bucket. It expires
 `raw/` after 7 days and `normalized/` after 365 days. Monitor D1 stored bytes,

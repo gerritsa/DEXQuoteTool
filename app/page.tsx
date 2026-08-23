@@ -299,7 +299,7 @@ export default function Home() {
     const saved = window.localStorage.getItem("swaprank-theme");
     const initial = saved === "light" ? "light" : "dark";
     document.documentElement.dataset.theme = initial;
-    setTheme(initial);
+    Promise.resolve().then(() => setTheme(initial));
   }, []);
 
   useEffect(() => {
@@ -352,7 +352,7 @@ export default function Home() {
 
       <div className="filter-bar leaderboard-tools">
         <fieldset className="protocol-filter"><legend>Compare protocols</legend><div>{partners.map((partner) => <button key={partner.id} className={enabledProtocols.includes(partner.id) ? "selected" : ""} onClick={() => toggleProtocol(partner.id)} aria-pressed={enabledProtocols.includes(partner.id)} disabled={enabledProtocols.length <= 2 && enabledProtocols.includes(partner.id)}><PartnerMark id={partner.id} muted={!enabledProtocols.includes(partner.id)} /><span>{partner.name}</span></button>)}</div><small>Choose at least two. Results recalculate using only enabled protocols.</small></fieldset>
-        <fieldset><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Streaming/DCA</button><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Standard swap</button></div></fieldset>
+        <fieldset><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Streaming/DCA</button><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Standard swap</button></div><small>Optimized execution where supported; NEAR remains solver-based in both modes.</small></fieldset>
         <fieldset><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Latest check" : window.replace("d", " days")}</button>)}</div></fieldset>
       </div>
 

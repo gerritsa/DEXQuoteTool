@@ -1,5 +1,5 @@
 import { ensureBenchmarkSchema } from "../db";
-import { getCatalog, topThorRoutes } from "./routes/catalog";
+import { fixedThorRouteCount, getCatalog, resolveFixedThorRoutes } from "./routes/catalog";
 import { quoteSizes } from "./quotes/sizes";
 import { runSelectedBenchmark, type BenchmarkArchiveRecord } from "./quotes/run";
 import type { ExecutionMode, NormalizedQuote, ProtocolId } from "./quotes/types";
@@ -105,8 +105,7 @@ export async function enqueueScheduledSweep(scheduledTime: number, environment: 
   if (existing?.status === "complete") return { sweepId, scheduledFor, skipped: true, reason: "Sweep already complete" };
 
   const catalog = await getCatalog();
-  const routes = topThorRoutes(catalog.assets, 20);
-  if (routes.length !== 20) throw new Error(`Expected 20 fixed routes, received ${routes.length}`);
+  const { routes, missingRouteIds } = resolveFixedThorRoutes(catalog.assets, fixedThorRouteCount);
   const jobs = routes.flatMap((route) => quoteSizes.flatMap((size) => modes.map((mode) => ({ routeId: route.id, amountId: size.id, mode }))));
   const bundles = chunks(jobs, jobsPerMessage).map((bundleJobs, bundleIndex): CollectorBundle => ({ sweepId, scheduledFor, bundleIndex, jobs: bundleJobs }));
   const now = new Date().toISOString();
@@ -115,9 +114,18 @@ export async function enqueueScheduledSweep(scheduledTime: number, environment: 
     await d1.prepare(`
       INSERT INTO collector_sweeps (
         id, scheduled_for, status, route_count, job_count, bundle_count,
-        completed_jobs, failed_jobs, started_at
-      ) VALUES (?, ?, 'pending', ?, ?, ?, 0, 0, ?)
-    `).bind(sweepId, scheduledFor, routes.length, jobs.length, bundles.length, now).run();
+        completed_jobs, failed_jobs, started_at, missing_routes_json
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+    `).bind(
+      sweepId,
+      scheduledFor,
+      jobs.length ? "pending" : "failed",
+      routes.length,
+      jobs.length,
+      bundles.length,
+      now,
+      JSON.stringify(missingRouteIds),
+    ).run();
     await d1.batch(bundles.map((bundle) => d1.prepare(`
       INSERT INTO collector_bundles (id, sweep_id, bundle_index, status, job_count)
       VALUES (?, ?, ?, 'pending', ?)
@@ -128,9 +136,22 @@ export async function enqueueScheduledSweep(scheduledTime: number, environment: 
     : { results: [] as Array<{ bundleIndex: number; status: string }> };
   const completedIndexes = new Set(storedBundles.results.filter((bundle) => bundle.status === "complete").map((bundle) => bundle.bundleIndex));
   const pendingBundles = bundles.filter((bundle) => !completedIndexes.has(bundle.bundleIndex));
-  if (pendingBundles.length) await environment.BENCHMARK_QUEUE.sendBatch(pendingBundles.map((body) => ({ body, contentType: "json" as const })));
-  await d1.prepare("UPDATE collector_sweeps SET status = 'running' WHERE id = ?").bind(sweepId).run();
-  return { sweepId, scheduledFor, skipped: false, resumed: Boolean(existing), routes: routes.length, jobs: jobs.length, bundles: pendingBundles.length };
+  if (pendingBundles.length) {
+    await environment.BENCHMARK_QUEUE.sendBatch(pendingBundles.map((body) => ({ body, contentType: "json" as const })));
+    await d1.prepare("UPDATE collector_sweeps SET status = 'running' WHERE id = ?").bind(sweepId).run();
+  } else if (!jobs.length) {
+    await d1.prepare("UPDATE collector_sweeps SET completed_at = ? WHERE id = ?").bind(now, sweepId).run();
+  }
+  return {
+    sweepId,
+    scheduledFor,
+    skipped: false,
+    resumed: Boolean(existing),
+    routes: routes.length,
+    missingRoutes: missingRouteIds,
+    jobs: jobs.length,
+    bundles: pendingBundles.length,
+  };
 }
 
 async function updateSweepProgress(sweepId: string, d1: D1Database) {
@@ -141,7 +162,7 @@ async function updateSweepProgress(sweepId: string, d1: D1Database) {
       failed_jobs = COALESCE((SELECT SUM(failed_jobs) FROM collector_bundles WHERE sweep_id = ?), 0),
       status = CASE
         WHEN COALESCE((SELECT SUM(completed_jobs + failed_jobs) FROM collector_bundles WHERE sweep_id = ?), 0) < job_count THEN 'running'
-        WHEN COALESCE((SELECT SUM(failed_jobs) FROM collector_bundles WHERE sweep_id = ?), 0) > 0 THEN 'partial'
+        WHEN COALESCE((SELECT SUM(failed_jobs) FROM collector_bundles WHERE sweep_id = ?), 0) > 0 OR route_count < ? THEN 'partial'
         ELSE 'complete'
       END,
       completed_at = CASE
@@ -149,7 +170,7 @@ async function updateSweepProgress(sweepId: string, d1: D1Database) {
         ELSE completed_at
       END
     WHERE id = ?
-  `).bind(sweepId, sweepId, sweepId, sweepId, sweepId, now, sweepId).run();
+  `).bind(sweepId, sweepId, sweepId, sweepId, fixedThorRouteCount, sweepId, now, sweepId).run();
 }
 
 export async function processCollectorBundle(bundle: CollectorBundle, environment: CollectorEnvironment) {

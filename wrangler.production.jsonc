@@ -13,7 +13,8 @@
     {
       "binding": "DB",
       "database_name": "dex-quote-tool",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "drizzle"
     }
   ],
   "r2_buckets": [
@@ -42,6 +43,10 @@
   },
   "triggers": {
     "crons": ["*/30 * * * *", "15 0 * * *"]
+  },
+  "limits": {
+    "cpu_ms": 30000,
+    "subrequests": 200
   },
   "observability": {
     "enabled": true

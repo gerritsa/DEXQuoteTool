@@ -175,20 +175,31 @@ const fixedThorAssetPairs: Array<[string, string]> = [
   ["BTC.BTC", "AVAX.AVAX"],
 ];
 const fixedThorAssets = new Set(fixedThorAssetPairs.flat());
+export const fixedThorRouteCount = fixedThorAssetPairs.length;
+
+export function resolveFixedThorRoutes(assets: CatalogAsset[], limit = fixedThorRouteCount) {
+  const requestedPairs = fixedThorAssetPairs.slice(0, limit);
+  const missingRouteIds: string[] = [];
+  const assetsByThorId = new Map(assets.map((asset) => [asset.thorAsset, asset]));
+  const routes = requestedPairs.flatMap(([sourceId, destinationId]) => {
+    const source = assetsByThorId.get(sourceId);
+    const destination = assetsByThorId.get(destinationId);
+    if (!source || !destination) {
+      missingRouteIds.push(`${sourceId}→${destinationId}`);
+      return [];
+    }
+    const partners = (["thorchain", "chainflip", "near-intents", "maya"] as PartnerId[]).filter((partner) =>
+      source.support[partner].source && destination.support[partner].destination
+    );
+    if (partners.length <= 1) {
+      missingRouteIds.push(`${sourceId}→${destinationId}`);
+      return [];
+    }
+    return [{ id: `${source.id}__${destination.id}`, source, destination, partners }];
+  });
+  return { routes, missingRouteIds };
+}
 
 export function topThorRoutes(assets: CatalogAsset[], limit = 20) {
-  const assetsByThorId = new Map(assets.map((asset) => [asset.thorAsset, asset]));
-  return fixedThorAssetPairs
-    .map(([sourceId, destinationId]) => {
-      const source = assetsByThorId.get(sourceId);
-      const destination = assetsByThorId.get(destinationId);
-      if (!source || !destination) return null;
-      const partners = (["thorchain", "chainflip", "near-intents", "maya"] as PartnerId[]).filter((partner) =>
-        source.support[partner].source && destination.support[partner].destination
-      );
-      return { id: `${source.id}__${destination.id}`, source, destination, partners };
-    })
-    .filter((route): route is CatalogRoute => Boolean(route))
-    .filter((route) => route.partners.length > 1)
-    .slice(0, limit);
+  return resolveFixedThorRoutes(assets, limit).routes;
 }

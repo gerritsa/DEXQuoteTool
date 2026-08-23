@@ -12,6 +12,7 @@
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
+    "db:migrate:production": "wrangler d1 migrations apply DB --remote --config wrangler.production.jsonc",
     "deploy:production": "npm run build && wrangler deploy --config wrangler.production.jsonc"
   },
   "dependencies": {

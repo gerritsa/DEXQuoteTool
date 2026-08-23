@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-async function render(path = "/") {
+async function render(path = "/", environment = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
   return worker.fetch(new Request(`http://localhost${path}`, { headers: { accept: "text/html" } }), {
     ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
+    ...environment,
   }, { waitUntil() {}, passThroughOnException() {} });
 }
 
@@ -34,6 +35,7 @@ test("server-renders the SwapRank dashboard", async () => {
   assert.match(html, /Compare protocols/);
   assert.match(html, /Standard swap/);
   assert.match(html, /Streaming\/DCA/);
+  assert.match(html, /NEAR remains solver-based in both modes/);
   assert.match(html, /Execution mode[\s\S]*Streaming\/DCA[\s\S]*Standard swap/);
   assert.match(html, /\/partners\/near\.svg/);
   assert.match(html, /\/partners\/chainflip\.svg/);
@@ -46,6 +48,14 @@ test("server-renders the SwapRank dashboard", async () => {
   assert.doesNotMatch(html, />Exact input</);
   assert.doesNotMatch(html, /Run \$.*test/);
   assert.doesNotMatch(html, /Real requests\. Exact sizes\. Explainable winners\./);
+});
+
+test("health endpoint covers stale sweeps, partial routes, and partner errors", async () => {
+  const source = await readFile(new URL("../app/api/health/route.ts", import.meta.url), "utf8");
+  assert.match(source, /minutesSinceTerminal > 75/);
+  assert.match(source, /missingRoutes\.length/);
+  assert.match(source, /errorRate > 0\.2/);
+  assert.match(source, /status === "healthy" \? 200 : 503/);
 });
 
 test("does not expose a public collector page", async () => {
@@ -61,4 +71,10 @@ test("build includes the production collection bindings", async () => {
   assert.equal(config.queues.consumers[0].max_batch_size, 1);
   assert.equal(config.queues.consumers[0].max_concurrency, 4);
   assert.equal(config.queues.consumers[0].dead_letter_queue, "dex-quote-tool-dead-letter");
+});
+
+test("production migrations include collector resilience and history indexing", async () => {
+  const migration = await readFile(new URL("../drizzle/0001_clever_betty_ross.sql", import.meta.url), "utf8");
+  assert.match(migration, /missing_routes_json/);
+  assert.match(migration, /idx_benchmark_runs_initiated/);
 });

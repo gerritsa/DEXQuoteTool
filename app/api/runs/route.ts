@@ -4,6 +4,7 @@ import { ensureBenchmarkSchema, getD1, getDb } from "../../../db";
 import { benchmarkRuns, protocolQuotes } from "../../../db/schema";
 import { runSelectedBenchmark } from "../../../lib/quotes/run";
 import type { ExecutionMode } from "../../../lib/quotes/types";
+import { publicCacheHeaders, readPublicCache, writePublicCache } from "../../../lib/http-cache";
 
 function executionMode(value: unknown): ExecutionMode {
   return value === "optimized" ? "optimized" : "standard";
@@ -11,6 +12,8 @@ function executionMode(value: unknown): ExecutionMode {
 
 export async function GET(request: Request) {
   try {
+    const cached = await readPublicCache(request);
+    if (cached) return cached;
     await ensureBenchmarkSchema();
     const url = new URL(request.url);
     const routeId = url.searchParams.get("routeId")?.trim();
@@ -22,7 +25,7 @@ export async function GET(request: Request) {
     const [run] = await db.select().from(benchmarkRuns)
       .where(and(eq(benchmarkRuns.pairId, routeId), eq(benchmarkRuns.amountId, amountId), eq(benchmarkRuns.mode, mode)))
       .orderBy(desc(benchmarkRuns.createdAt), desc(benchmarkRuns.id)).limit(1);
-    if (!run) return Response.json({ run: null, quotes: [] });
+    if (!run) return writePublicCache(request, Response.json({ run: null, quotes: [] }, { headers: publicCacheHeaders(60) }));
 
     const quotes = await db.select().from(protocolQuotes)
       .where(eq(protocolQuotes.runId, run.id))
@@ -40,7 +43,7 @@ export async function GET(request: Request) {
       payloadErrorMessage: string | null;
     }>();
     const payloadByProtocol = new Map(payloads.results.map((payload) => [payload.protocol, payload]));
-    return Response.json({
+    return writePublicCache(request, Response.json({
       run,
       quotes: quotes.map((quote) => {
         const payload = payloadByProtocol.get(quote.protocol);
@@ -52,7 +55,7 @@ export async function GET(request: Request) {
           errorMessage: payload?.payloadErrorMessage ?? quote.errorMessage,
         };
       }),
-    }, { headers: { "cache-control": "private, max-age=15" } });
+    }, { headers: publicCacheHeaders(60) }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Quote history unavailable";
     if (message.includes("no such table") || message.includes("no such column")) {

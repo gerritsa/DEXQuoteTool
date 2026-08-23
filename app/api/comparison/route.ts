@@ -1,11 +1,13 @@
 import { ensureBenchmarkSchema, getD1 } from "../../../db";
+import { publicCacheHeaders, readPublicCache, writePublicCache } from "../../../lib/http-cache";
 
 type WindowName = "now" | "7d" | "14d" | "30d";
 type ExecutionMode = "standard" | "optimized";
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 const protocols: PartnerId[] = ["near-intents", "chainflip", "thorchain", "maya"];
+const metricProtocolOrder: PartnerId[] = ["thorchain", "chainflip", "near-intents", "maya"];
 type NowRow = { pairId: string; amountId: string; initiatedAt: string; protocol: string; status: string; output: number | null };
-type HistoryRow = { pairId: string; amountId: string; protocol: string; attempts: number; successes: number; comparableChecks: number; comparableSamples: number; averageEdgeBps: number | null; wins: number; latestAt: string };
+type HistoryRow = { pairId: string; amountId: string; protocol: string; attempts: number; successes: number; comparableSamples: number; edgeSumBps: number; wins: number; latestAt: string };
 
 function groupByCell<T extends { pairId: string; amountId: string }>(rows: T[]) {
   const grouped = new Map<string, T[]>();
@@ -20,8 +22,8 @@ async function latestComparison(mode: ExecutionMode, selectedProtocols: PartnerI
   const protocolPlaceholders = selectedProtocols.map(() => "?").join(", ");
   const result = await getD1().prepare(`
     WITH latest AS (
-      SELECT pair_id, amount_id, MAX(id) AS run_id
-      FROM benchmark_runs
+      SELECT pair_id, amount_id, MAX(run_id) AS run_id
+      FROM latest_quote_payloads
       WHERE mode = ?
       GROUP BY pair_id, amount_id
     )
@@ -58,20 +60,44 @@ async function latestComparison(mode: ExecutionMode, selectedProtocols: PartnerI
 async function periodComparison(window: Exclude<WindowName, "now">, mode: ExecutionMode, selectedProtocols: PartnerId[]) {
   const days = Number(window.slice(0, -1));
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const cutoffDay = cutoff.slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  const protocolMask = metricProtocolOrder.filter((protocol) => selectedProtocols.includes(protocol)).join(",");
   const protocolPlaceholders = selectedProtocols.map(() => "?").join(", ");
   const result = await getD1().prepare(`
-    WITH attempts AS (
+    WITH aggregate_metrics AS (
+      SELECT pair_id, amount_id, protocol,
+        SUM(attempts) AS attempts,
+        SUM(successes) AS successes,
+        SUM(comparable_samples) AS comparable_samples,
+        SUM(edge_sum_bps) AS edge_sum_bps,
+        SUM(wins) AS wins,
+        MAX(latest_at) AS latest_at
+      FROM daily_comparison_metrics
+      WHERE mode = ? AND day > ? AND day < ? AND protocol_mask = ?
+        AND protocol IN (${protocolPlaceholders})
+      GROUP BY pair_id, amount_id, protocol
+    ), raw_attempts AS (
       SELECT r.id AS run_id, r.pair_id AS pair_id, r.amount_id AS amount_id,
         r.initiated_at AS initiated_at, q.protocol AS protocol, q.status AS status,
         CAST(q.expected_output_formatted AS REAL) AS output
       FROM benchmark_runs r
       JOIN protocol_quotes q ON q.run_id = r.id
       WHERE r.mode = ? AND r.initiated_at >= ? AND q.protocol IN (${protocolPlaceholders})
+        AND (
+          substr(r.initiated_at, 1, 10) = ?
+          OR substr(r.initiated_at, 1, 10) = ?
+          OR NOT EXISTS (
+            SELECT 1 FROM daily_comparison_metrics d
+            WHERE d.day = substr(r.initiated_at, 1, 10)
+              AND d.mode = r.mode AND d.protocol_mask = ?
+          )
+        )
     ), valid AS (
       SELECT *, ROW_NUMBER() OVER (PARTITION BY run_id ORDER BY output) AS output_rank,
         COUNT(*) OVER (PARTITION BY run_id) AS valid_count,
         MAX(output) OVER (PARTITION BY run_id) AS best_output
-      FROM attempts
+      FROM raw_attempts
       WHERE status = 'quoted' AND output > 0
     ), run_stats AS (
       SELECT run_id, MAX(valid_count) AS valid_count, MAX(best_output) AS best_output,
@@ -85,29 +111,47 @@ async function periodComparison(window: Exclude<WindowName, "now">, mode: Execut
          OR output_rank = CAST((valid_count + 2) / 2 AS INTEGER)
       GROUP BY run_id
     ), scored AS (
-      SELECT attempts.*, medians.median_output, run_stats.valid_count, run_stats.best_output, run_stats.winner_count
-      FROM attempts
-      LEFT JOIN medians ON medians.run_id = attempts.run_id
-      LEFT JOIN run_stats ON run_stats.run_id = attempts.run_id
+      SELECT raw_attempts.*, medians.median_output, run_stats.valid_count, run_stats.best_output, run_stats.winner_count
+      FROM raw_attempts
+      LEFT JOIN medians ON medians.run_id = raw_attempts.run_id
+      LEFT JOIN run_stats ON run_stats.run_id = raw_attempts.run_id
+    ), raw_metrics AS (
+      SELECT pair_id, amount_id, protocol,
+        COUNT(*) AS attempts,
+        SUM(CASE WHEN status = 'quoted' THEN 1 ELSE 0 END) AS successes,
+        SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 THEN 1 ELSE 0 END) AS comparable_samples,
+        SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 THEN ((output / median_output) - 1) * 10000 ELSE 0 END) AS edge_sum_bps,
+        SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 AND output = best_output THEN 1.0 / winner_count ELSE 0 END) AS wins,
+        MAX(initiated_at) AS latest_at
+      FROM scored
+      GROUP BY pair_id, amount_id, protocol
+    ), combined AS (
+      SELECT * FROM aggregate_metrics
+      UNION ALL
+      SELECT * FROM raw_metrics
     )
     SELECT pair_id AS pairId, amount_id AS amountId, protocol AS protocol,
-      COUNT(*) AS attempts,
-      SUM(CASE WHEN status = 'quoted' THEN 1 ELSE 0 END) AS successes,
-      SUM(CASE WHEN valid_count >= 2 THEN 1 ELSE 0 END) AS comparableChecks,
-      SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 THEN 1 ELSE 0 END) AS comparableSamples,
-      AVG(CASE WHEN status = 'quoted' AND valid_count >= 2 THEN ((output / median_output) - 1) * 10000 END) AS averageEdgeBps,
-      SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 AND output = best_output THEN 1.0 / winner_count ELSE 0 END) AS wins,
-      MAX(initiated_at) AS latestAt
-    FROM scored
+      SUM(attempts) AS attempts,
+      SUM(successes) AS successes,
+      SUM(comparable_samples) AS comparableSamples,
+      SUM(edge_sum_bps) AS edgeSumBps,
+      SUM(wins) AS wins,
+      MAX(latest_at) AS latestAt
+    FROM combined
     GROUP BY pair_id, amount_id, protocol
     ORDER BY pair_id, amount_id, protocol
-  `).bind(mode, cutoff, ...selectedProtocols).all<HistoryRow>();
+  `).bind(
+    mode, cutoffDay, today, protocolMask, ...selectedProtocols,
+    mode, cutoff, ...selectedProtocols, cutoffDay, today, protocolMask,
+  ).all<HistoryRow>();
 
   const cells = [...groupByCell(result.results).values()].map((rows) => {
+    const comparableChecks = rows.reduce((sum, row) => sum + Number(row.wins), 0);
     const measured = rows.map((row) => ({
       ...row,
       availability: row.attempts ? row.successes / row.attempts : 0,
-      winRate: row.comparableChecks ? row.wins / row.comparableChecks : null,
+      averageEdgeBps: row.comparableSamples ? row.edgeSumBps / row.comparableSamples : null,
+      winRate: comparableChecks ? row.wins / comparableChecks : null,
     }));
     const ranked = measured.filter((row) => row.comparableSamples > 0 && row.winRate != null)
       .sort((a, b) => Number(b.winRate) - Number(a.winRate)
@@ -121,9 +165,9 @@ async function periodComparison(window: Exclude<WindowName, "now">, mode: Execut
       leader: leader?.protocol ?? null,
       averageEdgeBps: leader?.averageEdgeBps ?? null,
       winRate: leader?.winRate ?? null,
-      sampleCount: leader?.comparableChecks ?? Math.max(...rows.map((row) => row.comparableChecks)),
+      sampleCount: comparableChecks,
       availability: leader?.availability ?? null,
-      results: measured.map((row) => ({ protocol: row.protocol, averageEdgeBps: row.averageEdgeBps, wins: row.wins, winRate: row.winRate, samples: row.comparableSamples, comparisons: row.comparableChecks, availability: row.availability })),
+      results: measured.map((row) => ({ protocol: row.protocol, averageEdgeBps: row.averageEdgeBps, wins: row.wins, winRate: row.winRate, samples: row.comparableSamples, comparisons: comparableChecks, availability: row.availability })),
     };
   });
   return { window, mode, cutoff, baseline: "batch_median", ranking: "overall_win_share", cells };
@@ -131,6 +175,8 @@ async function periodComparison(window: Exclude<WindowName, "now">, mode: Execut
 
 export async function GET(request: Request) {
   try {
+    const cached = await readPublicCache(request);
+    if (cached) return cached;
     await ensureBenchmarkSchema();
     const url = new URL(request.url);
     const requested = url.searchParams.get("window") as WindowName | null;
@@ -139,7 +185,7 @@ export async function GET(request: Request) {
     const requestedProtocols = (url.searchParams.get("protocols") ?? "").split(",").filter((value): value is PartnerId => protocols.includes(value as PartnerId));
     const selectedProtocols = requestedProtocols.length >= 2 ? protocols.filter((protocol) => requestedProtocols.includes(protocol)) : protocols;
     const payload = window === "now" ? await latestComparison(mode, selectedProtocols) : await periodComparison(window, mode, selectedProtocols);
-    return Response.json(payload, { headers: { "cache-control": "private, max-age=15" } });
+    return writePublicCache(request, Response.json(payload, { headers: publicCacheHeaders(300) }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Comparison data unavailable";
     if (message.includes("no such table") || message.includes("no such column")) return Response.json({ window: "now", cells: [], migrationPending: true });

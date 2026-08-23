@@ -74,7 +74,7 @@ test("build includes the production collection bindings", async () => {
 });
 
 test("the clean baseline includes collector resilience and precomputed trends", async () => {
-  const migration = await readFile(new URL("../drizzle/0000_baseline.sql", import.meta.url), "utf8");
+  const migration = await readFile(new URL("../drizzle/0000_true_spot.sql", import.meta.url), "utf8");
   assert.match(migration, /missing_routes_json/);
   assert.match(migration, /idx_benchmark_runs_initiated/);
   assert.match(migration, /CREATE TABLE `trend_buckets`/);

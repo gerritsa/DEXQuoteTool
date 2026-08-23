@@ -73,8 +73,18 @@ test("build includes the production collection bindings", async () => {
   assert.equal(config.queues.consumers[0].dead_letter_queue, "dex-quote-tool-dead-letter");
 });
 
-test("production migrations include collector resilience and history indexing", async () => {
-  const migration = await readFile(new URL("../drizzle/0001_clever_betty_ross.sql", import.meta.url), "utf8");
+test("the clean baseline includes collector resilience and precomputed trends", async () => {
+  const migration = await readFile(new URL("../drizzle/0000_baseline.sql", import.meta.url), "utf8");
   assert.match(migration, /missing_routes_json/);
   assert.match(migration, /idx_benchmark_runs_initiated/);
+  assert.match(migration, /CREATE TABLE `trend_buckets`/);
+  assert.match(migration, /idx_trend_buckets_lookup/);
+});
+
+test("leaderboard and graph use fifteen-minute shared caching", async () => {
+  const comparison = await readFile(new URL("../app/api/comparison/route.ts", import.meta.url), "utf8");
+  const trends = await readFile(new URL("../app/api/trends/route.ts", import.meta.url), "utf8");
+  assert.match(comparison, /publicCacheHeaders\(900\)/);
+  assert.match(trends, /FROM trend_buckets/);
+  assert.match(trends, /publicCacheHeaders\(900\)/);
 });

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "f3fb2882-d72a-4f55-908e-da379d74336d",
+  "id": "b0383ee7-6663-497b-8681-4cc2260cda05",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "benchmark_runs": {
@@ -137,6 +137,13 @@
             "pair_id",
             "amount_id",
             "created_at"
+          ],
+          "isUnique": false
+        },
+        "idx_benchmark_runs_initiated": {
+          "name": "idx_benchmark_runs_initiated",
+          "columns": [
+            "initiated_at"
           ],
           "isUnique": false
         },
@@ -363,6 +370,13 @@
         },
         "completed_at": {
           "name": "completed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "missing_routes_json": {
+          "name": "missing_routes_json",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -787,6 +801,100 @@
           "onUpdate": "no action"
         }
       },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "trend_buckets": {
+      "name": "trend_buckets",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bucket_start": {
+          "name": "bucket_start",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bucket_seconds": {
+          "name": "bucket_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "pair_id": {
+          "name": "pair_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount_id": {
+          "name": "amount_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "mode": {
+          "name": "mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "samples_json": {
+          "name": "samples_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "latest_at": {
+          "name": "latest_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "idx_trend_buckets_lookup": {
+          "name": "idx_trend_buckets_lookup",
+          "columns": [
+            "pair_id",
+            "amount_id",
+            "mode",
+            "bucket_seconds",
+            "bucket_start"
+          ],
+          "isUnique": false
+        },
+        "idx_trend_buckets_retention": {
+          "name": "idx_trend_buckets_retention",
+          "columns": [
+            "bucket_seconds",
+            "bucket_start"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}

@@ -1,11 +1,3 @@
-DROP TABLE IF EXISTS `latest_quote_payloads`;--> statement-breakpoint
-DROP TABLE IF EXISTS `protocol_quotes`;--> statement-breakpoint
-DROP TABLE IF EXISTS `collector_bundles`;--> statement-breakpoint
-DROP TABLE IF EXISTS `daily_comparison_metrics`;--> statement-breakpoint
-DROP TABLE IF EXISTS `trend_buckets`;--> statement-breakpoint
-DROP TABLE IF EXISTS `benchmark_cycles`;--> statement-breakpoint
-DROP TABLE IF EXISTS `benchmark_runs`;--> statement-breakpoint
-DROP TABLE IF EXISTS `collector_sweeps`;--> statement-breakpoint
 CREATE TABLE `benchmark_runs` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`pair_id` text NOT NULL,
@@ -23,26 +15,12 @@ CREATE TABLE `benchmark_runs` (
 	`sweep_id` text,
 	`bundle_index` integer,
 	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL
-);--> statement-breakpoint
+);
+--> statement-breakpoint
 CREATE INDEX `idx_benchmark_runs_pair_created` ON `benchmark_runs` (`pair_id`,`created_at`);--> statement-breakpoint
 CREATE INDEX `idx_benchmark_runs_pair_amount_created` ON `benchmark_runs` (`pair_id`,`amount_id`,`created_at`);--> statement-breakpoint
 CREATE INDEX `idx_benchmark_runs_initiated` ON `benchmark_runs` (`initiated_at`);--> statement-breakpoint
 CREATE UNIQUE INDEX `idx_benchmark_runs_sweep_job` ON `benchmark_runs` (`sweep_id`,`pair_id`,`amount_id`,`mode`);--> statement-breakpoint
-CREATE TABLE `collector_sweeps` (
-	`id` text PRIMARY KEY NOT NULL,
-	`scheduled_for` text NOT NULL,
-	`status` text DEFAULT 'pending' NOT NULL,
-	`route_count` integer NOT NULL,
-	`job_count` integer NOT NULL,
-	`bundle_count` integer NOT NULL,
-	`completed_jobs` integer DEFAULT 0 NOT NULL,
-	`failed_jobs` integer DEFAULT 0 NOT NULL,
-	`started_at` text NOT NULL,
-	`completed_at` text,
-	`missing_routes_json` text,
-	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL
-);--> statement-breakpoint
-CREATE INDEX `idx_collector_sweeps_scheduled` ON `collector_sweeps` (`scheduled_for`);--> statement-breakpoint
 CREATE TABLE `collector_bundles` (
 	`id` text PRIMARY KEY NOT NULL,
 	`sweep_id` text NOT NULL,
@@ -59,8 +37,25 @@ CREATE TABLE `collector_bundles` (
 	`error_message` text,
 	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	FOREIGN KEY (`sweep_id`) REFERENCES `collector_sweeps`(`id`) ON UPDATE no action ON DELETE no action
-);--> statement-breakpoint
+);
+--> statement-breakpoint
 CREATE INDEX `idx_collector_bundles_sweep` ON `collector_bundles` (`sweep_id`,`bundle_index`);--> statement-breakpoint
+CREATE TABLE `collector_sweeps` (
+	`id` text PRIMARY KEY NOT NULL,
+	`scheduled_for` text NOT NULL,
+	`status` text DEFAULT 'pending' NOT NULL,
+	`route_count` integer NOT NULL,
+	`job_count` integer NOT NULL,
+	`bundle_count` integer NOT NULL,
+	`completed_jobs` integer DEFAULT 0 NOT NULL,
+	`failed_jobs` integer DEFAULT 0 NOT NULL,
+	`started_at` text NOT NULL,
+	`completed_at` text,
+	`missing_routes_json` text,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `idx_collector_sweeps_scheduled` ON `collector_sweeps` (`scheduled_for`);--> statement-breakpoint
 CREATE TABLE `daily_comparison_metrics` (
 	`id` text PRIMARY KEY NOT NULL,
 	`day` text NOT NULL,
@@ -76,7 +71,8 @@ CREATE TABLE `daily_comparison_metrics` (
 	`wins` real NOT NULL,
 	`latest_at` text NOT NULL,
 	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL
-);--> statement-breakpoint
+);
+--> statement-breakpoint
 CREATE INDEX `idx_daily_metrics_lookup` ON `daily_comparison_metrics` (`pair_id`,`amount_id`,`mode`,`day`);--> statement-breakpoint
 CREATE INDEX `idx_daily_metrics_day_mask` ON `daily_comparison_metrics` (`day`,`protocol_mask`);--> statement-breakpoint
 CREATE TABLE `latest_quote_payloads` (
@@ -92,7 +88,8 @@ CREATE TABLE `latest_quote_payloads` (
 	`error_message` text,
 	`updated_at` text NOT NULL,
 	FOREIGN KEY (`run_id`) REFERENCES `benchmark_runs`(`id`) ON UPDATE no action ON DELETE no action
-);--> statement-breakpoint
+);
+--> statement-breakpoint
 CREATE INDEX `idx_latest_quote_payloads_lookup` ON `latest_quote_payloads` (`pair_id`,`amount_id`,`mode`);--> statement-breakpoint
 CREATE TABLE `protocol_quotes` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -114,7 +111,8 @@ CREATE TABLE `protocol_quotes` (
 	`error_message` text,
 	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	FOREIGN KEY (`run_id`) REFERENCES `benchmark_runs`(`id`) ON UPDATE no action ON DELETE no action
-);--> statement-breakpoint
+);
+--> statement-breakpoint
 CREATE INDEX `idx_protocol_quotes_run_protocol` ON `protocol_quotes` (`run_id`,`protocol`);--> statement-breakpoint
 CREATE TABLE `trend_buckets` (
 	`id` text PRIMARY KEY NOT NULL,
@@ -126,7 +124,8 @@ CREATE TABLE `trend_buckets` (
 	`samples_json` text NOT NULL,
 	`latest_at` text NOT NULL,
 	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL
-);--> statement-breakpoint
+);
+--> statement-breakpoint
 CREATE INDEX `idx_trend_buckets_lookup` ON `trend_buckets` (`pair_id`,`amount_id`,`mode`,`bucket_seconds`,`bucket_start`);--> statement-breakpoint
 CREATE INDEX `idx_trend_buckets_retention` ON `trend_buckets` (`bucket_seconds`,`bucket_start`);--> statement-breakpoint
 PRAGMA optimize;

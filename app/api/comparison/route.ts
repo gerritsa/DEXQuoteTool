@@ -185,7 +185,7 @@ export async function GET(request: Request) {
     const requestedProtocols = (url.searchParams.get("protocols") ?? "").split(",").filter((value): value is PartnerId => protocols.includes(value as PartnerId));
     const selectedProtocols = requestedProtocols.length >= 2 ? protocols.filter((protocol) => requestedProtocols.includes(protocol)) : protocols;
     const payload = window === "now" ? await latestComparison(mode, selectedProtocols) : await periodComparison(window, mode, selectedProtocols);
-    return writePublicCache(request, Response.json(payload, { headers: publicCacheHeaders(300) }));
+    return writePublicCache(request, Response.json(payload, { headers: publicCacheHeaders(900) }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Comparison data unavailable";
     if (message.includes("no such table") || message.includes("no such column")) return Response.json({ window: "now", cells: [], migrationPending: true });

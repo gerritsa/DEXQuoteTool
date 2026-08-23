@@ -3,7 +3,18 @@ import { publicCacheHeaders, readPublicCache, writePublicCache } from "../../../
 
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 type ExecutionMode = "standard" | "optimized";
-type ScoredRow = { runId: number; initiatedAt: string; protocol: PartnerId; output: number; medianOutput: number; bestOutput: number; winnerCount: number };
+type TrendBucketRow = { bucketStart: string; samplesJson: string };
+type StoredQuote = { protocol: PartnerId; output: number };
+type StoredRun = { runId: number; initiatedAt: string; quotes: StoredQuote[] };
+type ScoredRow = {
+  runId: number;
+  initiatedAt: string;
+  timestamp: number;
+  protocol: PartnerId;
+  edgeBps: number;
+  winCredit: number;
+};
+
 const protocols: PartnerId[] = ["near-intents", "chainflip", "thorchain", "maya"];
 
 function median(values: number[]) {
@@ -11,6 +22,54 @@ function median(values: number[]) {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function parseStoredRuns(value: string) {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((run): StoredRun[] => {
+      if (!run || typeof run !== "object") return [];
+      const candidate = run as Partial<StoredRun>;
+      if (typeof candidate.runId !== "number" || typeof candidate.initiatedAt !== "string" || !Array.isArray(candidate.quotes)) return [];
+      const quotes = candidate.quotes.flatMap((quote): StoredQuote[] => {
+        if (!quote || typeof quote !== "object") return [];
+        const storedQuote = quote as Partial<StoredQuote>;
+        if (!storedQuote.protocol || !protocols.includes(storedQuote.protocol) || !Number.isFinite(Number(storedQuote.output))) return [];
+        return [{ protocol: storedQuote.protocol, output: Number(storedQuote.output) }];
+      });
+      return [{ runId: candidate.runId, initiatedAt: candidate.initiatedAt, quotes }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function scoreRuns(storedRuns: StoredRun[], selectedProtocols: PartnerId[], startAt: number, endAt: number) {
+  const selected = new Set(selectedProtocols);
+  const rows: ScoredRow[] = [];
+  for (const run of storedRuns) {
+    const timestamp = new Date(run.initiatedAt).getTime();
+    if (!Number.isFinite(timestamp) || timestamp < startAt || timestamp > endAt) continue;
+    const quotes = run.quotes.filter((quote) => selected.has(quote.protocol) && Number.isFinite(Number(quote.output)) && Number(quote.output) > 0);
+    if (quotes.length < 2) continue;
+    const medianOutput = median(quotes.map((quote) => Number(quote.output)));
+    if (!medianOutput) continue;
+    const bestOutput = Math.max(...quotes.map((quote) => Number(quote.output)));
+    const winnerCount = quotes.filter((quote) => Number(quote.output) === bestOutput).length;
+    for (const quote of quotes) {
+      const output = Number(quote.output);
+      rows.push({
+        runId: run.runId,
+        initiatedAt: run.initiatedAt,
+        timestamp,
+        protocol: quote.protocol,
+        edgeBps: ((output / medianOutput) - 1) * 10_000,
+        winCredit: output === bestOutput ? 1 / winnerCount : 0,
+      });
+    }
+  }
+  return rows;
 }
 
 export async function GET(request: Request) {
@@ -30,53 +89,26 @@ export async function GET(request: Request) {
 
     const endAt = Date.now();
     const startAt = endAt - days * 24 * 60 * 60 * 1000;
-    const cutoff = new Date(startAt).toISOString();
     const bucketMs = days === 7 ? 60 * 60 * 1000 : 4 * 60 * 60 * 1000;
-    const protocolPlaceholders = selectedProtocols.map(() => "?").join(", ");
-    const result = await getD1().prepare(`
-      WITH valid AS (
-        SELECT r.id AS run_id, r.initiated_at AS initiated_at, q.protocol AS protocol,
-          CAST(q.expected_output_formatted AS REAL) AS output
-        FROM benchmark_runs r
-        JOIN protocol_quotes q ON q.run_id = r.id
-        WHERE r.mode = ? AND r.pair_id = ? AND r.amount_id = ?
-          AND r.initiated_at >= ? AND q.protocol IN (${protocolPlaceholders}) AND q.status = 'quoted'
-          AND CAST(q.expected_output_formatted AS REAL) > 0
-      ), ranked AS (
-        SELECT *, ROW_NUMBER() OVER (PARTITION BY run_id ORDER BY output) AS output_rank,
-          COUNT(*) OVER (PARTITION BY run_id) AS valid_count,
-          MAX(output) OVER (PARTITION BY run_id) AS best_output
-        FROM valid
-      ), run_stats AS (
-        SELECT run_id, MAX(best_output) AS best_output,
-          SUM(CASE WHEN output = best_output THEN 1 ELSE 0 END) AS winner_count
-        FROM ranked
-        WHERE valid_count >= 2
-        GROUP BY run_id
-      ), medians AS (
-        SELECT run_id, AVG(output) AS median_output
-        FROM ranked
-        WHERE valid_count >= 2 AND (
-          output_rank = CAST((valid_count + 1) / 2 AS INTEGER)
-          OR output_rank = CAST((valid_count + 2) / 2 AS INTEGER)
-        )
-        GROUP BY run_id
-      )
-      SELECT ranked.run_id AS runId, ranked.initiated_at AS initiatedAt, ranked.protocol AS protocol,
-        ranked.output AS output, medians.median_output AS medianOutput,
-        run_stats.best_output AS bestOutput, run_stats.winner_count AS winnerCount
-      FROM ranked
-      JOIN medians ON medians.run_id = ranked.run_id
-      JOIN run_stats ON run_stats.run_id = ranked.run_id
-      ORDER BY ranked.initiated_at, ranked.protocol
-    `).bind(mode, routeId, amountId, cutoff, ...selectedProtocols).all<ScoredRow>();
+    const bucketSeconds = bucketMs / 1000;
+    const firstBucketAt = Math.floor(startAt / bucketMs) * bucketMs;
+    const bucketResult = await getD1().prepare(`
+      SELECT bucket_start AS bucketStart, samples_json AS samplesJson
+      FROM trend_buckets
+      WHERE pair_id = ? AND amount_id = ? AND mode = ? AND bucket_seconds = ?
+        AND bucket_start >= ? AND bucket_start <= ?
+      ORDER BY bucket_start
+    `).bind(
+      routeId,
+      amountId,
+      mode,
+      bucketSeconds,
+      new Date(firstBucketAt).toISOString(),
+      new Date(endAt).toISOString(),
+    ).all<TrendBucketRow>();
 
-    const rows = result.results.map((row) => ({
-      ...row,
-      timestamp: new Date(row.initiatedAt).getTime(),
-      edgeBps: ((Number(row.output) / Number(row.medianOutput)) - 1) * 10_000,
-      winCredit: Number(row.output) === Number(row.bestOutput) ? 1 / Number(row.winnerCount) : 0,
-    }));
+    const storedRuns = bucketResult.results.flatMap((bucket) => parseStoredRuns(bucket.samplesJson));
+    const rows = scoreRuns(storedRuns, selectedProtocols, startAt, endAt);
     const comparableRuns = new Set(rows.map((row) => row.runId)).size;
     const summary = selectedProtocols.map((protocol) => {
       const protocolRows = rows.filter((row) => row.protocol === protocol);
@@ -96,7 +128,7 @@ export async function GET(request: Request) {
         || b.availability - a.availability)[0] ?? null;
 
     const bucketStarts: number[] = [];
-    for (let bucket = Math.floor(startAt / bucketMs) * bucketMs; bucket <= endAt; bucket += bucketMs) bucketStarts.push(bucket);
+    for (let bucket = firstBucketAt; bucket <= endAt; bucket += bucketMs) bucketStarts.push(bucket);
     const buckets = bucketStarts.map((timestamp) => {
       const bucketRows = rows.filter((row) => Math.floor(row.timestamp / bucketMs) * bucketMs === timestamp);
       const points = selectedProtocols.map((protocol) => {
@@ -119,8 +151,12 @@ export async function GET(request: Request) {
       bucketMs,
       startAt: new Date(startAt).toISOString(), endAt: new Date(endAt).toISOString(),
       comparableRuns, leader, summary, buckets,
-    }, { headers: publicCacheHeaders(300) }));
+    }, { headers: publicCacheHeaders(900) }));
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "Trend data unavailable" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Trend data unavailable";
+    if (message.includes("no such table")) {
+      return Response.json({ error: "Trend data is initializing", buckets: [], summary: [], comparableRuns: 0 }, { status: 503 });
+    }
+    return Response.json({ error: message }, { status: 500 });
   }
 }

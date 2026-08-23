@@ -119,3 +119,18 @@ export const dailyComparisonMetrics = sqliteTable("daily_comparison_metrics", {
   index("idx_daily_metrics_lookup").on(table.pairId, table.amountId, table.mode, table.day),
   index("idx_daily_metrics_day_mask").on(table.day, table.protocolMask),
 ]);
+
+export const trendBuckets = sqliteTable("trend_buckets", {
+  id: text("id").primaryKey(),
+  bucketStart: text("bucket_start").notNull(),
+  bucketSeconds: integer("bucket_seconds").notNull(),
+  pairId: text("pair_id").notNull(),
+  amountId: text("amount_id").notNull(),
+  mode: text("mode", { enum: ["standard", "optimized"] }).notNull(),
+  samplesJson: text("samples_json").notNull(),
+  latestAt: text("latest_at").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_trend_buckets_lookup").on(table.pairId, table.amountId, table.mode, table.bucketSeconds, table.bucketStart),
+  index("idx_trend_buckets_retention").on(table.bucketSeconds, table.bucketStart),
+]);

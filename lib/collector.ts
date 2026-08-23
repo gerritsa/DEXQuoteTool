@@ -10,6 +10,10 @@ const jobsPerMessage = 20;
 const workerConcurrency = 1;
 const detailRetentionDays = 90;
 const aggregateRetentionDays = 400;
+const hourlyTrendBucketSeconds = 60 * 60;
+const fourHourTrendBucketSeconds = 4 * hourlyTrendBucketSeconds;
+const hourlyTrendRetentionDays = 8;
+const fourHourTrendRetentionDays = 32;
 
 export type CollectorJob = { routeId: string; amountId: string; mode: ExecutionMode };
 export type CollectorBundle = { sweepId: string; scheduledFor: string; bundleIndex: number; jobs: CollectorJob[] };
@@ -171,6 +175,71 @@ async function updateSweepProgress(sweepId: string, d1: D1Database) {
       END
     WHERE id = ?
   `).bind(sweepId, sweepId, sweepId, sweepId, fixedThorRouteCount, sweepId, now, sweepId).run();
+  return d1.prepare("SELECT status, scheduled_for AS scheduledFor FROM collector_sweeps WHERE id = ?")
+    .bind(sweepId)
+    .first<{ status: string; scheduledFor: string }>();
+}
+
+function bucketRange(timestamp: string, bucketSeconds: number) {
+  const bucketMs = bucketSeconds * 1000;
+  const startMs = Math.floor(new Date(timestamp).getTime() / bucketMs) * bucketMs;
+  return {
+    start: new Date(startMs).toISOString(),
+    end: new Date(startMs + bucketMs).toISOString(),
+  };
+}
+
+async function refreshTrendBucketRange(start: string, end: string, bucketSeconds: number, d1: D1Database) {
+  await d1.prepare("DELETE FROM trend_buckets WHERE bucket_seconds = ? AND bucket_start >= ? AND bucket_start < ?")
+    .bind(bucketSeconds, start, end)
+    .run();
+  await d1.prepare(`
+    INSERT OR REPLACE INTO trend_buckets (
+      id, bucket_start, bucket_seconds, pair_id, amount_id, mode,
+      samples_json, latest_at
+    )
+    WITH bucketed_runs AS (
+      SELECT r.id, r.pair_id, r.amount_id, r.mode, r.initiated_at,
+        strftime(
+          '%Y-%m-%dT%H:%M:%fZ',
+          CAST(unixepoch(r.initiated_at) / ? AS INTEGER) * ?,
+          'unixepoch'
+        ) AS bucket_start
+      FROM benchmark_runs r
+      WHERE r.initiated_at >= ? AND r.initiated_at < ?
+    )
+    SELECT
+      CAST(? AS TEXT) || '|' || bucket_start || '|' || pair_id || '|' || amount_id || '|' || mode,
+      bucket_start,
+      ?,
+      pair_id,
+      amount_id,
+      mode,
+      json_group_array(json_object(
+        'runId', id,
+        'initiatedAt', initiated_at,
+        'quotes', json(COALESCE((
+          SELECT json_group_array(json_object(
+            'protocol', q.protocol,
+            'output', CAST(q.expected_output_formatted AS REAL)
+          ))
+          FROM protocol_quotes q
+          WHERE q.run_id = bucketed_runs.id
+            AND q.status = 'quoted'
+            AND CAST(q.expected_output_formatted AS REAL) > 0
+        ), '[]'))
+      )),
+      MAX(initiated_at)
+    FROM bucketed_runs
+    GROUP BY bucket_start, pair_id, amount_id, mode
+  `).bind(bucketSeconds, bucketSeconds, start, end, bucketSeconds, bucketSeconds).run();
+}
+
+async function refreshTrendBucketsForTimestamp(timestamp: string, d1: D1Database) {
+  for (const bucketSeconds of [hourlyTrendBucketSeconds, fourHourTrendBucketSeconds]) {
+    const range = bucketRange(timestamp, bucketSeconds);
+    await refreshTrendBucketRange(range.start, range.end, bucketSeconds, d1);
+  }
 }
 
 export async function processCollectorBundle(bundle: CollectorBundle, environment: CollectorEnvironment) {
@@ -211,7 +280,10 @@ export async function processCollectorBundle(bundle: CollectorBundle, environmen
       raw_archive_key = ?, completed_at = ?, error_message = ?
     WHERE id = ?
   `).bind(status, records.length, failures.length, archiveKeys.normalizedArchiveKey, archiveKeys.rawArchiveKey, completedAt, failures.slice(0, 5).join("\n") || null, bundleId).run();
-  await updateSweepProgress(bundle.sweepId, d1);
+  const sweep = await updateSweepProgress(bundle.sweepId, d1);
+  if (sweep && sweep.status !== "pending" && sweep.status !== "running") {
+    await refreshTrendBucketsForTimestamp(sweep.scheduledFor, d1);
+  }
 
   if (failures.length) throw new Error(`${failures.length} collector jobs failed`);
   return { bundleId, skipped: false, completed: records.length, failed: failures.length, ...archiveKeys };
@@ -288,14 +360,22 @@ export async function runDailyMaintenance(scheduledTime: number, environment: Co
   const d1 = environment.DB;
   const yesterday = new Date(scheduledTime - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   await aggregateDay(yesterday, d1);
+  const trendStart = `${yesterday}T00:00:00.000Z`;
+  const trendEnd = new Date(new Date(trendStart).getTime() + 24 * 60 * 60 * 1000).toISOString();
+  await refreshTrendBucketRange(trendStart, trendEnd, hourlyTrendBucketSeconds, d1);
+  await refreshTrendBucketRange(trendStart, trendEnd, fourHourTrendBucketSeconds, d1);
   const detailCutoff = new Date(scheduledTime - detailRetentionDays * 24 * 60 * 60 * 1000).toISOString();
   const aggregateCutoff = new Date(scheduledTime - aggregateRetentionDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const hourlyTrendCutoff = new Date(scheduledTime - hourlyTrendRetentionDays * 24 * 60 * 60 * 1000).toISOString();
+  const fourHourTrendCutoff = new Date(scheduledTime - fourHourTrendRetentionDays * 24 * 60 * 60 * 1000).toISOString();
   await d1.prepare("DELETE FROM latest_quote_payloads WHERE run_id IN (SELECT id FROM benchmark_runs WHERE initiated_at < ?)").bind(detailCutoff).run();
   await d1.prepare("DELETE FROM protocol_quotes WHERE run_id IN (SELECT id FROM benchmark_runs WHERE initiated_at < ?)").bind(detailCutoff).run();
   await d1.prepare("DELETE FROM benchmark_runs WHERE initiated_at < ?").bind(detailCutoff).run();
   await d1.prepare("DELETE FROM collector_bundles WHERE sweep_id IN (SELECT id FROM collector_sweeps WHERE scheduled_for < ?)").bind(detailCutoff).run();
   await d1.prepare("DELETE FROM collector_sweeps WHERE scheduled_for < ?").bind(detailCutoff).run();
   await d1.prepare("DELETE FROM daily_comparison_metrics WHERE day < ?").bind(aggregateCutoff).run();
+  await d1.prepare("DELETE FROM trend_buckets WHERE bucket_seconds = ? AND bucket_start < ?").bind(hourlyTrendBucketSeconds, hourlyTrendCutoff).run();
+  await d1.prepare("DELETE FROM trend_buckets WHERE bucket_seconds = ? AND bucket_start < ?").bind(fourHourTrendBucketSeconds, fourHourTrendCutoff).run();
   await d1.prepare("PRAGMA optimize").run();
-  return { aggregatedDay: yesterday, detailCutoff, aggregateCutoff };
+  return { aggregatedDay: yesterday, detailCutoff, aggregateCutoff, hourlyTrendCutoff, fourHourTrendCutoff };
 }

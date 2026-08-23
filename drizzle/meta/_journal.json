@@ -15,6 +15,13 @@
       "when": 1787443837974,
       "tag": "0001_clever_betty_ross",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787446182967,
+      "tag": "0002_icy_betty_ross",
+      "breakpoints": true
     }
   ]
 }

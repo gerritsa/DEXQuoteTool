@@ -37,6 +37,25 @@ export type CatalogRoute = {
   partners: PartnerId[];
 };
 
+export type CatalogResult = {
+  assets: CatalogAsset[];
+  refreshedAt: string | null;
+  source: "live" | "stored" | "static";
+  warning?: string;
+};
+
+type CatalogStateRow = {
+  assetsJson: string | null;
+  refreshedAt: string | null;
+};
+
+type CatalogOptions = {
+  d1?: D1Database;
+  allowStale?: boolean;
+  allowStatic?: boolean;
+  maxStaleMs?: number;
+};
+
 const THOR_MIDGARD_POOLS = "https://gateway.liquify.com/chain/thorchain_midgard/v2/pools";
 const NEAR_TOKENS = "https://1click.chaindefuser.com/v0/tokens";
 const CHAINFLIP_NETWORK_INFO = "https://chainflip-swap.chainflip.io/api/networkInfo";
@@ -83,7 +102,9 @@ async function fetchJson<T>(url: string, headers: Record<string, string> = {}): 
   return response.json() as Promise<T>;
 }
 
-let cache: { expiresAt: number; value: Awaited<ReturnType<typeof buildCatalog>> } | undefined;
+const liveCatalogTtlMs = 5 * 60_000;
+export const benchmarkCatalogGraceMs = 10 * 60_000;
+let cache: { expiresAt: number; value: CatalogResult } | undefined;
 
 async function buildCatalog() {
   const [thorResult, nearResult, chainflipResult] = await Promise.allSettled([
@@ -133,14 +154,85 @@ async function buildCatalog() {
     };
   }).sort((a, b) => a.label.localeCompare(b.label));
 
-  return { assets };
+  return assets;
 }
 
-export async function getCatalog() {
+function parseStoredAssets(value: string | null) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed as CatalogAsset[] : null;
+  } catch {
+    return null;
+  }
+}
+
+async function storeCatalogAttempt(d1: D1Database | undefined, assets: CatalogAsset[] | null, error: string | null, attemptedAt: string) {
+  if (!d1) return;
+  try {
+    if (assets) {
+      await d1.prepare(`
+        INSERT INTO catalog_state (id, assets_json, refreshed_at, last_attempt_at, last_error)
+        VALUES ('primary', ?, ?, ?, NULL)
+        ON CONFLICT(id) DO UPDATE SET
+          assets_json = excluded.assets_json,
+          refreshed_at = excluded.refreshed_at,
+          last_attempt_at = excluded.last_attempt_at,
+          last_error = NULL
+      `).bind(JSON.stringify(assets), attemptedAt, attemptedAt).run();
+      return;
+    }
+    await d1.prepare(`
+      INSERT INTO catalog_state (id, assets_json, refreshed_at, last_attempt_at, last_error)
+      VALUES ('primary', NULL, NULL, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        last_attempt_at = excluded.last_attempt_at,
+        last_error = excluded.last_error
+    `).bind(attemptedAt, error).run();
+  } catch (storageError) {
+    console.warn("Unable to persist route catalog state", storageError);
+  }
+}
+
+async function loadStoredCatalog(d1: D1Database | undefined) {
+  if (!d1) return null;
+  try {
+    const row = await d1.prepare(`
+      SELECT assets_json AS assetsJson, refreshed_at AS refreshedAt
+      FROM catalog_state WHERE id = 'primary'
+    `).first<CatalogStateRow>();
+    const assets = parseStoredAssets(row?.assetsJson ?? null);
+    return assets && row?.refreshedAt ? { assets, refreshedAt: row.refreshedAt } : null;
+  } catch (storageError) {
+    console.warn("Unable to load stored route catalog", storageError);
+    return null;
+  }
+}
+
+export async function getCatalog(options: CatalogOptions = {}): Promise<CatalogResult> {
   if (cache && cache.expiresAt > Date.now()) return cache.value;
-  const value = await buildCatalog();
-  cache = { value, expiresAt: Date.now() + 5 * 60_000 };
-  return value;
+  const attemptedAt = new Date().toISOString();
+  try {
+    const assets = await buildCatalog();
+    const value: CatalogResult = { assets, refreshedAt: attemptedAt, source: "live" };
+    cache = { value, expiresAt: Date.now() + liveCatalogTtlMs };
+    await storeCatalogAttempt(options.d1, assets, null, attemptedAt);
+    return value;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Route catalog refresh failed";
+    await storeCatalogAttempt(options.d1, null, message, attemptedAt);
+    if (options.allowStale) {
+      const stored = await loadStoredCatalog(options.d1);
+      const storedAgeMs = stored ? Date.now() - new Date(stored.refreshedAt).getTime() : Infinity;
+      if (stored && (options.maxStaleMs == null || storedAgeMs <= options.maxStaleMs)) {
+        return { ...stored, source: "stored", warning: message };
+      }
+    }
+    if (options.allowStatic) {
+      return { assets: staticCatalogAssets(), refreshedAt: null, source: "static", warning: message };
+    }
+    throw new Error(message);
+  }
 }
 
 const fixedThorAssetPairs: Array<[string, string]> = [
@@ -167,6 +259,43 @@ const fixedThorAssetPairs: Array<[string, string]> = [
 ];
 const fixedThorAssets = new Set(fixedThorAssetPairs.flat());
 export const fixedThorRouteCount = fixedThorAssetPairs.length;
+
+const staticAssetDefinitions: Array<{
+  thorAsset: string;
+  chain: string;
+  symbol: string;
+  decimals: number;
+  chainflipAssetId?: string;
+}> = [
+  { thorAsset: "BTC.BTC", chain: "bitcoin", symbol: "BTC", decimals: 8, chainflipAssetId: "Bitcoin:BTC" },
+  { thorAsset: "ETH.ETH", chain: "ethereum", symbol: "ETH", decimals: 18, chainflipAssetId: "Ethereum:ETH" },
+  { thorAsset: "TRON.TRX", chain: "tron", symbol: "TRX", decimals: 6, chainflipAssetId: "Tron:TRX" },
+  { thorAsset: "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", chain: "ethereum", symbol: "USDC", decimals: 6, chainflipAssetId: "Ethereum:USDC" },
+  { thorAsset: "ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7", chain: "ethereum", symbol: "USDT", decimals: 6, chainflipAssetId: "Ethereum:USDT" },
+  { thorAsset: "TRON.USDT-TR7NHQJEKQXGTCI8Q8ZY4PL8OTSZGJLJ6T", chain: "tron", symbol: "USDT", decimals: 6, chainflipAssetId: "Tron:USDT" },
+  { thorAsset: "AVAX.AVAX", chain: "avalanche", symbol: "AVAX", decimals: 18 },
+];
+
+function staticCatalogAssets(): CatalogAsset[] {
+  return staticAssetDefinitions.map((asset) => {
+    const parsed = parsePoolAsset(asset.thorAsset);
+    return {
+      id: parsed.id,
+      label: `${asset.symbol} · ${asset.chain}`,
+      chain: asset.chain,
+      symbol: asset.symbol,
+      thorAsset: asset.thorAsset,
+      priceUsd: null,
+      decimals: asset.decimals,
+      support: {
+        thorchain: { source: true, destination: true, assetId: asset.thorAsset },
+        chainflip: { source: Boolean(asset.chainflipAssetId), destination: Boolean(asset.chainflipAssetId), assetId: asset.chainflipAssetId },
+        "near-intents": { source: true, destination: true },
+        maya: { source: false, destination: false },
+      },
+    };
+  }).sort((a, b) => a.label.localeCompare(b.label));
+}
 
 export function resolveFixedThorRoutes(assets: CatalogAsset[], limit = fixedThorRouteCount) {
   const requestedPairs = fixedThorAssetPairs.slice(0, limit);

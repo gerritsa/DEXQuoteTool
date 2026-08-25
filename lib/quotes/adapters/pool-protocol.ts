@@ -37,8 +37,14 @@ export async function getPoolProtocolQuote(
     const rawResponse = await response.json() as Record<string, unknown>;
     const responseReceivedAt = new Date().toISOString();
     const responseLatencyMs = Date.now() - started;
-    if (!response.ok || typeof rawResponse.expected_amount_out !== "string") {
-      return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt, responseHttpStatus: response.status, responseLatencyMs, requestUrl: url.toString(), errorCode: `HTTP_${response.status}`, errorMessage: String(rawResponse.message ?? "Quote unavailable"), rawResponse };
+    if (!response.ok) {
+      const message = String(rawResponse.message ?? "Quote unavailable");
+      const expectedUnavailable = response.status === 400 && /insufficient|no (?:pool|route|quote)|not supported|minimum|maximum amount/i.test(message);
+      return { protocol, strategy, status: expectedUnavailable ? "unavailable" : "error", requestStartedAt, responseReceivedAt, responseHttpStatus: response.status, responseLatencyMs, requestUrl: url.toString(), errorCode: expectedUnavailable ? "INSUFFICIENT_LIQUIDITY" : `HTTP_${response.status}`, errorMessage: message, rawResponse };
+    }
+
+    if (typeof rawResponse.expected_amount_out !== "string") {
+      return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt, responseHttpStatus: response.status, responseLatencyMs, requestUrl: url.toString(), errorCode: "INVALID_RESPONSE", errorMessage: "Quote response omitted the expected output amount", rawResponse };
     }
 
     const inboundSeconds = Number(rawResponse.inbound_confirmation_seconds ?? 0);

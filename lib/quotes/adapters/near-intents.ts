@@ -15,6 +15,10 @@ type NearQuoteResponse = {
   [key: string]: unknown;
 };
 
+function responseMessage(value: NearQuoteResponse) {
+  return typeof value.message === "string" ? value.message : undefined;
+}
+
 export async function getNearIntentsQuote(
   request: BenchmarkRequest,
   apiKey: string,
@@ -65,8 +69,14 @@ export async function getNearIntentsQuote(
     const quote = rawResponse.quote ?? rawResponse;
     const amountOut = quote.amountOut;
 
-    if (!response.ok || typeof amountOut !== "string") {
-      return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt, responseHttpStatus: response.status, responseLatencyMs, requestUrl: url, requestPayload: payload, errorCode: `HTTP_${response.status}`, errorMessage: "NEAR Intents quote unavailable", rawResponse };
+    if (!response.ok) {
+      const message = responseMessage(rawResponse) ?? "NEAR Intents quote unavailable";
+      const expectedUnavailable = response.status === 400 && /no liquidity|insufficient liquidity|no (?:route|quote)|not supported/i.test(message);
+      return { protocol, strategy, status: expectedUnavailable ? "unavailable" : "error", requestStartedAt, responseReceivedAt, responseHttpStatus: response.status, responseLatencyMs, requestUrl: url, requestPayload: payload, errorCode: expectedUnavailable ? "INSUFFICIENT_LIQUIDITY" : `HTTP_${response.status}`, errorMessage: message, rawResponse };
+    }
+
+    if (typeof amountOut !== "string") {
+      return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt, responseHttpStatus: response.status, responseLatencyMs, requestUrl: url, requestPayload: payload, errorCode: "INVALID_RESPONSE", errorMessage: "NEAR Intents quote omitted the expected output amount", rawResponse };
     }
 
     return {

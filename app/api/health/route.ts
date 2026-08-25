@@ -1,4 +1,5 @@
 import { ensureBenchmarkSchema, getD1 } from "../../../db";
+import { benchmarkCatalogGraceMs } from "../../../lib/routes/catalog";
 
 type SweepRow = {
   id: string;
@@ -17,8 +18,15 @@ type ProtocolHealthRow = {
   protocol: string;
   attempts: number;
   successes: number;
+  unavailable: number;
   errors: number;
   latestResponseAt: string | null;
+};
+
+type CatalogStateRow = {
+  refreshedAt: string | null;
+  lastAttemptAt: string;
+  lastError: string | null;
 };
 
 function parseMissingRoutes(value: string | null) {
@@ -55,7 +63,18 @@ export async function GET() {
     const partnerResult = await d1.prepare(`
       SELECT q.protocol AS protocol, COUNT(*) AS attempts,
         SUM(CASE WHEN q.status = 'quoted' THEN 1 ELSE 0 END) AS successes,
-        SUM(CASE WHEN q.status = 'error' THEN 1 ELSE 0 END) AS errors,
+        SUM(CASE WHEN q.status = 'unavailable' OR (q.status = 'error' AND NOT (
+          COALESCE(q.error_code, '') IN ('REQUEST_FAILED', 'MISSING_API_KEY', 'INVALID_RESPONSE')
+          OR q.response_http_status IS NULL
+          OR q.response_http_status IN (401, 403, 408, 429)
+          OR q.response_http_status >= 500
+        )) THEN 1 ELSE 0 END) AS unavailable,
+        SUM(CASE WHEN q.status = 'error' AND (
+          COALESCE(q.error_code, '') IN ('REQUEST_FAILED', 'MISSING_API_KEY', 'INVALID_RESPONSE')
+          OR q.response_http_status IS NULL
+          OR q.response_http_status IN (401, 403, 408, 429)
+          OR q.response_http_status >= 500
+        ) THEN 1 ELSE 0 END) AS errors,
         MAX(q.response_received_at) AS latestResponseAt
       FROM protocol_quotes q
       JOIN benchmark_runs r ON r.id = q.run_id
@@ -63,6 +82,10 @@ export async function GET() {
       GROUP BY q.protocol
       ORDER BY q.protocol
     `).bind(quoteCutoff).all<ProtocolHealthRow>();
+    const catalogState = await d1.prepare(`
+      SELECT refreshed_at AS refreshedAt, last_attempt_at AS lastAttemptAt, last_error AS lastError
+      FROM catalog_state WHERE id = 'primary'
+    `).first<CatalogStateRow>();
 
     const now = Date.now();
     const terminalAt = latestTerminal?.completedAt ?? latestTerminal?.scheduledFor;
@@ -71,6 +94,10 @@ export async function GET() {
     const missingRoutes = parseMissingRoutes(latest?.missingRoutesJson ?? null);
     const warnings: string[] = [];
     let status: "healthy" | "degraded" | "stale" | "initializing" = "healthy";
+    const catalogAgeMinutes = catalogState?.refreshedAt
+      ? Math.max(0, Math.round((now - new Date(catalogState.refreshedAt).getTime()) / 60_000))
+      : null;
+    const collectionPaused = Boolean(catalogState?.lastError) && (catalogAgeMinutes == null || catalogAgeMinutes * 60_000 > benchmarkCatalogGraceMs);
 
     if (!latest) {
       status = "initializing";
@@ -91,6 +118,12 @@ export async function GET() {
       if (status === "healthy") status = "degraded";
       warnings.push(`${missingRoutes.length} fixed route${missingRoutes.length === 1 ? " is" : "s are"} temporarily unavailable.`);
     }
+    if (catalogState?.lastError) {
+      if (status === "healthy") status = collectionPaused ? "stale" : "degraded";
+      warnings.push(collectionPaused
+        ? "Live collection is paused until fresh route pricing is available. Historical results remain online."
+        : "The live route catalog refresh failed; collection is temporarily using a recent stored snapshot.");
+    }
 
     const partners = partnerResult.results.map((partner) => {
       const attempts = Number(partner.attempts);
@@ -98,12 +131,13 @@ export async function GET() {
       const errorRate = attempts ? errors / attempts : 0;
       if (attempts >= 10 && errorRate > 0.2) {
         if (status === "healthy") status = "degraded";
-        warnings.push(`${partner.protocol} quote errors exceeded 20% over the last two hours.`);
+        warnings.push(`${partner.protocol} operational quote errors exceeded 20% over the last two hours.`);
       }
       return {
         protocol: partner.protocol,
         attempts,
         successes: Number(partner.successes),
+        unavailable: Number(partner.unavailable),
         errors,
         errorRate,
         latestResponseAt: partner.latestResponseAt,
@@ -127,6 +161,14 @@ export async function GET() {
       } : null,
       minutesSinceTerminalSweep: minutesSinceTerminal,
       partners,
+      catalog: catalogState ? {
+        status: catalogState.lastError ? collectionPaused ? "paused" : "stored" : "fresh",
+        refreshedAt: catalogState.refreshedAt,
+        lastAttemptAt: catalogState.lastAttemptAt,
+        ageMinutes: catalogAgeMinutes,
+        collectionPaused,
+        error: catalogState.lastError,
+      } : null,
       warnings,
     }, {
       status: status === "healthy" ? 200 : 503,

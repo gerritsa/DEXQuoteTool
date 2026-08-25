@@ -1,5 +1,5 @@
 import { ensureBenchmarkSchema } from "../db";
-import { fixedThorRouteCount, getCatalog, resolveFixedThorRoutes } from "./routes/catalog";
+import { benchmarkCatalogGraceMs, fixedThorRouteCount, getCatalog, resolveFixedThorRoutes } from "./routes/catalog";
 import { quoteSizes } from "./quotes/sizes";
 import { runSelectedBenchmark, type BenchmarkArchiveRecord } from "./quotes/run";
 import type { ExecutionMode, NormalizedQuote, ProtocolId } from "./quotes/types";
@@ -78,7 +78,8 @@ function normalizedRecord(record: BenchmarkArchiveRecord) {
 
 async function gzip(value: unknown) {
   const source = new Blob([JSON.stringify(value)]).stream();
-  return source.pipeThrough(new CompressionStream("gzip"));
+  const compressed = source.pipeThrough(new CompressionStream("gzip"));
+  return new Response(compressed).arrayBuffer();
 }
 
 async function archiveBundle(bucket: R2Bucket, bundle: CollectorBundle, records: BenchmarkArchiveRecord[]) {
@@ -87,16 +88,21 @@ async function archiveBundle(bucket: R2Bucket, bundle: CollectorBundle, records:
   const normalizedArchiveKey = `normalized/${base}.json.gz`;
   const rawArchiveKey = `raw/${base}.json.gz`;
   const metadata = { sweepId: bundle.sweepId, bundleIndex: String(bundle.bundleIndex), scheduledFor: bundle.scheduledFor };
-  await Promise.all([
-    bucket.put(normalizedArchiveKey, await gzip({ ...metadata, records: records.map(normalizedRecord) }), {
+  const [normalizedBody, rawBody] = await Promise.all([
+    gzip({ ...metadata, records: records.map(normalizedRecord) }),
+    gzip({ ...metadata, records }),
+  ]);
+  const uploads = await Promise.all([
+    bucket.put(normalizedArchiveKey, normalizedBody, {
       httpMetadata: { contentType: "application/json", contentEncoding: "gzip" },
       customMetadata: metadata,
     }),
-    bucket.put(rawArchiveKey, await gzip({ ...metadata, records }), {
+    bucket.put(rawArchiveKey, rawBody, {
       httpMetadata: { contentType: "application/json", contentEncoding: "gzip" },
       customMetadata: metadata,
     }),
   ]);
+  if (uploads.some((upload) => !upload)) throw new Error("R2 archive upload returned no object");
   return { normalizedArchiveKey, rawArchiveKey };
 }
 
@@ -108,7 +114,23 @@ export async function enqueueScheduledSweep(scheduledTime: number, environment: 
   const existing = await d1.prepare("SELECT status FROM collector_sweeps WHERE id = ?").bind(sweepId).first<{ status: string }>();
   if (existing?.status === "complete") return { sweepId, scheduledFor, skipped: true, reason: "Sweep already complete" };
 
-  const catalog = await getCatalog();
+  let catalog;
+  try {
+    catalog = await getCatalog({ d1, allowStale: true, maxStaleMs: benchmarkCatalogGraceMs });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Route catalog refresh failed";
+    const now = new Date().toISOString();
+    if (!existing) {
+      await d1.prepare(`
+        INSERT INTO collector_sweeps (
+          id, scheduled_for, status, route_count, job_count, bundle_count,
+          completed_jobs, failed_jobs, started_at, completed_at, missing_routes_json
+        ) VALUES (?, ?, 'failed', 0, 0, 0, 0, 0, ?, ?, '[]')
+      `).bind(sweepId, scheduledFor, now, now).run();
+    }
+    console.warn("Benchmark collection paused because fresh catalog pricing is unavailable", { sweepId, reason });
+    return { sweepId, scheduledFor, skipped: true, reason: `Collection paused: ${reason}` };
+  }
   const { routes, missingRouteIds } = resolveFixedThorRoutes(catalog.assets, fixedThorRouteCount);
   const jobs = routes.flatMap((route) => quoteSizes.flatMap((size) => modes.map((mode) => ({ routeId: route.id, amountId: size.id, mode }))));
   const bundles = chunks(jobs, jobsPerMessage).map((bundleJobs, bundleIndex): CollectorBundle => ({ sweepId, scheduledFor, bundleIndex, jobs: bundleJobs }));
@@ -166,7 +188,9 @@ async function updateSweepProgress(sweepId: string, d1: D1Database) {
       failed_jobs = COALESCE((SELECT SUM(failed_jobs) FROM collector_bundles WHERE sweep_id = ?), 0),
       status = CASE
         WHEN COALESCE((SELECT SUM(completed_jobs + failed_jobs) FROM collector_bundles WHERE sweep_id = ?), 0) < job_count THEN 'running'
-        WHEN COALESCE((SELECT SUM(failed_jobs) FROM collector_bundles WHERE sweep_id = ?), 0) > 0 OR route_count < ? THEN 'partial'
+        WHEN COALESCE((SELECT SUM(failed_jobs) FROM collector_bundles WHERE sweep_id = ?), 0) > 0
+          OR EXISTS (SELECT 1 FROM collector_bundles WHERE sweep_id = ? AND status IN ('partial', 'failed'))
+          OR route_count < ? THEN 'partial'
         ELSE 'complete'
       END,
       completed_at = CASE
@@ -174,7 +198,7 @@ async function updateSweepProgress(sweepId: string, d1: D1Database) {
         ELSE completed_at
       END
     WHERE id = ?
-  `).bind(sweepId, sweepId, sweepId, sweepId, fixedThorRouteCount, sweepId, now, sweepId).run();
+  `).bind(sweepId, sweepId, sweepId, sweepId, sweepId, fixedThorRouteCount, sweepId, now, sweepId).run();
   return d1.prepare("SELECT status, scheduled_for AS scheduledFor FROM collector_sweeps WHERE id = ?")
     .bind(sweepId)
     .first<{ status: string; scheduledFor: string }>();
@@ -271,20 +295,30 @@ export async function processCollectorBundle(bundle: CollectorBundle, environmen
   };
   await Promise.all(Array.from({ length: Math.min(workerConcurrency, bundle.jobs.length) }, () => worker()));
 
-  const archiveKeys = records.length ? await archiveBundle(environment.ARCHIVE, bundle, records) : { normalizedArchiveKey: null, rawArchiveKey: null };
+  let archiveKeys: { normalizedArchiveKey: string | null; rawArchiveKey: string | null } = { normalizedArchiveKey: null, rawArchiveKey: null };
+  let archiveError: string | null = null;
+  if (records.length) {
+    try {
+      archiveKeys = await archiveBundle(environment.ARCHIVE, bundle, records);
+    } catch (error) {
+      archiveError = `Archive upload failed: ${error instanceof Error ? error.message : "Unknown R2 error"}`;
+    }
+  }
   const completedAt = new Date().toISOString();
-  const status = failures.length ? (records.length ? "partial" : "failed") : "complete";
+  const status = failures.length || archiveError ? (records.length ? "partial" : "failed") : "complete";
+  const storedErrors = [...failures.slice(0, 5), ...(archiveError ? [archiveError] : [])];
   await d1.prepare(`
     UPDATE collector_bundles SET
       status = ?, completed_jobs = ?, failed_jobs = ?, normalized_archive_key = ?,
       raw_archive_key = ?, completed_at = ?, error_message = ?
     WHERE id = ?
-  `).bind(status, records.length, failures.length, archiveKeys.normalizedArchiveKey, archiveKeys.rawArchiveKey, completedAt, failures.slice(0, 5).join("\n") || null, bundleId).run();
+  `).bind(status, records.length, failures.length, archiveKeys.normalizedArchiveKey, archiveKeys.rawArchiveKey, completedAt, storedErrors.join("\n") || null, bundleId).run();
   const sweep = await updateSweepProgress(bundle.sweepId, d1);
   if (sweep && sweep.status !== "pending" && sweep.status !== "running") {
     await refreshTrendBucketsForTimestamp(sweep.scheduledFor, d1);
   }
 
+  if (archiveError) throw new Error(archiveError);
   if (failures.length) throw new Error(`${failures.length} collector jobs failed`);
   return { bundleId, skipped: false, completed: records.length, failed: failures.length, ...archiveKeys };
 }

@@ -37,7 +37,12 @@ const worker = {
       try {
         await processCollectorBundle(message.body, env);
         message.ack();
-      } catch {
+      } catch (error) {
+        console.error("Collector bundle failed", {
+          sweepId: message.body.sweepId,
+          bundleIndex: message.body.bundleIndex,
+          error: error instanceof Error ? error.message : "Unknown collector error",
+        });
         message.retry({ delaySeconds: 60 });
       }
     }));

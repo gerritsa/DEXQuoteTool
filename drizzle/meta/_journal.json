@@ -8,6 +8,13 @@
       "when": 1787446404373,
       "tag": "0000_true_spot",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1787701982939,
+      "tag": "0001_wise_wildside",
+      "breakpoints": true
     }
   ]
 }

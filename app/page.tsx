@@ -18,6 +18,12 @@ type Route = {
 
 type CatalogResponse = {
   routes: Route[];
+  catalog?: {
+    status: "fresh" | "stale";
+    source: "live" | "stored" | "static";
+    refreshedAt: string | null;
+    warning?: string;
+  };
   error?: string;
 };
 
@@ -77,7 +83,15 @@ type HealthResponse = {
     missingRoutes: string[];
   };
   minutesSinceTerminalSweep: number | null;
-  partners?: Array<{ protocol: string; attempts: number; successes: number; errors: number; latestResponseAt: string | null }>;
+  partners?: Array<{ protocol: string; attempts: number; successes: number; unavailable: number; errors: number; latestResponseAt: string | null }>;
+  catalog?: null | {
+    status: "fresh" | "stored" | "paused";
+    refreshedAt: string | null;
+    lastAttemptAt: string;
+    ageMinutes: number | null;
+    collectionPaused: boolean;
+    error: string | null;
+  };
   warnings?: string[];
   error?: string;
 };
@@ -184,6 +198,37 @@ function ComparisonResult({ cell, window, now }: { cell?: ComparisonCell; window
   return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "ONLY QUOTE" : cell.tie ? "Exact tie" : formatBps(cell.marginBps)}{cell.marginBps != null && cell.runnerUp && !cell.tie && <span className="margin-context">vs <PartnerMark id={cell.runnerUp} /></span>}</strong><small>{quoteCount} {quoteCount === 1 ? "quote" : "quotes"} · {formatAgeLabel(cell.capturedAt, now)}</small></span>;
 }
 
+function MobileRouteCard({ route, index, selectedSize, cells, viewWindow, now, activePartnerCount, onInspect }: {
+  route: Route;
+  index: number;
+  selectedSize: QuoteSize;
+  cells: Map<string, ComparisonCell>;
+  viewWindow: ViewWindow;
+  now: number;
+  activePartnerCount: number;
+  onInspect: (route: Route, size: QuoteSize) => void;
+}) {
+  const selectedCell = cells.get(`${route.id}::${selectedSize.id}`);
+  return <article className="mobile-route-card">
+    <button className="mobile-route-card-header" onClick={() => onInspect(route, selectedSize)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol}`}>
+      <span className="mobile-route-rank">{String(index + 1).padStart(2, "0")}</span>
+      <RoutePair route={route} />
+      <span className="mobile-route-chevron" aria-hidden="true">↗</span>
+    </button>
+    <div className="mobile-route-card-summary">
+      <div className="mobile-route-card-label"><span>Best result</span><b>{selectedSize.label}</b></div>
+      <button className="mobile-result-button" onClick={() => onInspect(route, selectedSize)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol} at ${selectedSize.label}`}>
+        <ComparisonResult cell={selectedCell} window={viewWindow} now={now} />
+      </button>
+      <div className="mobile-route-coverage"><span>{activePartnerCount} protocols compared</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!route.partners.includes(partner.id)} />)}</div></div>
+    </div>
+    <details className="mobile-route-sizes">
+      <summary><span>Compare quote sizes</span><b>{selectedSize.label}</b></summary>
+      <div className="mobile-size-list">{quoteSizes.map((size) => <button key={size.id} className={`mobile-size-item ${size.id === selectedSize.id ? "selected" : ""}`} onClick={() => onInspect(route, size)}><span>{size.label}</span><ComparisonResult cell={cells.get(`${route.id}::${size.id}`)} window={viewWindow} now={now} /></button>)}</div>
+    </details>
+  </article>;
+}
+
 function RequestDetails({ runDetails, runLoading, selectedSize }: { runDetails: RunResponse | null; runLoading: boolean; selectedSize: QuoteSize }) {
   const winnerProtocol = [...(runDetails?.quotes ?? [])]
     .filter((quote) => quote.status === "quoted" && quote.expectedOutputFormatted)
@@ -196,7 +241,7 @@ function RequestDetails({ runDetails, runLoading, selectedSize }: { runDetails: 
       <h3>{runDetails.quotes.length} protocol results</h3>
       <p>Captured {formatTime(runDetails.run.initiatedAt)} · ${runDetails.run.sourceAmountUsd.toLocaleString()} exact input · synchronized within {runDetails.run.maxRequestSkewMs ?? "—"} ms</p>
       <div className="request-list">{orderedQuotes.map((quote) => <details key={quote.id}>
-        <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.protocol === "chainflip" && runDetails.run.mode === "optimized" && quote.strategy === "regular" ? "regular fallback" : quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quote.status === "unavailable" ? "Not supported" : quote.status === "error" ? quote.errorCode?.includes("NO_USABLE_QUOTE") ? "No quote at this size" : "Quote error" : quote.status}</strong></summary>
+        <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.protocol === "chainflip" && runDetails.run.mode === "optimized" && quote.strategy === "regular" ? "regular fallback" : quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quote.status === "unavailable" ? quote.errorCode === "UNSUPPORTED_PAIR" ? "Not supported" : quote.errorCode === "INSUFFICIENT_LIQUIDITY" ? "Insufficient liquidity" : quote.errorCode === "STRATEGY_UNAVAILABLE" ? "No quote for this mode" : "No quote at this size" : quote.status === "error" ? "Quote error" : quote.status}</strong></summary>
         <dl><div><dt>Requested</dt><dd>{formatTime(quote.requestStartedAt)}</dd></div><div><dt>HTTP status</dt><dd>{quote.responseHttpStatus ?? "—"}</dd></div><div><dt>Expected output</dt><dd>{quote.expectedOutputFormatted ?? quote.expectedOutputBaseUnits ?? "—"}</dd></div><div><dt>Quote expiry</dt><dd>{formatTime(quote.quoteExpiresAt ?? undefined)}</dd></div></dl>
         <span className="json-label">Request</span><pre>{quote.requestPayloadJson ?? quote.requestUrl ?? "No request payload stored"}</pre><span className="json-label">Response</span><pre>{quote.rawResponseJson ?? quote.errorMessage ?? "No response payload stored"}</pre>
       </details>)}</div>
@@ -343,7 +388,7 @@ export default function Home() {
     if (!selectedRoute) return;
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) { setTrendLoading(true); setTrendError(null); } });
-    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode, days: String(trendDays), protocols: protocolParam });
+    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode, days: String(trendDays), protocols: protocolParam, v: "2" });
     fetch(`/api/trends?${params}`, { signal: controller.signal })
       .then(async (response) => {
         const data = await response.json() as TrendResponse;
@@ -429,6 +474,11 @@ export default function Home() {
         <fieldset><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Latest check" : window.replace("d", " days")}</button>)}</div></fieldset>
       </div>
 
+      {catalog?.catalog?.status === "stale" && <div className="catalog-notice" role="status">
+        <div><b>{catalog.catalog.source === "static" ? "LIVE CATALOG OFFLINE" : "SHOWING STORED ROUTES"}</b><span>{catalog.catalog.source === "static" ? "Historical results remain available from the fixed route list." : `Last successful catalog refresh: ${catalog.catalog.refreshedAt ? formatLocalTime(catalog.catalog.refreshedAt) : "unknown"}.`}</span></div>
+        <strong>{health?.catalog?.collectionPaused ? "NEW CHECKS PAUSED" : "LIVE REFRESH DEGRADED"}</strong>
+      </div>}
+
       {catalog?.error ? <div className="error-state"><b>Route catalog unavailable</b><span>{catalog.error}</span></div> : <div className={`leaderboard-wrap ${loading || comparisonLoading ? "loading" : ""}`}>
         <table className="leaderboard-table">
           <thead><tr><th>Route / asset pair</th>{quoteSizes.map((size) => <th key={size.id}>{size.label}</th>)}</tr></thead>
@@ -437,6 +487,7 @@ export default function Home() {
             {quoteSizes.map((size) => <td key={size.id}><button className="result-button" onClick={() => inspect(route, size)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol} at ${size.label}`}><ComparisonResult cell={cells.get(`${route.id}::${size.id}`)} window={viewWindow} now={now} /></button></td>)}
           </tr>)}</tbody>
         </table>
+        <div className="mobile-route-list" aria-label="Mobile route leaderboard">{(catalog?.routes ?? []).map((route, index) => <MobileRouteCard key={route.id} route={route} index={index} selectedSize={selectedSize} cells={cells} viewWindow={viewWindow} now={now} activePartnerCount={activePartners.length} onInspect={inspect} />)}</div>
         {!loading && catalog?.routes.length === 0 && <div className="empty-table">No fixed routes are available.</div>}
       </div>}
     </section>

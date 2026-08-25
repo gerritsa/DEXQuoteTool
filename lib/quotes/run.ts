@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { and, eq } from "drizzle-orm";
 import { ensureBenchmarkSchema, getD1, getDb } from "../../db";
 import { benchmarkRuns, protocolQuotes } from "../../db/schema";
-import { getCatalog, topThorRoutes, type CatalogAsset, type PartnerId } from "../routes/catalog";
+import { benchmarkCatalogGraceMs, getCatalog, topThorRoutes, type CatalogAsset, type PartnerId } from "../routes/catalog";
 import { getChainflipQuote } from "./adapters/chainflip";
 import { getNearIntentsQuote } from "./adapters/near-intents";
 import { getPoolProtocolQuote } from "./adapters/pool-protocol";
@@ -180,7 +180,7 @@ async function upsertLatestPayloads(runId: number, routeId: string, amountId: st
 
 export async function runSelectedBenchmark(routeId: string, amountId: string, mode: ExecutionMode = "standard", options: BenchmarkRunOptions = {}): Promise<StoredBenchmarkResult> {
   await ensureBenchmarkSchema();
-  const catalog = await getCatalog();
+  const catalog = await getCatalog({ d1: getD1(), allowStale: true, maxStaleMs: benchmarkCatalogGraceMs });
   const route = topThorRoutes(catalog.assets).find((candidate) => candidate.id === routeId);
   if (!route) throw new Error("Select one of the fixed 20 THORChain routes");
   const quoteSize = quoteSizes.find((candidate) => candidate.id === amountId);

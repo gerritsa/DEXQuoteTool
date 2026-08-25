@@ -14,6 +14,15 @@ function splitAsset(value: string) {
   return { chain: value.slice(0, separator), asset: value.slice(separator + 1) };
 }
 
+function responseMessage(value: ChainflipQuote[] | Record<string, unknown>) {
+  if (Array.isArray(value)) return undefined;
+  return typeof value.message === "string" ? value.message : undefined;
+}
+
+function isExpectedUnavailable(status: number, message?: string) {
+  return status === 400 && Boolean(message && /insufficient liquidity|no (?:route|quote)|not supported|minimum|maximum amount/i.test(message));
+}
+
 export async function getChainflipQuote(request: BenchmarkRequest, signal?: AbortSignal): Promise<NormalizedQuote> {
   const protocol = "chainflip" as const;
   const requestedStrategy = request.mode === "optimized" ? "dca" as const : "regular" as const;
@@ -49,7 +58,42 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
       ?? (request.mode === "optimized" ? quotes.find((candidate) => candidate.type === "REGULAR") : undefined);
     const strategy = quote?.type === "DCA" ? "dca" as const : quote?.type === "REGULAR" ? "regular" as const : requestedStrategy;
 
-    if (!response.ok || !quote || typeof quote.egressAmount !== "string") {
+    if (!response.ok) {
+      const message = responseMessage(rawResponse) ?? "Chainflip quote unavailable";
+      const expectedUnavailable = isExpectedUnavailable(response.status, message);
+      return {
+        protocol,
+        strategy,
+        status: expectedUnavailable ? "unavailable" : "error",
+        requestStartedAt,
+        responseReceivedAt,
+        responseHttpStatus: response.status,
+        responseLatencyMs,
+        requestUrl: url.toString(),
+        errorCode: expectedUnavailable ? "INSUFFICIENT_LIQUIDITY" : `HTTP_${response.status}`,
+        errorMessage: message,
+        rawResponse,
+      };
+    }
+
+    if (!quote) {
+      const strategyUnavailable = quotes.length > 0;
+      return {
+        protocol,
+        strategy,
+        status: "unavailable",
+        requestStartedAt,
+        responseReceivedAt,
+        responseHttpStatus: response.status,
+        responseLatencyMs,
+        requestUrl: url.toString(),
+        errorCode: strategyUnavailable ? "STRATEGY_UNAVAILABLE" : "NO_USABLE_QUOTE",
+        errorMessage: strategyUnavailable ? `Chainflip returned no ${requestedType.toLowerCase()} quote` : "Chainflip returned no executable quote",
+        rawResponse,
+      };
+    }
+
+    if (typeof quote.egressAmount !== "string") {
       return {
         protocol,
         strategy,
@@ -59,8 +103,8 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
         responseHttpStatus: response.status,
         responseLatencyMs,
         requestUrl: url.toString(),
-        errorCode: response.ok ? `HTTP_${response.status}_NO_USABLE_QUOTE` : `HTTP_${response.status}`,
-        errorMessage: "Chainflip quote unavailable",
+        errorCode: "INVALID_RESPONSE",
+        errorMessage: "Chainflip quote omitted the expected output amount",
         rawResponse,
       };
     }

@@ -134,3 +134,11 @@ export const trendBuckets = sqliteTable("trend_buckets", {
   index("idx_trend_buckets_lookup").on(table.pairId, table.amountId, table.mode, table.bucketSeconds, table.bucketStart),
   index("idx_trend_buckets_retention").on(table.bucketSeconds, table.bucketStart),
 ]);
+
+export const catalogState = sqliteTable("catalog_state", {
+  id: text("id").primaryKey(),
+  assetsJson: text("assets_json"),
+  refreshedAt: text("refreshed_at"),
+  lastAttemptAt: text("last_attempt_at").notNull(),
+  lastError: text("last_error"),
+});

@@ -18,8 +18,8 @@ test("server-renders the SwapRank dashboard", async () => {
   const html = await response.text();
   assert.match(html, /<title>SwapRank/);
   assert.match(html, /href="\/favicon\.svg"/);
-  assert.match(html, /DEX swap quotes,/);
-  assert.match(html, /compared by size/);
+  assert.match(html, /QUOTE LEADERBOARD/);
+  assert.match(html, /Cross-chain DEX quotes compared by trade size/);
   assert.match(html, /Switch to light mode/);
   assert.match(html, /\$500/);
   assert.doesNotMatch(html, />\$10</);
@@ -35,7 +35,6 @@ test("server-renders the SwapRank dashboard", async () => {
   assert.match(html, /Compare protocols/);
   assert.match(html, /Standard swap/);
   assert.match(html, /Streaming\/DCA/);
-  assert.match(html, /NEAR remains solver-based in both modes/);
   assert.match(html, /Execution mode[\s\S]*Streaming\/DCA[\s\S]*Standard swap/);
   assert.match(html, /\/partners\/near\.svg/);
   assert.match(html, /\/partners\/chainflip\.svg/);
@@ -55,7 +54,33 @@ test("health endpoint covers stale sweeps, partial routes, and partner errors", 
   assert.match(source, /minutesSinceTerminal > 75/);
   assert.match(source, /missingRoutes\.length/);
   assert.match(source, /errorRate > 0\.2/);
+  assert.match(source, /AS unavailable/);
+  assert.match(source, /response_http_status >= 500/);
+  assert.match(source, /operational quote errors exceeded 20%/);
+  assert.match(source, /Live collection is paused until fresh route pricing is available/);
+  assert.match(source, /FROM catalog_state/);
   assert.match(source, /status === "healthy" \? 200 : 503/);
+});
+
+test("route catalog keeps a durable display fallback while protecting benchmark freshness", async () => {
+  const catalog = await readFile(new URL("../lib/routes/catalog.ts", import.meta.url), "utf8");
+  const routes = await readFile(new URL("../app/api/routes/route.ts", import.meta.url), "utf8");
+  const collector = await readFile(new URL("../lib/collector.ts", import.meta.url), "utf8");
+  assert.match(catalog, /INSERT INTO catalog_state/);
+  assert.match(catalog, /source: "stored"/);
+  assert.match(catalog, /source: "static"/);
+  assert.match(routes, /allowStale: true, allowStatic: true/);
+  assert.match(collector, /benchmarkCatalogGraceMs/);
+  assert.match(collector, /Benchmark collection paused because fresh catalog pricing is unavailable/);
+});
+
+test("quote adapters separate expected unavailability from operational errors", async () => {
+  const chainflip = await readFile(new URL("../lib/quotes/adapters/chainflip.ts", import.meta.url), "utf8");
+  const near = await readFile(new URL("../lib/quotes/adapters/near-intents.ts", import.meta.url), "utf8");
+  assert.match(chainflip, /INSUFFICIENT_LIQUIDITY/);
+  assert.match(chainflip, /STRATEGY_UNAVAILABLE/);
+  assert.match(chainflip, /INVALID_RESPONSE/);
+  assert.match(near, /INSUFFICIENT_LIQUIDITY/);
 });
 
 test("does not expose a public collector page", async () => {
@@ -77,7 +102,7 @@ test("the clean baseline includes collector resilience and precomputed trends", 
   const migration = await readFile(new URL("../drizzle/0000_true_spot.sql", import.meta.url), "utf8");
   assert.match(migration, /missing_routes_json/);
   assert.match(migration, /idx_benchmark_runs_initiated/);
-  assert.match(migration, /CREATE TABLE `trend_buckets`/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS `trend_buckets`/);
   assert.match(migration, /idx_trend_buckets_lookup/);
 });
 
@@ -87,4 +112,16 @@ test("leaderboard and graph use fifteen-minute shared caching", async () => {
   assert.match(comparison, /publicCacheHeaders\(900\)/);
   assert.match(trends, /FROM trend_buckets/);
   assert.match(trends, /publicCacheHeaders\(900\)/);
+});
+
+test("collector archives fixed-length gzip bodies and preserves finalization errors", async () => {
+  const collector = await readFile(new URL("../lib/collector.ts", import.meta.url), "utf8");
+  const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
+  const backfill = await readFile(new URL("../scripts/backfill-trends.sql", import.meta.url), "utf8");
+  assert.match(collector, /new Response\(compressed\)\.arrayBuffer\(\)/);
+  assert.match(collector, /Archive upload failed:/);
+  assert.match(collector, /status IN \('partial', 'failed'\)/);
+  assert.match(worker, /console\.error\("Collector bundle failed"/);
+  assert.match(backfill, /CAST\(3600 AS TEXT\)/);
+  assert.match(backfill, /CAST\(14400 AS TEXT\)/);
 });

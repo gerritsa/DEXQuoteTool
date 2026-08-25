@@ -15,7 +15,7 @@ type ScoredRow = {
   winCredit: number;
 };
 
-const protocols: PartnerId[] = ["near-intents", "chainflip", "thorchain", "maya"];
+const protocols: PartnerId[] = ["near-intents", "chainflip", "thorchain"];
 
 function median(values: number[]) {
   if (!values.length) return null;

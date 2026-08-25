@@ -13,7 +13,17 @@ export function publicCacheHeaders(maxAgeSeconds: number) {
 export async function readPublicCache(request: Request) {
   if (request.method !== "GET") return undefined;
   try {
-    return await defaultCache()?.match(new Request(request.url, { method: "GET" }));
+    const cached = await defaultCache()?.match(new Request(request.url, { method: "GET" }));
+    if (!cached) return undefined;
+
+    // Responses returned directly by Cloudflare Cache can have immutable
+    // headers. Vinext adds framework headers after the route handler returns,
+    // so return a fresh Response with mutable headers instead.
+    return new Response(cached.body, {
+      status: cached.status,
+      statusText: cached.statusText,
+      headers: cached.headers,
+    });
   } catch {
     return undefined;
   }

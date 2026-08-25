@@ -16,13 +16,13 @@ function splitAsset(value: string) {
 
 export async function getChainflipQuote(request: BenchmarkRequest, signal?: AbortSignal): Promise<NormalizedQuote> {
   const protocol = "chainflip" as const;
-  const strategy = request.mode === "optimized" ? "dca" as const : "regular" as const;
+  const requestedStrategy = request.mode === "optimized" ? "dca" as const : "regular" as const;
   const requestStartedAt = new Date().toISOString();
   const sourceId = request.source.protocolIds[protocol];
   const destinationId = request.destination.protocolIds[protocol];
 
   if (!sourceId || !destinationId) {
-    return { protocol, strategy, status: "unavailable", requestStartedAt, errorCode: "UNSUPPORTED_PAIR", rawResponse: null };
+    return { protocol, strategy: requestedStrategy, status: "unavailable", requestStartedAt, errorCode: "UNSUPPORTED_PAIR", rawResponse: null };
   }
 
   const source = splitAsset(sourceId);
@@ -45,7 +45,9 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
     const responseLatencyMs = Date.now() - started;
     const quotes = Array.isArray(rawResponse) ? rawResponse : [];
     const requestedType = request.mode === "optimized" ? "DCA" : "REGULAR";
-    const quote = quotes.find((candidate) => candidate.type === requestedType);
+    const quote = quotes.find((candidate) => candidate.type === requestedType)
+      ?? (request.mode === "optimized" ? quotes.find((candidate) => candidate.type === "REGULAR") : undefined);
+    const strategy = quote?.type === "DCA" ? "dca" as const : quote?.type === "REGULAR" ? "regular" as const : requestedStrategy;
 
     if (!response.ok || !quote || typeof quote.egressAmount !== "string") {
       return {
@@ -57,7 +59,7 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
         responseHttpStatus: response.status,
         responseLatencyMs,
         requestUrl: url.toString(),
-        errorCode: `HTTP_${response.status}`,
+        errorCode: response.ok ? `HTTP_${response.status}_NO_USABLE_QUOTE` : `HTTP_${response.status}`,
         errorMessage: "Chainflip quote unavailable",
         rawResponse,
       };

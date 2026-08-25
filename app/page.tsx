@@ -60,6 +60,27 @@ type ComparisonResponse = {
   error?: string;
 };
 
+type HealthResponse = {
+  status: "healthy" | "degraded" | "stale" | "initializing" | "unhealthy";
+  checkedAt: string;
+  schedule?: string;
+  latestSweep: null | {
+    id: string;
+    scheduledFor: string;
+    status: string;
+    routeCount: number;
+    jobCount: number;
+    completedJobs: number;
+    failedJobs: number;
+    completedAt: string | null;
+    missingRoutes: string[];
+  };
+  minutesSinceTerminalSweep: number | null;
+  partners?: Array<{ protocol: string; attempts: number; successes: number; errors: number; latestResponseAt: string | null }>;
+  warnings?: string[];
+  error?: string;
+};
+
 type RunResponse = {
   run: null | {
     initiatedAt: string;
@@ -75,6 +96,7 @@ type RunResponse = {
     protocol: PartnerId;
     strategy: string;
     status: string;
+    errorCode?: string | null;
     expectedOutputFormatted?: string | null;
     expectedOutputBaseUnits?: string | null;
     requestStartedAt: string;
@@ -89,9 +111,9 @@ type RunResponse = {
   error?: string;
 };
 
-const partners: Array<{ id: PartnerId; name: string; cellName: string; color: string; logo: string }> = [
+const partners: Array<{ id: PartnerId; name: string; cellName: string; color: string; logo: string; disabled?: boolean }> = [
   { id: "thorchain", name: "THORCHAIN", cellName: "THORCHAIN", color: "#17b897", logo: "/partners/thorchain.png" },
-  { id: "maya", name: "MAYA PROTOCOL", cellName: "MAYA PROTOCOL", color: "#ef6a38", logo: "/partners/maya.svg" },
+  { id: "maya", name: "MAYA PROTOCOL", cellName: "MAYA PROTOCOL", color: "#ef6a38", logo: "/partners/maya.svg", disabled: true },
   { id: "chainflip", name: "CHAINFLIP", cellName: "CHAINFLIP", color: "#ed49c9", logo: "/partners/chainflip.svg" },
   { id: "near-intents", name: "NEAR", cellName: "NEAR", color: "var(--near-series)", logo: "/partners/near.svg" },
 ];
@@ -119,19 +141,42 @@ function formatTime(value?: string) {
   return new Date(value).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+function formatLocalTime(value?: string | null) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function formatAge(value: string | undefined | null, now = Date.now()) {
+  if (!value) return "—";
+  const delta = now - new Date(value).getTime();
+  if (delta < 0) return "queued";
+  const minutes = Math.floor(delta / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ${minutes % 60}m`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+function formatAgeLabel(value: string | undefined | null, now = Date.now()) {
+  const age = formatAge(value, now);
+  return age === "—" || age === "queued" || age === "just now" ? age : `${age} ago`;
+}
+
 function formatBps(value?: number | null) {
   if (value == null || !Number.isFinite(value)) return "—";
   const precision = Math.abs(value) < 10 ? 1 : 0;
   return `${value > 0 ? "+" : ""}${value.toFixed(precision)} bps`;
 }
 
-function ComparisonResult({ cell, window }: { cell?: ComparisonCell; window: ViewWindow }) {
-  if (!cell?.leader) return <span className="cell-empty"><b>—</b><small>{cell?.sampleCount ? "No winner" : "No run"}</small></span>;
+function ComparisonResult({ cell, window, now }: { cell?: ComparisonCell; window: ViewWindow; now: number }) {
+  if (!cell) return <span className="cell-empty"><b>—</b><small>Awaiting refresh</small></span>;
+  if (!cell.leader) return <span className="cell-empty"><b>—</b><small>{cell.successfulQuotes === 1 ? "1 valid quote" : cell.successfulQuotes === 0 ? "No valid quote at this size" : cell.sampleCount ? "No valid quotes" : "Awaiting refresh"}</small></span>;
   const partner = partners.find((item) => item.id === cell.leader)!;
   if (window !== "now") {
-    return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span><strong>{Math.round((cell.winRate ?? 0) * 100)}% wins</strong><small>{formatBps(cell.averageEdgeBps)} avg</small></span>;
+    return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span><strong>{Math.round((cell.winRate ?? 0) * 100)}% wins</strong><small>{formatBps(cell.averageEdgeBps)} avg · {formatAge(cell.capturedAt, now)}</small></span>;
   }
-  return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "Only quote" : cell.tie ? "Exact tie" : formatBps(cell.marginBps)}</strong><small>{cell.successfulQuotes ?? 0} valid quotes</small></span>;
+  return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "Only quote" : cell.tie ? "Exact tie" : formatBps(cell.marginBps)}</strong><small>{cell.successfulQuotes ?? 0} valid · {formatAge(cell.capturedAt, now)}</small></span>;
 }
 
 function RequestDetails({ runDetails, runLoading, selectedSize }: { runDetails: RunResponse | null; runLoading: boolean; selectedSize: QuoteSize }) {
@@ -146,11 +191,11 @@ function RequestDetails({ runDetails, runLoading, selectedSize }: { runDetails: 
       <h3>{runDetails.quotes.length} protocol results</h3>
       <p>Captured {formatTime(runDetails.run.initiatedAt)} · ${runDetails.run.sourceAmountUsd.toLocaleString()} exact input · synchronized within {runDetails.run.maxRequestSkewMs ?? "—"} ms</p>
       <div className="request-list">{orderedQuotes.map((quote) => <details key={quote.id}>
-        <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quote.status}</strong></summary>
+        <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.protocol === "chainflip" && runDetails.run.mode === "optimized" && quote.strategy === "regular" ? "regular fallback" : quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quote.status === "unavailable" ? "Not supported" : quote.status === "error" ? quote.errorCode?.includes("NO_USABLE_QUOTE") ? "No quote at this size" : "Quote error" : quote.status}</strong></summary>
         <dl><div><dt>Requested</dt><dd>{formatTime(quote.requestStartedAt)}</dd></div><div><dt>HTTP status</dt><dd>{quote.responseHttpStatus ?? "—"}</dd></div><div><dt>Expected output</dt><dd>{quote.expectedOutputFormatted ?? quote.expectedOutputBaseUnits ?? "—"}</dd></div><div><dt>Quote expiry</dt><dd>{formatTime(quote.quoteExpiresAt ?? undefined)}</dd></div></dl>
         <span className="json-label">Request</span><pre>{quote.requestPayloadJson ?? quote.requestUrl ?? "No request payload stored"}</pre><span className="json-label">Response</span><pre>{quote.rawResponseJson ?? quote.errorMessage ?? "No response payload stored"}</pre>
       </details>)}</div>
-    </> : <><h3>No captured requests yet</h3><p>{runDetails?.error ?? "The latest scheduled sweep for this route, size, and execution mode will appear here when available."}</p><dl><div><dt>Request timestamp</dt><dd>—</dd></div><div><dt>Exact input amount</dt><dd>{selectedSize.label}</dd></div><div><dt>Raw request / response</dt><dd>Available after collection</dd></div></dl></>}
+    </> : <><h3>No captured requests yet</h3><p>{runDetails?.error ?? "The latest scheduled quote refresh for this route, size, and execution mode will appear here when available."}</p><dl><div><dt>Request timestamp</dt><dd>—</dd></div><div><dt>Exact input amount</dt><dd>{selectedSize.label}</dd></div><div><dt>Raw request / response</dt><dd>Available after collection</dd></div></dl></>}
   </div>;
 }
 
@@ -206,7 +251,7 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
 export default function Home() {
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [enabledProtocols, setEnabledProtocols] = useState<PartnerId[]>(() => partners.map((partner) => partner.id));
+  const [enabledProtocols, setEnabledProtocols] = useState<PartnerId[]>(() => partners.filter((partner) => !partner.disabled).map((partner) => partner.id));
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("optimized");
   const [viewWindow, setViewWindow] = useState<ViewWindow>("now");
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
@@ -220,6 +265,8 @@ export default function Home() {
   const [trend, setTrend] = useState<TrendResponse | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const [theme, setTheme] = useState<Theme>("dark");
   const activePartners = useMemo(() => partners.filter((partner) => enabledProtocols.includes(partner.id)), [enabledProtocols]);
   const protocolParam = enabledProtocols.join(",");
@@ -241,6 +288,16 @@ export default function Home() {
       }
     }, 200);
     return () => { window.clearTimeout(timer); controller.abort(); };
+  }, []);
+
+  useEffect(() => {
+    const refresh = () => fetch("/api/health", { cache: "no-store" })
+      .then(async (response) => setHealth(await response.json() as HealthResponse))
+      .catch(() => setHealth({ status: "unhealthy", checkedAt: new Date().toISOString(), latestSweep: null, minutesSinceTerminalSweep: null, error: "Health endpoint unavailable" }));
+    refresh();
+    const refreshTimer = window.setInterval(refresh, 15 * 60_000);
+    const clockTimer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => { window.clearInterval(refreshTimer); window.clearInterval(clockTimer); };
   }, []);
 
   useEffect(() => {
@@ -311,6 +368,13 @@ export default function Home() {
 
   const cells = useMemo(() => new Map((comparison?.cells ?? []).map((cell) => [`${cell.pairId}::${cell.amountId}`, cell])), [comparison]);
   const trendLeaderPartner = partners.find((partner) => partner.id === trend?.leader?.protocol);
+  const latestCheckAt = useMemo(() => {
+    const timestamps = [
+      ...(comparison?.cells ?? []).map((cell) => cell.capturedAt),
+      health?.latestSweep?.completedAt,
+    ].filter((value): value is string => Boolean(value));
+    return timestamps.reduce((latest, value) => value > latest ? value : latest, "") || null;
+  }, [comparison, health]);
 
   function inspect(route: Route, size: QuoteSize) {
     setSelectedRoute(route);
@@ -327,6 +391,7 @@ export default function Home() {
 
   function toggleProtocol(id: PartnerId) {
     setEnabledProtocols((current) => {
+      if (partners.find((partner) => partner.id === id)?.disabled) return current;
       if (current.includes(id)) {
         return current.length <= 2 ? current : current.filter((protocol) => protocol !== id);
       }
@@ -348,20 +413,23 @@ export default function Home() {
     </header>
 
     <section className="route-section" id="leaderboard">
-      <div className="leaderboard-intro"><div><p className="eyebrow">Quote leaderboard</p><h2>DEX swap quotes,<br />compared by size</h2></div><span className="intro-mark" aria-hidden="true"><i /><i /><i /></span></div>
+      <header className="page-heading">
+        <div className="page-heading-main"><span className="page-heading-marker" aria-hidden="true">›</span><div><p className="eyebrow">Market data / leaderboard</p><h1>QUOTE LEADERBOARD</h1><p className="page-heading-description">Cross-chain DEX quotes compared by trade size.</p></div></div>
+        <div className="latest-check"><span>LATEST CHECK</span><strong>{latestCheckAt ? formatLocalTime(latestCheckAt) : "No completed check"}</strong><small>{latestCheckAt ? formatAgeLabel(latestCheckAt, now) : "Waiting for first refresh"}</small></div>
+      </header>
 
       <div className="filter-bar leaderboard-tools">
-        <fieldset className="protocol-filter"><legend>Compare protocols</legend><div>{partners.map((partner) => <button key={partner.id} className={enabledProtocols.includes(partner.id) ? "selected" : ""} onClick={() => toggleProtocol(partner.id)} aria-pressed={enabledProtocols.includes(partner.id)} disabled={enabledProtocols.length <= 2 && enabledProtocols.includes(partner.id)}><PartnerMark id={partner.id} muted={!enabledProtocols.includes(partner.id)} /><span>{partner.name}</span></button>)}</div><small>Choose at least two. Results recalculate using only enabled protocols.</small></fieldset>
-        <fieldset><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Streaming/DCA</button><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Standard swap</button></div><small>Optimized execution where supported; NEAR remains solver-based in both modes.</small></fieldset>
+        <fieldset className="protocol-filter"><legend>Compare protocols</legend><div>{partners.map((partner) => <button key={partner.id} className={`${enabledProtocols.includes(partner.id) ? "selected" : ""} ${partner.disabled ? "disabled" : ""}`} onClick={() => toggleProtocol(partner.id)} aria-pressed={enabledProtocols.includes(partner.id)} disabled={Boolean(partner.disabled) || (enabledProtocols.length <= 2 && enabledProtocols.includes(partner.id))}><PartnerMark id={partner.id} muted={!enabledProtocols.includes(partner.id)} /><span>{partner.name}{partner.disabled ? " · DISABLED" : ""}</span></button>)}</div><small>Choose at least two. Maya is disabled while the protocol is halted.</small></fieldset>
+        <fieldset><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Streaming/DCA</button><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Standard swap</button></div></fieldset>
         <fieldset><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Latest check" : window.replace("d", " days")}</button>)}</div></fieldset>
       </div>
 
       {catalog?.error ? <div className="error-state"><b>Route catalog unavailable</b><span>{catalog.error}</span></div> : <div className={`leaderboard-wrap ${loading || comparisonLoading ? "loading" : ""}`}>
         <table className="leaderboard-table">
-          <thead><tr><th>Directed route</th>{quoteSizes.map((size) => <th key={size.id}>{size.label}</th>)}</tr></thead>
+          <thead><tr><th>Route / asset pair</th>{quoteSizes.map((size) => <th key={size.id}>{size.label}</th>)}</tr></thead>
           <tbody>{(catalog?.routes ?? []).map((route, index) => <tr key={route.id}>
             <th><button className="route-cell" onClick={() => inspect(route, selectedSize)}><small>{String(index + 1).padStart(2, "0")}</small><RoutePair route={route} /><span className="coverage-dots">{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!route.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</span></button></th>
-            {quoteSizes.map((size) => <td key={size.id}><button className="result-button" onClick={() => inspect(route, size)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol} at ${size.label}`}><ComparisonResult cell={cells.get(`${route.id}::${size.id}`)} window={viewWindow} /></button></td>)}
+            {quoteSizes.map((size) => <td key={size.id}><button className="result-button" onClick={() => inspect(route, size)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol} at ${size.label}`}><ComparisonResult cell={cells.get(`${route.id}::${size.id}`)} window={viewWindow} now={now} /></button></td>)}
           </tr>)}</tbody>
         </table>
         {!loading && catalog?.routes.length === 0 && <div className="empty-table">No fixed routes are available.</div>}
@@ -373,6 +441,11 @@ export default function Home() {
         <div><p className="eyebrow">Route analysis · {executionLabel(executionMode)}</p>{selectedRoute ? <h2 className="detail-route"><RoutePair route={selectedRoute} /></h2> : <h2>Select a route</h2>}</div>
         {selectedRoute && <div className="detail-actions"><div className="coverage-summary"><span>Compared protocols</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</div></div></div>}
       </div>
+      {selectedRoute && <div className="route-telemetry" aria-label="Route telemetry">
+        <span><b>ASSET PATH</b><code>{selectedRoute.source.thorAsset} → {selectedRoute.destination.thorAsset}</code></span>
+        <span><b>QUOTE AGE</b><strong>{runDetails?.run ? formatAgeLabel(runDetails.run.initiatedAt, now) : runLoading ? "syncing" : "—"}</strong></span>
+        <span><b>SYNC SKEW</b><strong>{runDetails?.run?.maxRequestSkewMs != null ? `${runDetails.run.maxRequestSkewMs} ms` : "—"}</strong></span>
+      </div>}
 
       <div className="analysis-toolbar">
         <div className="size-selectors" role="group" aria-label="Exact USD input for route analysis">{quoteSizes.map((size) => <button key={size.id} className={selectedSize.id === size.id ? "selected" : ""} onClick={() => setSelectedSize(size)} aria-pressed={selectedSize.id === size.id}><strong>{size.label}</strong></button>)}</div>

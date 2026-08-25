@@ -4,7 +4,6 @@
   "main": "dist/server/index.js",
   "compatibility_date": "2026-08-17",
   "compatibility_flags": ["nodejs_compat"],
-  "no_bundle": true,
   "assets": {
     "binding": "ASSETS",
     "directory": "dist/client"
@@ -13,7 +12,7 @@
     {
       "binding": "DB",
       "database_name": "dex-quote-tool",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "35c8d9f1-afa1-4cb4-9a76-846f064679d1",
       "migrations_dir": "drizzle"
     }
   ],

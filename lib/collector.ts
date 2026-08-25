@@ -5,7 +5,7 @@ import { runSelectedBenchmark, type BenchmarkArchiveRecord } from "./quotes/run"
 import type { ExecutionMode, NormalizedQuote, ProtocolId } from "./quotes/types";
 
 const modes: ExecutionMode[] = ["standard", "optimized"];
-const protocols: ProtocolId[] = ["thorchain", "chainflip", "near-intents", "maya"];
+const protocols: ProtocolId[] = ["thorchain", "chainflip", "near-intents"];
 const jobsPerMessage = 20;
 const workerConcurrency = 1;
 const detailRetentionDays = 90;

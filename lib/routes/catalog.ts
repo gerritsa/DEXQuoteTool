@@ -1,7 +1,6 @@
 export type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 
 type ThorPool = { asset: string; status: string; assetPriceUSD?: string; nativeDecimal?: string };
-type MayaPool = { asset: string; status: string };
 type NearToken = { assetId: string; blockchain: string; symbol: string; contractAddress?: string | null; decimals: number };
 type ChainflipNetworkInfo = {
   assets: Array<{
@@ -39,7 +38,6 @@ export type CatalogRoute = {
 };
 
 const THOR_MIDGARD_POOLS = "https://gateway.liquify.com/chain/thorchain_midgard/v2/pools";
-const MAYA_POOLS = "https://mayanode.mayachain.info/mayachain/pools";
 const NEAR_TOKENS = "https://1click.chaindefuser.com/v0/tokens";
 const CHAINFLIP_NETWORK_INFO = "https://chainflip-swap.chainflip.io/api/networkInfo";
 
@@ -88,23 +86,17 @@ async function fetchJson<T>(url: string, headers: Record<string, string> = {}): 
 let cache: { expiresAt: number; value: Awaited<ReturnType<typeof buildCatalog>> } | undefined;
 
 async function buildCatalog() {
-  const [thorResult, mayaResult, nearResult, chainflipResult] = await Promise.allSettled([
+  const [thorResult, nearResult, chainflipResult] = await Promise.allSettled([
     fetchJson<ThorPool[]>(THOR_MIDGARD_POOLS),
-    fetchJson<MayaPool[]>(MAYA_POOLS),
     fetchJson<NearToken[]>(NEAR_TOKENS),
     fetchJson<ChainflipNetworkInfo>(CHAINFLIP_NETWORK_INFO, { "X-Chainflip-Sdk-Version": "2.2.1" }),
   ]);
 
   if (thorResult.status === "rejected") throw new Error(`THORChain catalog unavailable: ${thorResult.reason}`);
 
-  const maya = mayaResult.status === "fulfilled" ? mayaResult.value : [];
   const near = nearResult.status === "fulfilled" ? nearResult.value : [];
   const chainflipNetworkAssets = chainflipResult.status === "fulfilled" ? chainflipResult.value.assets : [];
 
-  const mayaAssets = new Map(maya.filter((pool) => pool.status.toLowerCase() === "available").map((pool) => {
-    const parsed = parsePoolAsset(pool.asset);
-    return [parsed.id, pool.asset];
-  }));
   const nearAssets = new Map(near.map((asset) => [canonicalAsset(asset.blockchain, asset.symbol, asset.contractAddress), asset.assetId]));
   const chainflipSupport = new Map(chainflipNetworkAssets.map((asset) => [asset.asset, asset]));
   const cfSourceAssets = new Map(CHAINFLIP_ASSETS.flatMap((asset) => {
@@ -124,7 +116,6 @@ async function buildCatalog() {
     const cfSource = cfSourceAssets.get(parsed.id);
     const cfDestination = cfDestinationAssets.get(parsed.id);
     const nearAsset = nearAssets.get(parsed.id);
-    const mayaAsset = mayaAssets.get(parsed.id);
     return {
       id: parsed.id,
       label: `${parsed.symbol} · ${parsed.chain}`,
@@ -137,7 +128,7 @@ async function buildCatalog() {
         thorchain: { source: true, destination: true, assetId: pool.asset },
         chainflip: { source: Boolean(cfSource), destination: Boolean(cfDestination), assetId: cfSource ?? cfDestination },
         "near-intents": { source: Boolean(nearAsset), destination: Boolean(nearAsset), assetId: nearAsset },
-        maya: { source: Boolean(mayaAsset), destination: Boolean(mayaAsset), assetId: mayaAsset },
+        maya: { source: false, destination: false },
       },
     };
   }).sort((a, b) => a.label.localeCompare(b.label));

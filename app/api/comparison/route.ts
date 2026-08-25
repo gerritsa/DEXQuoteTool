@@ -4,8 +4,8 @@ import { publicCacheHeaders, readPublicCache, writePublicCache } from "../../../
 type WindowName = "now" | "7d" | "14d" | "30d";
 type ExecutionMode = "standard" | "optimized";
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
-const protocols: PartnerId[] = ["near-intents", "chainflip", "thorchain", "maya"];
-const metricProtocolOrder: PartnerId[] = ["thorchain", "chainflip", "near-intents", "maya"];
+const protocols: PartnerId[] = ["near-intents", "chainflip", "thorchain"];
+const metricProtocolOrder: PartnerId[] = ["thorchain", "chainflip", "near-intents"];
 type NowRow = { pairId: string; amountId: string; initiatedAt: string; protocol: string; status: string; output: number | null };
 type HistoryRow = { pairId: string; amountId: string; protocol: string; attempts: number; successes: number; comparableSamples: number; edgeSumBps: number; wins: number; latestAt: string };
 

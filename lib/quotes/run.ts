@@ -10,7 +10,7 @@ import { strategyFor } from "./protocols";
 import { quoteSizes } from "./sizes";
 import type { BenchmarkRequest, ChainAsset, ExecutionMode, NormalizedQuote, ProtocolId } from "./types";
 
-const allProtocols: ProtocolId[] = ["thorchain", "chainflip", "near-intents", "maya"];
+const allProtocols: ProtocolId[] = ["thorchain", "chainflip", "near-intents"];
 
 type BenchmarkRuntimeEnv = {
   NEAR_INTENTS_API_KEY?: string;

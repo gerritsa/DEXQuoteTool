@@ -26,6 +26,7 @@ type ComparisonCell = {
   amountId: string;
   capturedAt?: string;
   leader: PartnerId | null;
+  runnerUp?: PartnerId | null;
   marginBps?: number | null;
   tie?: boolean;
   successfulQuotes?: number;
@@ -160,7 +161,10 @@ function formatAge(value: string | undefined | null, now = Date.now()) {
 
 function formatAgeLabel(value: string | undefined | null, now = Date.now()) {
   const age = formatAge(value, now);
-  return age === "—" || age === "queued" || age === "just now" ? age : `${age} ago`;
+  if (age === "—" || age === "queued") return age;
+  if (age === "just now") return "0 min ago";
+  if (/^\d+m$/.test(age)) return `${age.slice(0, -1)} min ago`;
+  return `${age} ago`;
 }
 
 function formatBps(value?: number | null) {
@@ -174,9 +178,10 @@ function ComparisonResult({ cell, window, now }: { cell?: ComparisonCell; window
   if (!cell.leader) return <span className="cell-empty"><b>—</b><small>{cell.successfulQuotes === 1 ? "1 valid quote" : cell.successfulQuotes === 0 ? "No valid quote at this size" : cell.sampleCount ? "No valid quotes" : "Awaiting refresh"}</small></span>;
   const partner = partners.find((item) => item.id === cell.leader)!;
   if (window !== "now") {
-    return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span><strong>{Math.round((cell.winRate ?? 0) * 100)}% wins</strong><small>{formatBps(cell.averageEdgeBps)} avg · {formatAge(cell.capturedAt, now)}</small></span>;
+    return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span><strong>{Math.round((cell.winRate ?? 0) * 100)}% wins</strong><small>avg {formatBps(cell.averageEdgeBps)} vs median · {cell.sampleCount ?? 0} checks</small></span>;
   }
-  return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "Only quote" : cell.tie ? "Exact tie" : formatBps(cell.marginBps)}</strong><small>{cell.successfulQuotes ?? 0} valid · {formatAge(cell.capturedAt, now)}</small></span>;
+  const quoteCount = cell.successfulQuotes ?? 0;
+  return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "Only quote" : cell.tie ? "Exact tie" : formatBps(cell.marginBps)}</strong>{cell.marginBps != null && cell.runnerUp && !cell.tie && <span className="margin-context">vs <PartnerMark id={cell.runnerUp} /></span>}<small>{quoteCount} {quoteCount === 1 ? "quote" : "quotes"} · {formatAgeLabel(cell.capturedAt, now)}</small></span>;
 }
 
 function RequestDetails({ runDetails, runLoading, selectedSize }: { runDetails: RunResponse | null; runLoading: boolean; selectedSize: QuoteSize }) {
@@ -414,7 +419,7 @@ export default function Home() {
 
     <section className="route-section" id="leaderboard">
       <header className="page-heading">
-        <div className="page-heading-main"><span className="page-heading-marker" aria-hidden="true">›</span><div><p className="eyebrow">Market data / leaderboard</p><h1>QUOTE LEADERBOARD</h1><p className="page-heading-description">Cross-chain DEX quotes compared by trade size.</p></div></div>
+        <div className="page-heading-main"><div><p className="eyebrow">Market data / leaderboard</p><h1>QUOTE LEADERBOARD</h1><p className="page-heading-description">Cross-chain DEX quotes compared by trade size.</p></div></div>
         <div className="latest-check"><span>LATEST CHECK</span><strong>{latestCheckAt ? formatLocalTime(latestCheckAt) : "No completed check"}</strong><small>{latestCheckAt ? formatAgeLabel(latestCheckAt, now) : "Waiting for first refresh"}</small></div>
       </header>
 

@@ -47,7 +47,7 @@ async function latestComparison(mode: ExecutionMode, selectedProtocols: PartnerI
       pairId: rows[0].pairId,
       amountId: rows[0].amountId,
       capturedAt: rows[0].initiatedAt,
-      leader: quoted.length >= 2 ? winner.protocol : null,
+      leader: quoted.length >= 1 ? winner.protocol : null,
       runnerUp: quoted.length >= 2 ? runnerUp.protocol : null,
       marginBps,
       tie: exactTie,

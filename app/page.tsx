@@ -213,19 +213,15 @@ function MobileRouteCard({ route, index, selectedSize, cells, viewWindow, now, a
     <button className="mobile-route-card-header" onClick={() => onInspect(route, selectedSize)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol}`}>
       <span className="mobile-route-rank">{String(index + 1).padStart(2, "0")}</span>
       <RoutePair route={route} />
-      <span className="mobile-route-chevron" aria-hidden="true">↗</span>
+      <span className="mobile-route-cta" aria-hidden="true">Analyze <i>→</i></span>
     </button>
     <div className="mobile-route-card-summary">
-      <div className="mobile-route-card-label"><span>Best result</span><b>{selectedSize.label}</b></div>
+      <div className="mobile-route-card-label"><span>Top quote at {selectedSize.label}</span><b>Open details ↓</b></div>
       <button className="mobile-result-button" onClick={() => onInspect(route, selectedSize)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol} at ${selectedSize.label}`}>
         <ComparisonResult cell={selectedCell} window={viewWindow} now={now} />
       </button>
       <div className="mobile-route-coverage"><span>{activePartnerCount} protocols compared</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!route.partners.includes(partner.id)} />)}</div></div>
     </div>
-    <details className="mobile-route-sizes">
-      <summary><span>Compare quote sizes</span><b>{selectedSize.label}</b></summary>
-      <div className="mobile-size-list">{quoteSizes.map((size) => <button key={size.id} className={`mobile-size-item ${size.id === selectedSize.id ? "selected" : ""}`} onClick={() => onInspect(route, size)}><span>{size.label}</span><ComparisonResult cell={cells.get(`${route.id}::${size.id}`)} window={viewWindow} now={now} /></button>)}</div>
-    </details>
   </article>;
 }
 
@@ -318,6 +314,7 @@ export default function Home() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [theme, setTheme] = useState<Theme>("dark");
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const activePartners = useMemo(() => partners.filter((partner) => enabledProtocols.includes(partner.id)), [enabledProtocols]);
   const protocolParam = enabledProtocols.join(",");
 
@@ -468,11 +465,14 @@ export default function Home() {
         <div className="latest-check"><span>LATEST CHECK</span><strong>{latestCheckAt ? formatLocalTime(latestCheckAt) : "No completed check"}</strong><small>{latestCheckAt ? formatAgeLabel(latestCheckAt, now) : "Waiting for first refresh"}</small></div>
       </header>
 
-      <div className="filter-bar leaderboard-tools">
-        <fieldset className="protocol-filter"><legend>Compare protocols</legend><div>{partners.map((partner) => <button key={partner.id} className={`${enabledProtocols.includes(partner.id) ? "selected" : ""} ${partner.disabled ? "disabled" : ""}`} onClick={() => toggleProtocol(partner.id)} aria-pressed={enabledProtocols.includes(partner.id)} disabled={Boolean(partner.disabled) || (enabledProtocols.length <= 2 && enabledProtocols.includes(partner.id))}><PartnerMark id={partner.id} muted={!enabledProtocols.includes(partner.id)} /><span>{partner.name}{partner.disabled ? " · DISABLED" : ""}</span></button>)}</div><small>Choose at least two. Maya is disabled while the protocol is halted.</small></fieldset>
-        <fieldset><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Streaming/DCA</button><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Standard swap</button></div></fieldset>
-        <fieldset><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Latest check" : window.replace("d", " days")}</button>)}</div></fieldset>
-      </div>
+      <section className={`leaderboard-filter-panel ${mobileFiltersOpen ? "open" : ""}`}>
+        <button className="leaderboard-filter-summary" type="button" onClick={() => setMobileFiltersOpen((current) => !current)} aria-expanded={mobileFiltersOpen} aria-controls="leaderboard-filters"><span><b>Ranking settings</b><small>{activePartners.length} protocols · {executionLabel(executionMode)} · {viewWindow === "now" ? "Latest" : viewWindow}</small></span><strong>Filters</strong></button>
+        <div className="filter-bar leaderboard-tools" id="leaderboard-filters">
+          <fieldset className="protocol-filter"><legend>Compare protocols</legend><div>{partners.map((partner) => <button key={partner.id} className={`${enabledProtocols.includes(partner.id) ? "selected" : ""} ${partner.disabled ? "disabled" : ""}`} onClick={() => toggleProtocol(partner.id)} aria-pressed={enabledProtocols.includes(partner.id)} disabled={Boolean(partner.disabled) || (enabledProtocols.length <= 2 && enabledProtocols.includes(partner.id))}><PartnerMark id={partner.id} muted={!enabledProtocols.includes(partner.id)} /><span>{partner.name}{partner.disabled ? " · DISABLED" : ""}</span></button>)}</div><small>Choose at least two. Maya is disabled while the protocol is halted.</small></fieldset>
+          <fieldset><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Streaming/DCA</button><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Standard swap</button></div></fieldset>
+          <fieldset><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Latest check" : window.replace("d", " days")}</button>)}</div></fieldset>
+        </div>
+      </section>
 
       {catalog?.catalog?.status === "stale" && <div className="catalog-notice" role="status">
         <div><b>{catalog.catalog.source === "static" ? "LIVE CATALOG OFFLINE" : "SHOWING STORED ROUTES"}</b><span>{catalog.catalog.source === "static" ? "Historical results remain available from the fixed route list." : `Last successful catalog refresh: ${catalog.catalog.refreshedAt ? formatLocalTime(catalog.catalog.refreshedAt) : "unknown"}.`}</span></div>
@@ -487,12 +487,17 @@ export default function Home() {
             {quoteSizes.map((size) => <td key={size.id}><button className="result-button" onClick={() => inspect(route, size)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol} at ${size.label}`}><ComparisonResult cell={cells.get(`${route.id}::${size.id}`)} window={viewWindow} now={now} /></button></td>)}
           </tr>)}</tbody>
         </table>
-        <div className="mobile-route-list" aria-label="Mobile route leaderboard">{(catalog?.routes ?? []).map((route, index) => <MobileRouteCard key={route.id} route={route} index={index} selectedSize={selectedSize} cells={cells} viewWindow={viewWindow} now={now} activePartnerCount={activePartners.length} onInspect={inspect} />)}</div>
+        <div className="mobile-route-list" id="leaderboard-results" aria-label="Mobile route leaderboard">
+          <header className="mobile-leaderboard-header"><div><b>Ranked routes</b><small>Choose a trade size</small></div><div className="mobile-leaderboard-sizes" role="group" aria-label="Trade size for mobile leaderboard">{quoteSizes.map((size) => <button key={size.id} className={selectedSize.id === size.id ? "selected" : ""} onClick={() => setSelectedSize(size)} aria-pressed={selectedSize.id === size.id}>{size.label}</button>)}</div></header>
+          {loading && <div className="mobile-route-loading" role="status">Loading ranked routes…</div>}
+          {(catalog?.routes ?? []).map((route, index) => <MobileRouteCard key={route.id} route={route} index={index} selectedSize={selectedSize} cells={cells} viewWindow={viewWindow} now={now} activePartnerCount={activePartners.length} onInspect={inspect} />)}
+        </div>
         {!loading && catalog?.routes.length === 0 && <div className="empty-table">No fixed routes are available.</div>}
       </div>}
     </section>
 
     <section className="route-detail" id="analysis">
+      <a className="mobile-back-link" href="#leaderboard-results">← Back to ranked routes</a>
       <div className="detail-header compact">
         <div><p className="eyebrow">Route analysis · {executionLabel(executionMode)}</p>{selectedRoute ? <h2 className="detail-route"><RoutePair route={selectedRoute} /></h2> : <h2>Select a route</h2>}</div>
         {selectedRoute && <div className="detail-actions"><div className="coverage-summary"><span>Compared protocols</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</div></div></div>}
@@ -504,6 +509,7 @@ export default function Home() {
       </div>}
 
       <div className="analysis-toolbar">
+        <p className="mobile-toolbar-label">Trade size</p>
         <div className="size-selectors" role="group" aria-label="Exact USD input for route analysis">{quoteSizes.map((size) => <button key={size.id} className={selectedSize.id === size.id ? "selected" : ""} onClick={() => setSelectedSize(size)} aria-pressed={selectedSize.id === size.id}><strong>{size.label}</strong></button>)}</div>
         <button className="latest-request-button" onClick={() => setRequestsOpen(true)}><span>Latest quotes</span><b>{runLoading ? "Loading…" : runDetails?.run ? formatTime(runDetails.run.initiatedAt) : "No batch yet"}</b></button>
       </div>

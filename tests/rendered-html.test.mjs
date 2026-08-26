@@ -151,7 +151,7 @@ test("the dashboard refreshes stale long-lived tabs", async () => {
 test("route analysis keeps the latest synchronized DEX outputs visible", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(page, /function LatestQuoteComparison/);
-  assert.match(page, /Every DEX, one captured batch/);
+  assert.match(page, /Latest quote comparison/);
   assert.match(page, /Exact input/);
   assert.match(page, /vs best/);
   assert.match(page, /Raw details/);

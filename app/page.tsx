@@ -256,12 +256,11 @@ function MobileRouteCard({ route, index, selectedSize, cells, viewWindow, now, a
   </article>;
 }
 
-function LatestQuoteComparison({ route, runDetails, runLoading, selectedSize, now, onOpenDetails }: {
+function LatestQuoteComparison({ route, runDetails, runLoading, selectedSize, onOpenDetails }: {
   route: Route;
   runDetails: RunResponse | null;
   runLoading: boolean;
   selectedSize: QuoteSize;
-  now: number;
   onOpenDetails: () => void;
 }) {
   const orderedQuotes = [...(runDetails?.quotes ?? [])].sort((a, b) => partners.findIndex((partner) => partner.id === a.protocol) - partners.findIndex((partner) => partner.id === b.protocol));
@@ -274,8 +273,8 @@ function LatestQuoteComparison({ route, runDetails, runLoading, selectedSize, no
 
   return <section className="latest-comparison" aria-labelledby="latest-comparison-title" aria-busy={runLoading}>
     <header>
-      <div><p className="eyebrow">Latest synchronized comparison</p><h3 id="latest-comparison-title">Every DEX, one captured batch</h3></div>
-      <button className="quote-audit-link" type="button" onClick={onOpenDetails}><span>Raw details</span><b>Latest quotes →</b></button>
+      <div><b id="latest-comparison-title">Latest quote comparison</b><span>{selectedSize.label}{runDetails?.run ? ` · captured ${formatTime(runDetails.run.initiatedAt)}` : " · synchronized batch"}</span></div>
+      <button className="quote-audit-link" type="button" onClick={onOpenDetails}><span>Raw details</span><b aria-hidden="true">→</b></button>
     </header>
     {runLoading ? <div className="latest-comparison-state" role="status"><b>Loading latest quotes…</b><span>Reading the synchronized batch for {selectedSize.label}.</span></div> : runDetails?.run ? <>
       <div className="latest-comparison-row">
@@ -284,7 +283,6 @@ function LatestQuoteComparison({ route, runDetails, runLoading, selectedSize, no
           <strong>{exactInput} <span>{route.source.symbol}</span></strong>
           <b>{selectedSize.label} benchmark</b>
         </div>
-        <i className="latest-comparison-arrow" aria-hidden="true">→</i>
         <div className="latest-quote-results">
           {orderedQuotes.map((quote) => {
             const output = quote.status === "quoted" && quote.expectedOutputFormatted ? Number(quote.expectedOutputFormatted) : null;
@@ -299,7 +297,6 @@ function LatestQuoteComparison({ route, runDetails, runLoading, selectedSize, no
           })}
         </div>
       </div>
-      <div className="latest-comparison-meta"><span>Captured {formatTime(runDetails.run.initiatedAt)}</span><b>{formatAgeLabel(runDetails.run.initiatedAt, now)} · synchronized within {runDetails.run.maxRequestSkewMs ?? "—"} ms</b></div>
     </> : <div className="latest-comparison-state"><b>{runDetails?.error ? "Latest comparison unavailable" : "No captured comparison yet"}</b><span>{runDetails?.error ? "Quote history could not be loaded. Raw details contain the diagnostic response." : `The next ${selectedSize.label} quote batch will appear here.`}</span></div>}
   </section>;
 }
@@ -621,7 +618,7 @@ export default function Home() {
         <span><b>SYNC SKEW</b><strong>{runDetails?.run?.maxRequestSkewMs != null ? `${runDetails.run.maxRequestSkewMs} ms` : "—"}</strong></span>
       </div>}
 
-      {selectedRoute && <LatestQuoteComparison route={selectedRoute} runDetails={runDetails} runLoading={runLoading} selectedSize={selectedSize} now={now} onOpenDetails={() => setRequestsOpen(true)} />}
+      {selectedRoute && <LatestQuoteComparison route={selectedRoute} runDetails={runDetails} runLoading={runLoading} selectedSize={selectedSize} onOpenDetails={() => setRequestsOpen(true)} />}
 
       <div className="analysis-toolbar">
         <p className="mobile-toolbar-label">Trade size</p>

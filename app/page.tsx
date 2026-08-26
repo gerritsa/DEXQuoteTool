@@ -154,6 +154,18 @@ function RoutePair({ route }: { route: Route }) {
   return <span className="route-pair"><span className="route-asset"><AssetMark asset={route.source} /><span><b>{route.source.symbol}</b><small>{route.source.chain}</small></span></span><i aria-hidden="true">→</i><span className="route-asset"><AssetMark asset={route.destination} /><span><b>{route.destination.symbol}</b><small>{route.destination.chain}</small></span></span></span>;
 }
 
+function compactThorAsset(asset: Route["source"]) {
+  return asset.thorAsset.split("-")[0];
+}
+
+function LeaderboardRoutePath({ route }: { route: Route }) {
+  const fullPath = `${route.source.thorAsset} → ${route.destination.thorAsset}`;
+  return <span className="leaderboard-route-path" title={fullPath}>
+    <code>{compactThorAsset(route.source)} <i aria-hidden="true">→</i> {compactThorAsset(route.destination)}</code>
+    <span className="leaderboard-asset-logos" aria-hidden="true"><AssetMark asset={route.source} /><AssetMark asset={route.destination} /></span>
+  </span>;
+}
+
 function formatTime(value?: string) {
   if (!value) return "—";
   return new Date(value).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -229,9 +241,8 @@ function ComparisonResult({ cell, window, now }: { cell?: ComparisonCell; window
   return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "ONLY QUOTE" : cell.tie ? "Exact tie" : formatBps(cell.marginBps)}{cell.marginBps != null && cell.runnerUp && !cell.tie && <span className="margin-context">vs <PartnerMark id={cell.runnerUp} /></span>}</strong><small>{quoteCount} {quoteCount === 1 ? "quote" : "quotes"} · {formatAgeLabel(cell.capturedAt, now)}</small></span>;
 }
 
-function MobileRouteCard({ route, index, selectedSize, cells, viewWindow, now, activePartnerCount, onInspect }: {
+function MobileRouteCard({ route, selectedSize, cells, viewWindow, now, activePartnerCount, onInspect }: {
   route: Route;
-  index: number;
   selectedSize: QuoteSize;
   cells: Map<string, ComparisonCell>;
   viewWindow: ViewWindow;
@@ -242,8 +253,7 @@ function MobileRouteCard({ route, index, selectedSize, cells, viewWindow, now, a
   const selectedCell = cells.get(`${route.id}::${selectedSize.id}`);
   return <article className="mobile-route-card">
     <button className="mobile-route-card-header" onClick={() => onInspect(route, selectedSize)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol}`}>
-      <span className="mobile-route-rank">{String(index + 1).padStart(2, "0")}</span>
-      <RoutePair route={route} />
+      <LeaderboardRoutePath route={route} />
       <span className="mobile-route-cta" aria-hidden="true">Analyze <i>→</i></span>
     </button>
     <div className="mobile-route-card-summary">
@@ -331,13 +341,14 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
   }));
   if (!plotted.length) return <div className="trend-empty"><b>No trend line yet</b><span>Run this exact route and size at least twice to start the chart.</span></div>;
 
-  const absolute = plotted.map((point) => Math.abs(point.value)).sort((a, b) => a - b);
-  const percentile = absolute[Math.min(absolute.length - 1, Math.floor(absolute.length * 0.95))] ?? 5;
+  const gaps = plotted.map((point) => Math.max(0, -point.value)).sort((a, b) => a - b);
+  const percentile = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * 0.95))] ?? 5;
   const bound = Math.max(5, Math.ceil(Math.min(percentile * 1.15, 1_000) / 5) * 5);
   const start = new Date(data.startAt).getTime();
   const end = new Date(data.endAt).getTime();
   const x = (timestamp: number) => padding.left + ((timestamp - start) / Math.max(1, end - start)) * (width - padding.left - padding.right);
-  const y = (value: number) => padding.top + ((bound - Math.max(-bound, Math.min(bound, value))) / (bound * 2)) * (height - padding.top - padding.bottom);
+  const y = (value: number) => padding.top + (-Math.max(-bound, Math.min(0, value)) / bound) * (height - padding.top - padding.bottom);
+  const ticks = [0, -bound / 4, -bound / 2, -(bound * 3) / 4, -bound];
 
   const series = activePartners.map((partner) => ({
     partner,
@@ -349,8 +360,9 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
   }));
 
   return <div className="trend-visual">
-    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${data.days}-day quote edge in basis points versus the synchronized batch median`}>
-      {[bound, bound / 2, 0, -bound / 2, -bound].map((value) => <g key={value}><line x1={padding.left} x2={width - padding.right} y1={y(value)} y2={y(value)} className={value === 0 ? "zero-line" : "grid-line"} /><text x={padding.left - 9} y={y(value) + 3} textAnchor="end">{value > 0 ? "+" : ""}{Math.round(value)}</text></g>)}
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${data.days}-day quote gap in basis points from the best synchronized quote`}>
+      <text className="axis-title" x={padding.left} y="11">BPS FROM BEST</text>
+      {ticks.map((value) => <g key={value}><line x1={padding.left} x2={width - padding.right} y1={y(value)} y2={y(value)} className={value === 0 ? "zero-line" : "grid-line"} /><text x={padding.left - 9} y={y(value) + 3} textAnchor="end">{Number.isInteger(value) ? value : value.toFixed(1)}</text></g>)}
       <text x={padding.left} y={height - 7}>{new Date(start).toLocaleDateString([], { month: "short", day: "numeric" })}</text>
       <text x={width - padding.right} y={height - 7} textAnchor="end">{new Date(end).toLocaleDateString([], { month: "short", day: "numeric" })}</text>
       {series.map(({ partner, points }) => {
@@ -360,12 +372,12 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
           if (!current || point.timestamp - current[current.length - 1].timestamp > data.bucketMs * 1.5) segments.push([point]);
           else current.push(point);
         }
-        return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => <circle key={point.timestamp} cx={x(point.timestamp)} cy={y(point.value)} r="3" fill={partner.color}><title>{partner.name} · {formatBps(point.value)} · {point.point.sampleCount} samples in bucket</title></circle>)}</g>;
+        return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => <circle key={point.timestamp} cx={x(point.timestamp)} cy={y(point.value)} r="3" fill={partner.color}><title>{partner.name} · {formatBps(point.value)} from best · {point.point.sampleCount} samples in bucket</title></circle>)}</g>;
       })}
     </svg>
     <div className="trend-legend">{activePartners.map((partner) => {
       const summary = data.summary.find((item) => item.protocol === partner.id);
-      return <span key={partner.id}><i style={{ background: partner.color }} /><b>{partner.name}</b><small>{summary?.sampleCount ? `${Math.round((summary.winRate ?? 0) * 100)}% wins · ${formatBps(summary.averageEdgeBps)} avg · ${Math.round(summary.availability * 100)}% availability` : "No data"}</small></span>;
+      return <span key={partner.id}><i style={{ background: partner.color }} /><b>{partner.name}</b><small>{summary?.sampleCount ? `${Math.round((summary.winRate ?? 0) * 100)}% best · ${formatBps(summary.averageEdgeBps)} avg gap · ${Math.round(summary.availability * 100)}% availability` : "No data"}</small></span>;
     })}</div>
   </div>;
 }
@@ -487,7 +499,7 @@ export default function Home() {
     if (!selectedRoute) return;
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) { setTrendLoading(true); setTrendError(null); } });
-    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode, days: String(trendDays), protocols: protocolParam, v: "2" });
+    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode, days: String(trendDays), protocols: protocolParam, v: "3" });
     if (freshParam) params.set("refresh", freshParam);
     fetch(`/api/trends?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
@@ -592,15 +604,15 @@ export default function Home() {
       {catalog?.error ? <div className="error-state"><b>Route catalog unavailable</b><span>{catalog.error}</span></div> : <div className={`leaderboard-wrap ${loading || comparisonLoading ? "loading" : ""}`}>
         <table className="leaderboard-table">
           <thead><tr><th>Route / asset pair</th>{quoteSizes.map((size) => <th key={size.id}>{size.label}</th>)}</tr></thead>
-          <tbody>{(catalog?.routes ?? []).map((route, index) => <tr key={route.id}>
-            <th><button className="route-cell" onClick={() => inspect(route, selectedSize)}><small>{String(index + 1).padStart(2, "0")}</small><RoutePair route={route} /><span className="coverage-dots">{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!route.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</span></button></th>
+          <tbody>{(catalog?.routes ?? []).map((route) => <tr key={route.id}>
+            <th><button className="route-cell" onClick={() => inspect(route, selectedSize)}><LeaderboardRoutePath route={route} /><span className="coverage-dots">{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!route.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</span></button></th>
             {quoteSizes.map((size) => <td key={size.id}><button className="result-button" onClick={() => inspect(route, size)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol} at ${size.label}`}><ComparisonResult cell={cells.get(`${route.id}::${size.id}`)} window={viewWindow} now={now} /></button></td>)}
           </tr>)}</tbody>
         </table>
         <div className="mobile-route-list" id="leaderboard-results" aria-label="Mobile route leaderboard">
           <header className="mobile-leaderboard-header"><div><b>Ranked routes</b><small>Choose a trade size</small></div><div className="mobile-leaderboard-sizes" role="group" aria-label="Trade size for mobile leaderboard">{quoteSizes.map((size) => <button key={size.id} className={selectedSize.id === size.id ? "selected" : ""} onClick={() => setSelectedSize(size)} aria-pressed={selectedSize.id === size.id}>{size.label}</button>)}</div></header>
           {loading && <div className="mobile-route-loading" role="status">Loading ranked routes…</div>}
-          {(catalog?.routes ?? []).map((route, index) => <MobileRouteCard key={route.id} route={route} index={index} selectedSize={selectedSize} cells={cells} viewWindow={viewWindow} now={now} activePartnerCount={activePartners.length} onInspect={inspect} />)}
+          {(catalog?.routes ?? []).map((route) => <MobileRouteCard key={route.id} route={route} selectedSize={selectedSize} cells={cells} viewWindow={viewWindow} now={now} activePartnerCount={activePartners.length} onInspect={inspect} />)}
         </div>
         {!loading && catalog?.routes.length === 0 && <div className="empty-table">No fixed routes are available.</div>}
       </div>}
@@ -627,13 +639,13 @@ export default function Home() {
 
       <section className="trend-card" aria-labelledby="trend-title">
         <header className="trend-header">
-          <div><p className="eyebrow">Historical {executionLabel(executionMode)} quote edge · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} won most quotes over {trendDays} days</> : <>Performance over {trendDays} days</>}</h3><p>{trend?.leader ? `${Math.round(trend.leader.winRate * 100)}% overall win share · ${formatBps(trend.leader.averageEdgeBps)} average edge · ${Math.round(trend.leader.availability * 100)}% quote availability · ${trend.comparableRuns} comparisons` : "A period leader appears after the first comparable quote batch."}</p></div>
+          <div><p className="eyebrow">Historical {executionLabel(executionMode)} gap to best · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} won most quotes over {trendDays} days</> : <>Performance over {trendDays} days</>}</h3><p>{trend?.leader ? `${Math.round(trend.leader.winRate * 100)}% best-quote share · ${formatBps(trend.leader.averageEdgeBps)} average gap · ${Math.round(trend.leader.availability * 100)}% quote availability · ${trend.comparableRuns} comparisons` : "A period leader appears after the first comparable quote batch."}</p></div>
           <div className="trend-controls">
             <fieldset><legend>Period</legend><div className="segmented light">{([7, 14, 30] as const).map((days) => <button key={days} className={trendDays === days ? "selected" : ""} onClick={() => setTrendDays(days)}>{days}d</button>)}</div></fieldset>
           </div>
         </header>
         {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} activePartners={activePartners} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
-        <div className="trend-note"><b>Win share ranks the leader</b><span>Each comparable batch awards one win; exact ties split it equally. The lines show each protocol’s basis-point edge versus that batch’s median output.</span></div>
+        <div className="trend-note"><b>0 bps is the batch best</b><span>Each synchronized batch sets its highest output to zero; lower quotes show their shortfall, and exact ties split it equally. Each chart point shows the median gap within that time bucket.</span></div>
       </section>
 
       {requestsOpen && <div className="request-drawer-backdrop">

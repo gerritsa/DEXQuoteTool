@@ -30,7 +30,7 @@ test("server-renders the SwapRank dashboard", async () => {
   assert.match(html, /30 days/);
   assert.match(html, /Latest check/);
   assert.match(html, /Refresh page data/);
-  assert.match(html, /Win share ranks the leader/);
+  assert.match(html, /0 bps is the batch best/);
   assert.match(html, /exact ties split it equally/);
   assert.match(html, /Execution mode/);
   assert.match(html, /Compare protocols/);
@@ -136,6 +136,8 @@ test("leaderboard and graph use fifteen-minute shared caching", async () => {
   const trends = await readFile(new URL("../app/api/trends/route.ts", import.meta.url), "utf8");
   assert.match(comparison, /publicCacheHeaders\(900\)/);
   assert.match(trends, /FROM trend_buckets/);
+  assert.match(trends, /output \/ bestOutput/);
+  assert.match(trends, /baseline: "batch_best"/);
   assert.match(trends, /publicCacheHeaders\(900\)/);
 });
 
@@ -156,6 +158,18 @@ test("route analysis keeps the latest synchronized DEX outputs visible", async (
   assert.match(page, /vs best/);
   assert.match(page, /Raw details/);
   assert.match(page, /setRequestsOpen\(true\)/);
+});
+
+test("leaderboard uses THORChain green and compact unranked asset paths", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(page, /function LeaderboardRoutePath/);
+  assert.match(page, /asset\.thorAsset\.split\("-"\)\[0\]/);
+  assert.doesNotMatch(page, /mobile-route-rank/);
+  assert.doesNotMatch(page, /String\(index \+ 1\)/);
+  assert.match(styles, /--acid:#17b897/);
+  assert.match(styles, /--brand-accent:#17b897/);
+  assert.doesNotMatch(styles, /#d1ff45|#d6ff4b/);
 });
 
 test("collector archives fixed-length gzip bodies and preserves finalization errors", async () => {

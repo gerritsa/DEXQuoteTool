@@ -55,9 +55,8 @@ function scoreRuns(storedRuns: StoredRun[], selectedProtocols: PartnerId[], star
     if (!Number.isFinite(timestamp) || timestamp < startAt || timestamp > endAt) continue;
     const quotes = run.quotes.filter((quote) => selected.has(quote.protocol) && Number.isFinite(Number(quote.output)) && Number(quote.output) > 0);
     if (quotes.length < 2) continue;
-    const medianOutput = median(quotes.map((quote) => Number(quote.output)));
-    if (!medianOutput) continue;
     const bestOutput = Math.max(...quotes.map((quote) => Number(quote.output)));
+    if (!bestOutput) continue;
     const winnerCount = quotes.filter((quote) => Number(quote.output) === bestOutput).length;
     for (const quote of quotes) {
       const output = Number(quote.output);
@@ -66,7 +65,7 @@ function scoreRuns(storedRuns: StoredRun[], selectedProtocols: PartnerId[], star
         initiatedAt: run.initiatedAt,
         timestamp,
         protocol: quote.protocol,
-        edgeBps: ((output / medianOutput) - 1) * 10_000,
+        edgeBps: ((output / bestOutput) - 1) * 10_000,
         winCredit: output === bestOutput ? 1 / winnerCount : 0,
       });
     }
@@ -211,7 +210,7 @@ export async function GET(request: Request) {
     });
 
     return writePublicCache(request, Response.json({
-      routeId, amountId, mode, protocols: selectedProtocols, days, baseline: "batch_median",
+      routeId, amountId, mode, protocols: selectedProtocols, days, baseline: "batch_best",
       ranking: "overall_win_share",
       comparisonRule: "The period leader has the highest share of comparable batch wins. Unavailable quotes cannot win, and exact ties split the win equally.",
       bucketMs,

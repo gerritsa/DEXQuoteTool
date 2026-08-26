@@ -138,7 +138,9 @@ test("leaderboard and graph use fifteen-minute shared caching", async () => {
   assert.match(trends, /FROM trend_buckets/);
   assert.match(trends, /output \/ bestOutput/);
   assert.match(trends, /baseline: "batch_best"/);
+  assert.match(trends, /days === 7 \? "comparison" : "bucket_median"/);
   assert.match(trends, /publicCacheHeaders\(900\)/);
+  assert.match(await readFile(new URL("../app/page.tsx", import.meta.url), "utf8"), /Every point is one synchronized comparison/);
 });
 
 test("the dashboard refreshes stale long-lived tabs", async () => {

@@ -192,18 +192,24 @@ export async function GET(request: Request) {
         || Number(b.averageEdgeBps ?? -Infinity) - Number(a.averageEdgeBps ?? -Infinity)
         || b.availability - a.availability)[0] ?? null;
 
-    const bucketStarts: number[] = [];
-    for (let bucket = firstBucketAt; bucket <= endAt; bucket += bucketMs) bucketStarts.push(bucket);
-    const buckets = bucketStarts.map((timestamp) => {
-      const bucketRows = rows.filter((row) => Math.floor(row.timestamp / bucketMs) * bucketMs === timestamp);
+    const pointMode = days === 7 ? "comparison" : "bucket_median";
+    const pointGroups = pointMode === "comparison"
+      ? [...Map.groupBy(rows, (row) => row.runId).values()]
+          .sort((a, b) => Number(a[0]?.timestamp) - Number(b[0]?.timestamp))
+          .map((runRows) => ({ timestamp: Number(runRows[0]?.timestamp), rows: runRows }))
+      : Array.from({ length: Math.floor((endAt - firstBucketAt) / bucketMs) + 1 }, (_, index) => {
+          const timestamp = firstBucketAt + index * bucketMs;
+          return { timestamp, rows: rows.filter((row) => Math.floor(row.timestamp / bucketMs) * bucketMs === timestamp) };
+        });
+    const buckets = pointGroups.map(({ timestamp, rows: pointRows }) => {
       const points = selectedProtocols.map((protocol) => {
-        const protocolRows = bucketRows.filter((row) => row.protocol === protocol);
-        const bucketRuns = new Set(bucketRows.map((row) => row.runId)).size;
+        const protocolRows = pointRows.filter((row) => row.protocol === protocol);
+        const pointRuns = new Set(pointRows.map((row) => row.runId)).size;
         return {
           protocol,
           edgeBps: median(protocolRows.map((row) => row.edgeBps)),
           sampleCount: protocolRows.length,
-          winRate: bucketRuns ? protocolRows.reduce((sum, row) => sum + row.winCredit, 0) / bucketRuns : null,
+          winRate: pointRuns ? protocolRows.reduce((sum, row) => sum + row.winCredit, 0) / pointRuns : null,
         };
       });
       return { timestamp, points };
@@ -213,7 +219,7 @@ export async function GET(request: Request) {
       routeId, amountId, mode, protocols: selectedProtocols, days, baseline: "batch_best",
       ranking: "overall_win_share",
       comparisonRule: "The period leader has the highest share of comparable batch wins. Unavailable quotes cannot win, and exact ties split the win equally.",
-      bucketMs,
+      bucketMs, pointMode,
       startAt: new Date(startAt).toISOString(), endAt: new Date(endAt).toISOString(),
       comparableRuns, leader, summary, buckets,
     }, { headers: publicCacheHeaders(900) }));

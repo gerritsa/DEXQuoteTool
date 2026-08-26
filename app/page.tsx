@@ -55,6 +55,7 @@ type TrendPoint = {
 type TrendResponse = {
   days: number;
   bucketMs: number;
+  pointMode: "comparison" | "bucket_median";
   startAt: string;
   endAt: string;
   comparableRuns: number;
@@ -372,7 +373,7 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
           if (!current || point.timestamp - current[current.length - 1].timestamp > data.bucketMs * 1.5) segments.push([point]);
           else current.push(point);
         }
-        return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => <circle key={point.timestamp} cx={x(point.timestamp)} cy={y(point.value)} r="3" fill={partner.color}><title>{partner.name} · {formatBps(point.value)} from best · {point.point.sampleCount} samples in bucket</title></circle>)}</g>;
+        return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => <circle key={point.timestamp} cx={x(point.timestamp)} cy={y(point.value)} r="3" fill={partner.color}><title>{partner.name} · {formatBps(point.value)} from best · {data.pointMode === "comparison" ? "synchronized comparison" : `${point.point.sampleCount} samples in bucket`}</title></circle>)}</g>;
       })}
     </svg>
     <div className="trend-legend">{activePartners.map((partner) => {
@@ -499,7 +500,7 @@ export default function Home() {
     if (!selectedRoute) return;
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) { setTrendLoading(true); setTrendError(null); } });
-    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode, days: String(trendDays), protocols: protocolParam, v: "3" });
+    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode, days: String(trendDays), protocols: protocolParam, v: "4" });
     if (freshParam) params.set("refresh", freshParam);
     fetch(`/api/trends?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
@@ -645,7 +646,7 @@ export default function Home() {
           </div>
         </header>
         {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} activePartners={activePartners} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
-        <div className="trend-note"><b>0 bps is the batch best</b><span>Each synchronized batch sets its highest output to zero; lower quotes show their shortfall, and exact ties split it equally. Each chart point shows the median gap within that time bucket.</span></div>
+        <div className="trend-note"><b>0 bps is the batch best</b><span>{trend?.pointMode === "comparison" ? "Every point is one synchronized comparison, so at least one available DEX sits at zero. Lower quotes show their shortfall; exact ties split it equally." : "Each synchronized batch sets its highest output to zero. For longer periods, every point shows each DEX’s median gap within that time bucket; exact ties split it equally."}</span></div>
       </section>
 
       {requestsOpen && <div className="request-drawer-backdrop">

@@ -21,11 +21,18 @@ function groupByCell<T extends { pairId: string; amountId: string }>(rows: T[]) 
 async function latestComparison(mode: ExecutionMode, selectedProtocols: PartnerId[]) {
   const protocolPlaceholders = selectedProtocols.map(() => "?").join(", ");
   const result = await getD1().prepare(`
-    WITH latest AS (
-      SELECT pair_id, amount_id, MAX(run_id) AS run_id
-      FROM latest_quote_payloads
-      WHERE mode = ?
-      GROUP BY pair_id, amount_id
+    WITH ranked_runs AS (
+      SELECT id AS run_id, pair_id, amount_id,
+        ROW_NUMBER() OVER (
+          PARTITION BY pair_id, amount_id
+          ORDER BY initiated_at DESC, id DESC
+        ) AS recency_rank
+      FROM benchmark_runs
+      WHERE mode = ? AND completed_at IS NOT NULL AND status IN ('complete', 'partial')
+    ), latest AS (
+      SELECT run_id, pair_id, amount_id
+      FROM ranked_runs
+      WHERE recency_rank = 1
     )
     SELECT r.pair_id AS pairId, r.amount_id AS amountId, r.initiated_at AS initiatedAt,
       q.protocol AS protocol, q.status AS status, CAST(q.expected_output_formatted AS REAL) AS output
@@ -84,7 +91,9 @@ async function periodComparison(window: Exclude<WindowName, "now">, mode: Execut
         CAST(q.expected_output_formatted AS REAL) AS output
       FROM benchmark_runs r
       JOIN protocol_quotes q ON q.run_id = r.id
-      WHERE r.mode = ? AND r.initiated_at >= ? AND q.protocol IN (${protocolPlaceholders})
+      WHERE r.mode = ? AND r.initiated_at >= ?
+        AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
+        AND q.protocol IN (${protocolPlaceholders})
         AND (
           substr(r.initiated_at, 1, 10) = ?
           OR substr(r.initiated_at, 1, 10) = ?

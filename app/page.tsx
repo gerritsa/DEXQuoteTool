@@ -1,13 +1,16 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- small static logos are served directly by the Worker */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { quoteSizes, type QuoteSize } from "../lib/quotes/sizes";
 
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 type ViewWindow = "now" | "7d" | "14d" | "30d";
 type ExecutionMode = "standard" | "optimized";
 type Theme = "dark" | "light";
+
+const pageRefreshIntervalMs = 15 * 60_000;
+const resumeRefreshThresholdMs = 60_000;
 
 type Route = {
   id: string;
@@ -237,7 +240,7 @@ function RequestDetails({ runDetails, runLoading, selectedSize }: { runDetails: 
       <h3>{runDetails.quotes.length} protocol results</h3>
       <p>Captured {formatTime(runDetails.run.initiatedAt)} · ${runDetails.run.sourceAmountUsd.toLocaleString()} exact input · synchronized within {runDetails.run.maxRequestSkewMs ?? "—"} ms</p>
       <div className="request-list">{orderedQuotes.map((quote) => <details key={quote.id}>
-        <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.protocol === "chainflip" && runDetails.run.mode === "optimized" && quote.strategy === "regular" ? "regular fallback" : quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quote.status === "unavailable" ? quote.errorCode === "UNSUPPORTED_PAIR" ? "Not supported" : quote.errorCode === "INSUFFICIENT_LIQUIDITY" ? "Insufficient liquidity" : quote.errorCode === "STRATEGY_UNAVAILABLE" ? "No quote for this mode" : "No quote at this size" : quote.status === "error" ? "Quote error" : quote.status}</strong></summary>
+        <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.protocol === "chainflip" && runDetails.run?.mode === "optimized" && quote.strategy === "regular" ? "regular fallback" : quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quote.status === "unavailable" ? quote.errorCode === "UNSUPPORTED_PAIR" ? "Not supported" : quote.errorCode === "INSUFFICIENT_LIQUIDITY" ? "Insufficient liquidity" : quote.errorCode === "STRATEGY_UNAVAILABLE" ? "No quote for this mode" : "No quote at this size" : quote.status === "error" ? "Quote error" : quote.status}</strong></summary>
         <dl><div><dt>Requested</dt><dd>{formatTime(quote.requestStartedAt)}</dd></div><div><dt>HTTP status</dt><dd>{quote.responseHttpStatus ?? "—"}</dd></div><div><dt>Expected output</dt><dd>{quote.expectedOutputFormatted ?? quote.expectedOutputBaseUnits ?? "—"}</dd></div><div><dt>Quote expiry</dt><dd>{formatTime(quote.quoteExpiresAt ?? undefined)}</dd></div></dl>
         <span className="json-label">Request</span><pre>{quote.requestPayloadJson ?? quote.requestUrl ?? "No request payload stored"}</pre><span className="json-label">Response</span><pre>{quote.rawResponseJson ?? quote.errorMessage ?? "No response payload stored"}</pre>
       </details>)}</div>
@@ -315,15 +318,20 @@ export default function Home() {
   const [now, setNow] = useState(() => Date.now());
   const [theme, setTheme] = useState<Theme>("dark");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const lastRefreshRequestedAt = useRef(0);
   const activePartners = useMemo(() => partners.filter((partner) => enabledProtocols.includes(partner.id)), [enabledProtocols]);
   const protocolParam = enabledProtocols.join(",");
+  const freshParam = refreshVersion > 0 ? String(refreshVersion) : null;
 
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setLoading(true);
       try {
-        const response = await fetch("/api/routes", { signal: controller.signal });
+        const params = new URLSearchParams();
+        if (freshParam) params.set("refresh", freshParam);
+        const response = await fetch(`/api/routes${params.size ? `?${params}` : ""}`, { signal: controller.signal, cache: "no-store" });
         const data = await response.json() as CatalogResponse;
         if (!response.ok) throw new Error(data.error ?? "Route catalog unavailable");
         setCatalog(data);
@@ -335,22 +343,42 @@ export default function Home() {
       }
     }, 200);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, []);
+  }, [freshParam]);
 
   useEffect(() => {
-    const refresh = () => fetch("/api/health", { cache: "no-store" })
+    const params = new URLSearchParams();
+    if (freshParam) params.set("refresh", freshParam);
+    const refresh = () => fetch(`/api/health${params.size ? `?${params}` : ""}`, { cache: "no-store" })
       .then(async (response) => setHealth(await response.json() as HealthResponse))
       .catch(() => setHealth({ status: "unhealthy", checkedAt: new Date().toISOString(), latestSweep: null, minutesSinceTerminalSweep: null, error: "Health endpoint unavailable" }));
     refresh();
-    const refreshTimer = window.setInterval(refresh, 15 * 60_000);
     const clockTimer = window.setInterval(() => setNow(Date.now()), 30_000);
-    return () => { window.clearInterval(refreshTimer); window.clearInterval(clockTimer); };
+    return () => window.clearInterval(clockTimer);
+  }, [freshParam]);
+
+  useEffect(() => {
+    lastRefreshRequestedAt.current = Date.now();
+    const refreshIfVisibleAndStale = () => {
+      if (document.visibilityState !== "visible" || Date.now() - lastRefreshRequestedAt.current < resumeRefreshThresholdMs) return;
+      lastRefreshRequestedAt.current = Date.now();
+      setRefreshVersion(Math.floor(Date.now() / 60_000));
+    };
+    const refreshTimer = window.setInterval(refreshIfVisibleAndStale, pageRefreshIntervalMs);
+    document.addEventListener("visibilitychange", refreshIfVisibleAndStale);
+    window.addEventListener("focus", refreshIfVisibleAndStale);
+    return () => {
+      window.clearInterval(refreshTimer);
+      document.removeEventListener("visibilitychange", refreshIfVisibleAndStale);
+      window.removeEventListener("focus", refreshIfVisibleAndStale);
+    };
   }, []);
 
   useEffect(() => {
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) setComparisonLoading(true); });
-    fetch(`/api/comparison?${new URLSearchParams({ window: viewWindow, mode: executionMode, protocols: protocolParam })}`, { signal: controller.signal })
+    const params = new URLSearchParams({ window: viewWindow, mode: executionMode, protocols: protocolParam });
+    if (freshParam) params.set("refresh", freshParam);
+    fetch(`/api/comparison?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const data = await response.json() as ComparisonResponse;
         if (!response.ok) throw new Error(data.error ?? "Comparison data unavailable");
@@ -361,14 +389,15 @@ export default function Home() {
       })
       .finally(() => { if (!controller.signal.aborted) setComparisonLoading(false); });
     return () => controller.abort();
-  }, [executionMode, protocolParam, viewWindow]);
+  }, [executionMode, freshParam, protocolParam, viewWindow]);
 
   useEffect(() => {
     if (!selectedRoute) return;
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) setRunLoading(true); });
     const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode });
-    fetch(`/api/runs?${params}`, { signal: controller.signal })
+    if (freshParam) params.set("refresh", freshParam);
+    fetch(`/api/runs?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const data = await response.json() as RunResponse;
         if (!response.ok) throw new Error(data.error ?? "Quote history unavailable");
@@ -379,14 +408,15 @@ export default function Home() {
       })
       .finally(() => { if (!controller.signal.aborted) setRunLoading(false); });
     return () => controller.abort();
-  }, [executionMode, selectedRoute, selectedSize.id]);
+  }, [executionMode, freshParam, selectedRoute, selectedSize.id]);
 
   useEffect(() => {
     if (!selectedRoute) return;
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) { setTrendLoading(true); setTrendError(null); } });
     const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode, days: String(trendDays), protocols: protocolParam, v: "2" });
-    fetch(`/api/trends?${params}`, { signal: controller.signal })
+    if (freshParam) params.set("refresh", freshParam);
+    fetch(`/api/trends?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const data = await response.json() as TrendResponse;
         if (!response.ok) throw new Error(data.error ?? "Trend data unavailable");
@@ -397,7 +427,7 @@ export default function Home() {
       })
       .finally(() => { if (!controller.signal.aborted) setTrendLoading(false); });
     return () => controller.abort();
-  }, [executionMode, protocolParam, selectedRoute, selectedSize.id, trendDays]);
+  }, [executionMode, freshParam, protocolParam, selectedRoute, selectedSize.id, trendDays]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("swaprank-theme");
@@ -453,6 +483,13 @@ export default function Home() {
     window.localStorage.setItem("swaprank-theme", next);
   }
 
+  function refreshPageData() {
+    lastRefreshRequestedAt.current = Date.now();
+    setRefreshVersion(Math.floor(Date.now() / 60_000));
+  }
+
+  const pageRefreshing = loading || comparisonLoading || runLoading || trendLoading;
+
   return <main className="app-shell" id="top">
     <header className="topbar">
       <a className="brand" href="#top" aria-label="SwapRank home"><span className="brand-symbol"><i /><i /><i /></span><span>Swap<span>Rank</span></span></a>
@@ -462,7 +499,7 @@ export default function Home() {
     <section className="route-section" id="leaderboard">
       <header className="page-heading">
         <div className="page-heading-main"><div><p className="eyebrow">Market data / leaderboard</p><h1>QUOTE LEADERBOARD</h1><p className="page-heading-description">Cross-chain DEX quotes compared by trade size.</p></div></div>
-        <div className="latest-check"><span>LATEST CHECK</span><strong>{latestCheckAt ? formatLocalTime(latestCheckAt) : "No completed check"}</strong><small>{latestCheckAt ? formatAgeLabel(latestCheckAt, now) : "Waiting for first refresh"}</small></div>
+        <div className="latest-check"><div><span>LATEST CHECK</span><button className="refresh-button" type="button" onClick={refreshPageData} disabled={pageRefreshing} aria-label="Refresh page data"><i aria-hidden="true">↻</i><span>{pageRefreshing ? "Refreshing" : "Refresh"}</span></button></div><strong>{latestCheckAt ? formatLocalTime(latestCheckAt) : "No completed check"}</strong><small aria-live="polite">{latestCheckAt ? formatAgeLabel(latestCheckAt, now) : "Waiting for first refresh"}</small></div>
       </header>
 
       <section className={`leaderboard-filter-panel ${mobileFiltersOpen ? "open" : ""}`}>

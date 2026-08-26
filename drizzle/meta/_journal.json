@@ -15,6 +15,13 @@
       "when": 1787701982939,
       "tag": "0001_wise_wildside",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787703960667,
+      "tag": "0002_preserve_benchmark_request",
+      "breakpoints": true
     }
   ]
 }

@@ -4,6 +4,7 @@ import { publicCacheHeaders, readPublicCache, writePublicCache } from "../../../
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 type ExecutionMode = "standard" | "optimized";
 type TrendBucketRow = { bucketStart: string; samplesJson: string };
+type AvailabilityRow = { protocol: PartnerId; attempts: number; successes: number };
 type StoredQuote = { protocol: PartnerId; output: number };
 type StoredRun = { runId: number; initiatedAt: string; quotes: StoredQuote[] };
 type ScoredRow = {
@@ -16,6 +17,7 @@ type ScoredRow = {
 };
 
 const protocols: PartnerId[] = ["near-intents", "chainflip", "thorchain"];
+const metricProtocolOrder: PartnerId[] = ["thorchain", "chainflip", "near-intents"];
 
 function median(values: number[]) {
   if (!values.length) return null;
@@ -72,6 +74,62 @@ function scoreRuns(storedRuns: StoredRun[], selectedProtocols: PartnerId[], star
   return rows;
 }
 
+async function loadAvailability(
+  routeId: string,
+  amountId: string,
+  mode: ExecutionMode,
+  selectedProtocols: PartnerId[],
+  startAt: string,
+) {
+  const cutoffDay = startAt.slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  const protocolMask = metricProtocolOrder.filter((protocol) => selectedProtocols.includes(protocol)).join(",");
+  const protocolPlaceholders = selectedProtocols.map(() => "?").join(", ");
+  const result = await getD1().prepare(`
+    WITH aggregate_metrics AS (
+      SELECT protocol, SUM(attempts) AS attempts, SUM(successes) AS successes
+      FROM daily_comparison_metrics
+      WHERE pair_id = ? AND amount_id = ? AND mode = ?
+        AND day > ? AND day < ? AND protocol_mask = ?
+        AND protocol IN (${protocolPlaceholders})
+      GROUP BY protocol
+    ), raw_metrics AS (
+      SELECT q.protocol AS protocol, COUNT(*) AS attempts,
+        SUM(CASE WHEN q.status = 'quoted' THEN 1 ELSE 0 END) AS successes
+      FROM benchmark_runs r
+      JOIN protocol_quotes q ON q.run_id = r.id
+      WHERE r.pair_id = ? AND r.amount_id = ? AND r.mode = ?
+        AND r.initiated_at >= ?
+        AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
+        AND q.protocol IN (${protocolPlaceholders})
+        AND (
+          substr(r.initiated_at, 1, 10) = ?
+          OR substr(r.initiated_at, 1, 10) = ?
+          OR NOT EXISTS (
+            SELECT 1 FROM daily_comparison_metrics d
+            WHERE d.day = substr(r.initiated_at, 1, 10)
+              AND d.mode = r.mode AND d.protocol_mask = ?
+          )
+        )
+      GROUP BY q.protocol
+    ), combined AS (
+      SELECT * FROM aggregate_metrics
+      UNION ALL
+      SELECT * FROM raw_metrics
+    )
+    SELECT protocol, SUM(attempts) AS attempts, SUM(successes) AS successes
+    FROM combined
+    GROUP BY protocol
+  `).bind(
+    routeId, amountId, mode, cutoffDay, today, protocolMask, ...selectedProtocols,
+    routeId, amountId, mode, startAt, ...selectedProtocols, cutoffDay, today, protocolMask,
+  ).all<AvailabilityRow>();
+  return new Map(result.results.map((row) => [row.protocol, {
+    attempts: Number(row.attempts),
+    successes: Number(row.successes),
+  }]));
+}
+
 export async function GET(request: Request) {
   try {
     const cached = await readPublicCache(request);
@@ -109,17 +167,25 @@ export async function GET(request: Request) {
 
     const storedRuns = bucketResult.results.flatMap((bucket) => parseStoredRuns(bucket.samplesJson));
     const rows = scoreRuns(storedRuns, selectedProtocols, startAt, endAt);
+    const availabilityByProtocol = await loadAvailability(
+      routeId,
+      amountId,
+      mode,
+      selectedProtocols,
+      new Date(startAt).toISOString(),
+    );
     const comparableRuns = new Set(rows.map((row) => row.runId)).size;
     const summary = selectedProtocols.map((protocol) => {
       const protocolRows = rows.filter((row) => row.protocol === protocol);
       const edges = protocolRows.map((row) => row.edgeBps);
+      const availability = availabilityByProtocol.get(protocol);
       return {
         protocol,
         averageEdgeBps: edges.length ? edges.reduce((sum, value) => sum + value, 0) / edges.length : null,
         medianEdgeBps: median(edges),
         winRate: comparableRuns ? protocolRows.reduce((sum, row) => sum + row.winCredit, 0) / comparableRuns : null,
         sampleCount: protocolRows.length,
-        availability: comparableRuns ? protocolRows.length / comparableRuns : 0,
+        availability: availability?.attempts ? availability.successes / availability.attempts : 0,
       };
     });
     const leader = [...summary].filter((item) => item.sampleCount > 0 && item.winRate != null)

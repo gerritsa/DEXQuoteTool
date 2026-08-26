@@ -39,7 +39,7 @@ export async function getPoolProtocolQuote(
     const responseLatencyMs = Date.now() - started;
     if (!response.ok) {
       const message = String(rawResponse.message ?? "Quote unavailable");
-      const expectedUnavailable = response.status === 400 && /insufficient|no (?:pool|route|quote)|not supported|minimum|maximum amount/i.test(message);
+      const expectedUnavailable = response.status === 400 && /insufficient|no (?:pool|route|quote)|not supported|(?:min(?:imum)?|max(?:imum)?) (?:swap )?amount|dust threshold|amount (?:less than|exceeds)/i.test(message);
       return { protocol, strategy, status: expectedUnavailable ? "unavailable" : "error", requestStartedAt, responseReceivedAt, responseHttpStatus: response.status, responseLatencyMs, requestUrl: url.toString(), errorCode: expectedUnavailable ? "INSUFFICIENT_LIQUIDITY" : `HTTP_${response.status}`, errorMessage: message, rawResponse };
     }
 
@@ -49,13 +49,18 @@ export async function getPoolProtocolQuote(
 
     const inboundSeconds = Number(rawResponse.inbound_confirmation_seconds ?? 0);
     const outboundSeconds = Number(rawResponse.outbound_delay_seconds ?? 0);
+    const streamingSeconds = Number(rawResponse.streaming_swap_seconds ?? 0);
+    const totalSeconds = Number(rawResponse.total_swap_seconds);
+    const hasTotalSeconds = rawResponse.total_swap_seconds != null && Number.isFinite(totalSeconds) && totalSeconds >= 0;
     return {
       protocol,
       strategy,
       status: "quoted",
       expectedOutputBaseUnits: rawResponse.expected_amount_out,
       expectedOutputFormatted: formatBaseUnits(rawResponse.expected_amount_out, 8),
-      estimatedDurationSeconds: inboundSeconds + outboundSeconds,
+      estimatedDurationSeconds: hasTotalSeconds
+        ? totalSeconds
+        : inboundSeconds + outboundSeconds + streamingSeconds,
       requestStartedAt,
       responseReceivedAt,
       quoteExpiresAt: typeof rawResponse.expiry === "number" ? new Date(rawResponse.expiry * 1000).toISOString() : undefined,

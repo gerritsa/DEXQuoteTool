@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull, inArray } from "drizzle-orm";
 import { ensureBenchmarkSchema, getD1, getDb } from "../../../db";
 import { benchmarkRuns, protocolQuotes } from "../../../db/schema";
 import { runSelectedBenchmark } from "../../../lib/quotes/run";
@@ -23,8 +23,14 @@ export async function GET(request: Request) {
 
     const db = getDb();
     const [run] = await db.select().from(benchmarkRuns)
-      .where(and(eq(benchmarkRuns.pairId, routeId), eq(benchmarkRuns.amountId, amountId), eq(benchmarkRuns.mode, mode)))
-      .orderBy(desc(benchmarkRuns.createdAt), desc(benchmarkRuns.id)).limit(1);
+      .where(and(
+        eq(benchmarkRuns.pairId, routeId),
+        eq(benchmarkRuns.amountId, amountId),
+        eq(benchmarkRuns.mode, mode),
+        isNotNull(benchmarkRuns.completedAt),
+        inArray(benchmarkRuns.status, ["complete", "partial"]),
+      ))
+      .orderBy(desc(benchmarkRuns.initiatedAt), desc(benchmarkRuns.id)).limit(1);
     if (!run) return writePublicCache(request, Response.json({ run: null, quotes: [] }, { headers: publicCacheHeaders(60) }));
 
     const quotes = await db.select().from(protocolQuotes)

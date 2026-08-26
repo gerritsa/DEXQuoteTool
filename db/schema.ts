@@ -10,6 +10,7 @@ export const benchmarkRuns = sqliteTable("benchmark_runs", {
   sourceAmountBaseUnits: text("source_amount_base_units").notNull(),
   sourceAmountUsd: real("source_amount_usd").notNull(),
   sourcePriceUsd: real("source_price_usd").notNull(),
+  requestJson: text("request_json"),
   mode: text("mode", { enum: ["standard", "optimized"] }).notNull(),
   status: text("status", { enum: ["pending", "complete", "partial", "failed"] }).notNull().default("pending"),
   initiatedAt: text("initiated_at").notNull(),

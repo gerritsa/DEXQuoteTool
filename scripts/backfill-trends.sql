@@ -14,6 +14,7 @@ WITH bucketed_runs AS (
     ) AS bucket_start
   FROM benchmark_runs r
   WHERE unixepoch(r.initiated_at) >= unixepoch('now', '-8 days')
+    AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
 )
 SELECT
   CAST(3600 AS TEXT) || '|' || bucket_start || '|' || pair_id || '|' || amount_id || '|' || mode,
@@ -53,6 +54,7 @@ WITH bucketed_runs AS (
     ) AS bucket_start
   FROM benchmark_runs r
   WHERE unixepoch(r.initiated_at) >= unixepoch('now', '-32 days')
+    AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
 )
 SELECT
   CAST(14400 AS TEXT) || '|' || bucket_start || '|' || pair_id || '|' || amount_id || '|' || mode,

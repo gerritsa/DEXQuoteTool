@@ -231,6 +231,7 @@ async function refreshTrendBucketRange(start: string, end: string, bucketSeconds
         ) AS bucket_start
       FROM benchmark_runs r
       WHERE r.initiated_at >= ? AND r.initiated_at < ?
+        AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
     )
     SELECT
       CAST(? AS TEXT) || '|' || bucket_start || '|' || pair_id || '|' || amount_id || '|' || mode,
@@ -350,6 +351,7 @@ async function aggregateDay(day: string, d1: D1Database) {
         FROM benchmark_runs r
         JOIN protocol_quotes q ON q.run_id = r.id
         WHERE r.initiated_at >= ? AND r.initiated_at < ?
+          AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
           AND q.protocol IN (${quotedProtocols})
       ), valid AS (
         SELECT *, ROW_NUMBER() OVER (PARTITION BY run_id ORDER BY output) AS output_rank,

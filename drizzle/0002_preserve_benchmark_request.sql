@@ -1,0 +1,1 @@
+ALTER TABLE `benchmark_runs` ADD `request_json` text;

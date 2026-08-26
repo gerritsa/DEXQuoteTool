@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { and, eq } from "drizzle-orm";
 import { ensureBenchmarkSchema, getD1, getDb } from "../../db";
 import { benchmarkRuns, protocolQuotes } from "../../db/schema";
-import { benchmarkCatalogGraceMs, getCatalog, topThorRoutes, type CatalogAsset, type PartnerId } from "../routes/catalog";
+import { benchmarkCatalogGraceMs, getCatalog, topThorRoutes, type CatalogAsset, type CatalogRoute, type PartnerId } from "../routes/catalog";
 import { getChainflipQuote } from "./adapters/chainflip";
 import { getNearIntentsQuote } from "./adapters/near-intents";
 import { getPoolProtocolQuote } from "./adapters/pool-protocol";
@@ -96,7 +96,32 @@ async function latestPayloads(runId: number, routeId: string, amountId: string, 
   }>();
 }
 
-async function loadStoredArchive(runId: number, routeId: string, amountId: string, mode: ExecutionMode): Promise<BenchmarkArchiveRecord> {
+function parseStoredRequest(value: string | null): BenchmarkRequest | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as Partial<BenchmarkRequest>;
+    return parsed
+      && typeof parsed.pairId === "string"
+      && typeof parsed.sourceAmountBaseUnits === "string"
+      && typeof parsed.sourceAmountUsd === "number"
+      && typeof parsed.sourcePriceUsd === "number"
+      && parsed.source != null
+      && parsed.destination != null
+      ? parsed as BenchmarkRequest
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function loadStoredArchive(
+  runId: number,
+  routeId: string,
+  amountId: string,
+  mode: ExecutionMode,
+  route: CatalogRoute,
+  runtime: BenchmarkRuntimeEnv,
+): Promise<BenchmarkArchiveRecord> {
   const db = getDb();
   const [run] = await db.select().from(benchmarkRuns).where(eq(benchmarkRuns.id, runId)).limit(1);
   if (!run?.completedAt) throw new Error("Stored benchmark is incomplete");
@@ -125,6 +150,19 @@ async function loadStoredArchive(runId: number, routeId: string, amountId: strin
       rawResponse: payload?.rawResponseJson ? JSON.parse(payload.rawResponseJson) : null,
     };
   });
+  const storedRequest = parseStoredRequest(run.requestJson);
+  const fallbackRequest: BenchmarkRequest = {
+    pairId: routeId,
+    source: toChainAsset(route.source),
+    destination: toChainAsset(route.destination),
+    sourceAmountBaseUnits: run.sourceAmountBaseUnits,
+    sourceAmountUsd: run.sourceAmountUsd,
+    sourcePriceUsd: run.sourcePriceUsd,
+    mode,
+    recipient: addressForChain(route.destination.chain, runtime) ?? "archived",
+    refundAddress: addressForChain(route.source.chain, runtime) ?? "archived",
+    slippageToleranceBps: 100,
+  };
   return {
     runId,
     routeId,
@@ -133,25 +171,13 @@ async function loadStoredArchive(runId: number, routeId: string, amountId: strin
     initiatedAt: run.initiatedAt,
     completedAt: run.completedAt,
     maxRequestSkewMs: run.maxRequestSkewMs ?? 0,
-    request: {
-      pairId: routeId,
-      source: { canonicalId: run.sourceAsset, chain: run.sourceAsset.split(".")[0].toLowerCase(), symbol: run.sourceAsset.split(".")[1] ?? run.sourceAsset, decimals: 8, protocolIds: {} },
-      destination: { canonicalId: run.destinationAsset, chain: run.destinationAsset.split(".")[0].toLowerCase(), symbol: run.destinationAsset.split(".")[1] ?? run.destinationAsset, decimals: 8, protocolIds: {} },
-      sourceAmountBaseUnits: run.sourceAmountBaseUnits,
-      sourceAmountUsd: run.sourceAmountUsd,
-      sourcePriceUsd: run.sourcePriceUsd,
-      mode,
-      recipient: "archived",
-      refundAddress: "archived",
-      slippageToleranceBps: 100,
-    },
+    request: storedRequest ?? fallbackRequest,
     quotes,
   };
 }
 
-async function upsertLatestPayloads(runId: number, routeId: string, amountId: string, mode: ExecutionMode, quotes: NormalizedQuote[], updatedAt: string) {
-  const d1 = getD1();
-  await d1.batch(quotes.map((quote) => d1.prepare(`
+function latestPayloadStatements(d1: D1Database, runId: number, routeId: string, amountId: string, mode: ExecutionMode, quotes: NormalizedQuote[], updatedAt: string) {
+  return quotes.map((quote) => d1.prepare(`
     INSERT INTO latest_quote_payloads (
       id, run_id, pair_id, amount_id, mode, protocol, request_url,
       request_payload_json, raw_response_json, error_message, updated_at
@@ -163,6 +189,7 @@ async function upsertLatestPayloads(runId: number, routeId: string, amountId: st
       raw_response_json = excluded.raw_response_json,
       error_message = excluded.error_message,
       updated_at = excluded.updated_at
+    WHERE latest_quote_payloads.updated_at < excluded.updated_at
   `).bind(
     `${routeId}|${amountId}|${mode}|${quote.protocol}`,
     runId,
@@ -175,7 +202,33 @@ async function upsertLatestPayloads(runId: number, routeId: string, amountId: st
     quote.rawResponse == null ? null : JSON.stringify(quote.rawResponse),
     quote.errorMessage ?? null,
     updatedAt,
-  )));
+  ));
+}
+
+async function upsertLatestPayloads(runId: number, routeId: string, amountId: string, mode: ExecutionMode, quotes: NormalizedQuote[], updatedAt: string) {
+  const d1 = getD1();
+  await d1.batch(latestPayloadStatements(d1, runId, routeId, amountId, mode, quotes, updatedAt));
+}
+
+async function finalizeRun(
+  runId: number,
+  routeId: string,
+  amountId: string,
+  mode: ExecutionMode,
+  status: "complete" | "partial",
+  completedAt: string,
+  maxRequestSkewMs: number,
+  quotes: NormalizedQuote[],
+) {
+  const d1 = getD1();
+  await d1.batch([
+    d1.prepare(`
+      UPDATE benchmark_runs
+      SET status = ?, completed_at = ?, max_request_skew_ms = ?
+      WHERE id = ?
+    `).bind(status, completedAt, maxRequestSkewMs, runId),
+    ...latestPayloadStatements(d1, runId, routeId, amountId, mode, quotes, completedAt),
+  ]);
 }
 
 export async function runSelectedBenchmark(routeId: string, amountId: string, mode: ExecutionMode = "standard", options: BenchmarkRunOptions = {}): Promise<StoredBenchmarkResult> {
@@ -188,6 +241,7 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
   if (!route.source.priceUsd || route.source.priceUsd <= 0) throw new Error("Source asset USD price is unavailable");
 
   const db = getDb();
+  const runtime = env as unknown as BenchmarkRuntimeEnv;
   if (options.sweepId) {
     const [existing] = await db.select().from(benchmarkRuns).where(and(
       eq(benchmarkRuns.sweepId, options.sweepId),
@@ -196,12 +250,12 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
       eq(benchmarkRuns.mode, mode),
     )).limit(1);
     if (existing?.completedAt && existing.status !== "pending") {
-      const archive = await loadStoredArchive(existing.id, routeId, amountId, mode);
+      const archive = await loadStoredArchive(existing.id, routeId, amountId, mode, route, runtime);
+      await upsertLatestPayloads(existing.id, routeId, amountId, mode, archive.quotes, existing.completedAt);
       return { runId: existing.id, routeId, amountId, mode, quoteCount: archive.quotes.length, completedAt: archive.completedAt, skipped: true, archive };
     }
   }
 
-  const runtime = env as unknown as BenchmarkRuntimeEnv;
   const recipient = addressForChain(route.destination.chain, runtime);
   const refundAddress = addressForChain(route.source.chain, runtime);
   if (!recipient || !refundAddress) throw new Error(`Benchmark addresses are not configured for ${route.source.chain} → ${route.destination.chain}`);
@@ -233,7 +287,18 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
   if (existingPending[0]) {
     runId = existingPending[0].id;
     await db.delete(protocolQuotes).where(eq(protocolQuotes.runId, runId));
-    await db.update(benchmarkRuns).set({ status: "pending", initiatedAt, completedAt: null }).where(eq(benchmarkRuns.id, runId));
+    await db.update(benchmarkRuns).set({
+      sourceAsset: route.source.thorAsset,
+      destinationAsset: route.destination.thorAsset,
+      sourceAmountBaseUnits: request.sourceAmountBaseUnits,
+      sourceAmountUsd,
+      sourcePriceUsd: route.source.priceUsd,
+      requestJson: JSON.stringify(request),
+      status: "pending",
+      initiatedAt,
+      completedAt: null,
+      maxRequestSkewMs: null,
+    }).where(eq(benchmarkRuns.id, runId));
   } else {
     const [run] = await db.insert(benchmarkRuns).values({
       pairId: route.id,
@@ -243,6 +308,7 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
       sourceAmountBaseUnits: request.sourceAmountBaseUnits,
       sourceAmountUsd,
       sourcePriceUsd: route.source.priceUsd,
+      requestJson: JSON.stringify(request),
       mode,
       status: "pending",
       initiatedAt,
@@ -277,8 +343,7 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
     errorMessage: quote.errorMessage,
   })));
 
-  await db.update(benchmarkRuns).set({ status: hasError ? "partial" : "complete", completedAt, maxRequestSkewMs }).where(eq(benchmarkRuns.id, runId));
-  await upsertLatestPayloads(runId, routeId, amountId, mode, quotes, completedAt);
+  await finalizeRun(runId, routeId, amountId, mode, hasError ? "partial" : "complete", completedAt, maxRequestSkewMs, quotes);
 
   const archive: BenchmarkArchiveRecord = { runId, routeId, amountId, mode, initiatedAt, completedAt, maxRequestSkewMs, request, quotes };
   return { runId, routeId, amountId, mode, quoteCount: quotes.length, completedAt, skipped: false, archive };

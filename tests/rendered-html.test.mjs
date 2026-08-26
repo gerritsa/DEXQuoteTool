@@ -29,6 +29,7 @@ test("server-renders the SwapRank dashboard", async () => {
   assert.match(html, /14 days/);
   assert.match(html, /30 days/);
   assert.match(html, /Latest check/);
+  assert.match(html, /Refresh page data/);
   assert.match(html, /Win share ranks the leader/);
   assert.match(html, /exact ties split it equally/);
   assert.match(html, /Execution mode/);
@@ -76,11 +77,36 @@ test("route catalog keeps a durable display fallback while protecting benchmark 
 
 test("quote adapters separate expected unavailability from operational errors", async () => {
   const chainflip = await readFile(new URL("../lib/quotes/adapters/chainflip.ts", import.meta.url), "utf8");
+  const pool = await readFile(new URL("../lib/quotes/adapters/pool-protocol.ts", import.meta.url), "utf8");
   const near = await readFile(new URL("../lib/quotes/adapters/near-intents.ts", import.meta.url), "utf8");
   assert.match(chainflip, /INSUFFICIENT_LIQUIDITY/);
   assert.match(chainflip, /STRATEGY_UNAVAILABLE/);
   assert.match(chainflip, /INVALID_RESPONSE/);
+  assert.match(chainflip, /catch \(error\)[\s\S]*strategy: requestedStrategy/);
+  assert.match(pool, /total_swap_seconds/);
+  assert.match(pool, /min\(\?:imum\)\?/);
   assert.match(near, /INSUFFICIENT_LIQUIDITY/);
+});
+
+test("comparison inputs remain durable and latest results do not depend on raw payload retention", async () => {
+  const comparison = await readFile(new URL("../app/api/comparison/route.ts", import.meta.url), "utf8");
+  const run = await readFile(new URL("../lib/quotes/run.ts", import.meta.url), "utf8");
+  const schema = await readFile(new URL("../db/schema.ts", import.meta.url), "utf8");
+  assert.match(comparison, /WITH ranked_runs AS/);
+  assert.match(comparison, /completed_at IS NOT NULL/);
+  assert.match(run, /requestJson: JSON\.stringify\(request\)/);
+  assert.match(run, /async function finalizeRun/);
+  assert.match(run, /await d1\.batch\(\[/);
+  assert.match(schema, /requestJson: text\("request_json"\)/);
+});
+
+test("catalog failures and trend availability are not reported as successful support", async () => {
+  const catalog = await readFile(new URL("../lib/routes/catalog.ts", import.meta.url), "utf8");
+  const trends = await readFile(new URL("../app/api/trends/route.ts", import.meta.url), "utf8");
+  assert.match(catalog, /NEAR Intents catalog unavailable/);
+  assert.match(catalog, /Chainflip catalog unavailable/);
+  assert.match(trends, /availability\.successes \/ availability\.attempts/);
+  assert.match(trends, /FROM daily_comparison_metrics/);
 });
 
 test("does not expose a public collector page", async () => {
@@ -112,6 +138,15 @@ test("leaderboard and graph use fifteen-minute shared caching", async () => {
   assert.match(comparison, /publicCacheHeaders\(900\)/);
   assert.match(trends, /FROM trend_buckets/);
   assert.match(trends, /publicCacheHeaders\(900\)/);
+});
+
+test("the dashboard refreshes stale long-lived tabs", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /visibilitychange/);
+  assert.match(page, /pageRefreshIntervalMs = 15 \* 60_000/);
+  assert.match(page, /Refresh page data/);
+  assert.match(page, /Math\.floor\(Date\.now\(\) \/ 60_000\)/);
+  assert.match(page, /params\.set\("refresh", freshParam\)/);
 });
 
 test("collector archives fixed-length gzip bodies and preserves finalization errors", async () => {

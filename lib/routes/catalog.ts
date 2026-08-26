@@ -114,9 +114,11 @@ async function buildCatalog() {
   ]);
 
   if (thorResult.status === "rejected") throw new Error(`THORChain catalog unavailable: ${thorResult.reason}`);
+  if (nearResult.status === "rejected") throw new Error(`NEAR Intents catalog unavailable: ${nearResult.reason}`);
+  if (chainflipResult.status === "rejected") throw new Error(`Chainflip catalog unavailable: ${chainflipResult.reason}`);
 
-  const near = nearResult.status === "fulfilled" ? nearResult.value : [];
-  const chainflipNetworkAssets = chainflipResult.status === "fulfilled" ? chainflipResult.value.assets : [];
+  const near = nearResult.value;
+  const chainflipNetworkAssets = chainflipResult.value.assets;
 
   const nearAssets = new Map(near.map((asset) => [canonicalAsset(asset.blockchain, asset.symbol, asset.contractAddress), asset.assetId]));
   const chainflipSupport = new Map(chainflipNetworkAssets.map((asset) => [asset.asset, asset]));

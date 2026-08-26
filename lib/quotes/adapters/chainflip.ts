@@ -126,7 +126,7 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
   } catch (error) {
     return {
       protocol,
-      strategy,
+      strategy: requestedStrategy,
       status: "error",
       requestStartedAt,
       responseReceivedAt: new Date().toISOString(),

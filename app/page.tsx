@@ -14,8 +14,8 @@ const resumeRefreshThresholdMs = 60_000;
 
 type Route = {
   id: string;
-  source: { id: string; label: string; chain: string; symbol: string; thorAsset: string };
-  destination: { id: string; label: string; chain: string; symbol: string; thorAsset: string };
+  source: { id: string; label: string; chain: string; symbol: string; thorAsset: string; decimals: number };
+  destination: { id: string; label: string; chain: string; symbol: string; thorAsset: string; decimals: number };
   partners: PartnerId[];
 };
 
@@ -190,6 +190,34 @@ function formatBps(value?: number | null) {
   return `${value > 0 ? "+" : ""}${value.toFixed(precision)} bps`;
 }
 
+function formatTokenAmount(value?: string | number | null) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "—";
+  const absolute = Math.abs(amount);
+  const maximumFractionDigits = absolute >= 1_000 ? 2 : absolute >= 1 ? 4 : absolute >= 0.01 ? 6 : 8;
+  return amount.toLocaleString([], { maximumFractionDigits });
+}
+
+function formatBaseUnits(value: string, decimals: number) {
+  const negative = value.startsWith("-");
+  const digits = (negative ? value.slice(1) : value).padStart(decimals + 1, "0");
+  const integer = digits.slice(0, -decimals || undefined);
+  const fraction = decimals ? digits.slice(-decimals).slice(0, 8).replace(/0+$/, "") : "";
+  const formattedInteger = BigInt(integer || "0").toLocaleString();
+  return `${negative ? "-" : ""}${formattedInteger}${fraction ? `.${fraction}` : ""}`;
+}
+
+function quoteStatusLabel(quote: RunResponse["quotes"][number]) {
+  if (quote.status === "unavailable") {
+    if (quote.errorCode === "UNSUPPORTED_PAIR") return "Not supported";
+    if (quote.errorCode === "INSUFFICIENT_LIQUIDITY") return "Insufficient liquidity";
+    if (quote.errorCode === "STRATEGY_UNAVAILABLE") return "No quote for this mode";
+    return "No quote at this size";
+  }
+  if (quote.status === "error") return "Quote error";
+  return quote.status;
+}
+
 function ComparisonResult({ cell, window, now }: { cell?: ComparisonCell; window: ViewWindow; now: number }) {
   if (!cell) return <span className="cell-empty"><b>—</b><small>Awaiting refresh</small></span>;
   if (!cell.leader) return <span className="cell-empty"><b>—</b><small>{cell.successfulQuotes === 1 ? "1 valid quote" : cell.successfulQuotes === 0 ? "No valid quote at this size" : cell.sampleCount ? "No valid quotes" : "Awaiting refresh"}</small></span>;
@@ -228,6 +256,54 @@ function MobileRouteCard({ route, index, selectedSize, cells, viewWindow, now, a
   </article>;
 }
 
+function LatestQuoteComparison({ route, runDetails, runLoading, selectedSize, now, onOpenDetails }: {
+  route: Route;
+  runDetails: RunResponse | null;
+  runLoading: boolean;
+  selectedSize: QuoteSize;
+  now: number;
+  onOpenDetails: () => void;
+}) {
+  const orderedQuotes = [...(runDetails?.quotes ?? [])].sort((a, b) => partners.findIndex((partner) => partner.id === a.protocol) - partners.findIndex((partner) => partner.id === b.protocol));
+  const quotedOutputs = orderedQuotes
+    .filter((quote) => quote.status === "quoted" && quote.expectedOutputFormatted)
+    .map((quote) => Number(quote.expectedOutputFormatted))
+    .filter((value) => Number.isFinite(value));
+  const bestOutput = quotedOutputs.length ? Math.max(...quotedOutputs) : null;
+  const exactInput = runDetails?.run ? formatBaseUnits(runDetails.run.sourceAmountBaseUnits, route.source.decimals) : null;
+
+  return <section className="latest-comparison" aria-labelledby="latest-comparison-title" aria-busy={runLoading}>
+    <header>
+      <div><p className="eyebrow">Latest synchronized comparison</p><h3 id="latest-comparison-title">Every DEX, one captured batch</h3></div>
+      <button className="quote-audit-link" type="button" onClick={onOpenDetails}><span>Raw details</span><b>Latest quotes →</b></button>
+    </header>
+    {runLoading ? <div className="latest-comparison-state" role="status"><b>Loading latest quotes…</b><span>Reading the synchronized batch for {selectedSize.label}.</span></div> : runDetails?.run ? <>
+      <div className="latest-comparison-row">
+        <div className="latest-input-card">
+          <small>Exact input</small>
+          <strong>{exactInput} <span>{route.source.symbol}</span></strong>
+          <b>{selectedSize.label} benchmark</b>
+        </div>
+        <i className="latest-comparison-arrow" aria-hidden="true">→</i>
+        <div className="latest-quote-results">
+          {orderedQuotes.map((quote) => {
+            const output = quote.status === "quoted" && quote.expectedOutputFormatted ? Number(quote.expectedOutputFormatted) : null;
+            const isQuoted = output != null && Number.isFinite(output);
+            const isWinner = isQuoted && bestOutput != null && output === bestOutput;
+            const gapBps = isQuoted && bestOutput ? (output / bestOutput - 1) * 10_000 : null;
+            return <article key={quote.id} className={`latest-quote-card protocol-${quote.protocol} ${isWinner ? "winner" : ""}`}>
+              <div><PartnerMark id={quote.protocol} /><b>{partners.find((partner) => partner.id === quote.protocol)?.cellName}</b>{isWinner && <em>Best</em>}</div>
+              {isQuoted ? <strong>{formatTokenAmount(quote.expectedOutputFormatted)} <span>{route.destination.symbol}</span></strong> : <strong className="quote-unavailable">{quoteStatusLabel(quote)}</strong>}
+              <small>{isWinner ? "Best output" : gapBps != null ? `${formatBps(gapBps)} vs best` : quote.errorCode ?? quote.status}{quote.responseLatencyMs != null ? ` · ${quote.responseLatencyMs} ms` : ""}</small>
+            </article>;
+          })}
+        </div>
+      </div>
+      <div className="latest-comparison-meta"><span>Captured {formatTime(runDetails.run.initiatedAt)}</span><b>{formatAgeLabel(runDetails.run.initiatedAt, now)} · synchronized within {runDetails.run.maxRequestSkewMs ?? "—"} ms</b></div>
+    </> : <div className="latest-comparison-state"><b>{runDetails?.error ? "Latest comparison unavailable" : "No captured comparison yet"}</b><span>{runDetails?.error ? "Quote history could not be loaded. Raw details contain the diagnostic response." : `The next ${selectedSize.label} quote batch will appear here.`}</span></div>}
+  </section>;
+}
+
 function RequestDetails({ runDetails, runLoading, selectedSize }: { runDetails: RunResponse | null; runLoading: boolean; selectedSize: QuoteSize }) {
   const winnerProtocol = [...(runDetails?.quotes ?? [])]
     .filter((quote) => quote.status === "quoted" && quote.expectedOutputFormatted)
@@ -240,7 +316,7 @@ function RequestDetails({ runDetails, runLoading, selectedSize }: { runDetails: 
       <h3>{runDetails.quotes.length} protocol results</h3>
       <p>Captured {formatTime(runDetails.run.initiatedAt)} · ${runDetails.run.sourceAmountUsd.toLocaleString()} exact input · synchronized within {runDetails.run.maxRequestSkewMs ?? "—"} ms</p>
       <div className="request-list">{orderedQuotes.map((quote) => <details key={quote.id}>
-        <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.protocol === "chainflip" && runDetails.run?.mode === "optimized" && quote.strategy === "regular" ? "regular fallback" : quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quote.status === "unavailable" ? quote.errorCode === "UNSUPPORTED_PAIR" ? "Not supported" : quote.errorCode === "INSUFFICIENT_LIQUIDITY" ? "Insufficient liquidity" : quote.errorCode === "STRATEGY_UNAVAILABLE" ? "No quote for this mode" : "No quote at this size" : quote.status === "error" ? "Quote error" : quote.status}</strong></summary>
+        <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.protocol === "chainflip" && runDetails.run?.mode === "optimized" && quote.strategy === "regular" ? "regular fallback" : quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quoteStatusLabel(quote)}</strong></summary>
         <dl><div><dt>Requested</dt><dd>{formatTime(quote.requestStartedAt)}</dd></div><div><dt>HTTP status</dt><dd>{quote.responseHttpStatus ?? "—"}</dd></div><div><dt>Expected output</dt><dd>{quote.expectedOutputFormatted ?? quote.expectedOutputBaseUnits ?? "—"}</dd></div><div><dt>Quote expiry</dt><dd>{formatTime(quote.quoteExpiresAt ?? undefined)}</dd></div></dl>
         <span className="json-label">Request</span><pre>{quote.requestPayloadJson ?? quote.requestUrl ?? "No request payload stored"}</pre><span className="json-label">Response</span><pre>{quote.rawResponseJson ?? quote.errorMessage ?? "No response payload stored"}</pre>
       </details>)}</div>
@@ -545,10 +621,11 @@ export default function Home() {
         <span><b>SYNC SKEW</b><strong>{runDetails?.run?.maxRequestSkewMs != null ? `${runDetails.run.maxRequestSkewMs} ms` : "—"}</strong></span>
       </div>}
 
+      {selectedRoute && <LatestQuoteComparison route={selectedRoute} runDetails={runDetails} runLoading={runLoading} selectedSize={selectedSize} now={now} onOpenDetails={() => setRequestsOpen(true)} />}
+
       <div className="analysis-toolbar">
         <p className="mobile-toolbar-label">Trade size</p>
         <div className="size-selectors" role="group" aria-label="Exact USD input for route analysis">{quoteSizes.map((size) => <button key={size.id} className={selectedSize.id === size.id ? "selected" : ""} onClick={() => setSelectedSize(size)} aria-pressed={selectedSize.id === size.id}><strong>{size.label}</strong></button>)}</div>
-        <button className="latest-request-button" onClick={() => setRequestsOpen(true)}><span>Latest quotes</span><b>{runLoading ? "Loading…" : runDetails?.run ? formatTime(runDetails.run.initiatedAt) : "No batch yet"}</b></button>
       </div>
 
       <section className="trend-card" aria-labelledby="trend-title">

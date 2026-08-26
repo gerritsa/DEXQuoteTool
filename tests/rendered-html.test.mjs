@@ -44,7 +44,6 @@ test("server-renders the SwapRank dashboard", async () => {
   assert.match(html, /MAYA PROTOCOL/);
   assert.match(html, /THORCHAIN[\s\S]*MAYA PROTOCOL[\s\S]*CHAINFLIP[\s\S]*NEAR/);
   assert.match(html, /Route analysis/);
-  assert.match(html, /Latest quotes/);
   assert.doesNotMatch(html, />Exact input</);
   assert.doesNotMatch(html, /Run \$.*test/);
   assert.doesNotMatch(html, /Real requests\. Exact sizes\. Explainable winners\./);
@@ -147,6 +146,16 @@ test("the dashboard refreshes stale long-lived tabs", async () => {
   assert.match(page, /Refresh page data/);
   assert.match(page, /Math\.floor\(Date\.now\(\) \/ 60_000\)/);
   assert.match(page, /params\.set\("refresh", freshParam\)/);
+});
+
+test("route analysis keeps the latest synchronized DEX outputs visible", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /function LatestQuoteComparison/);
+  assert.match(page, /Every DEX, one captured batch/);
+  assert.match(page, /Exact input/);
+  assert.match(page, /vs best/);
+  assert.match(page, /Raw details/);
+  assert.match(page, /setRequestsOpen\(true\)/);
 });
 
 test("collector archives fixed-length gzip bodies and preserves finalization errors", async () => {

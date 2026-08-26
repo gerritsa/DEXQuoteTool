@@ -91,6 +91,58 @@ footer{margin-top:100px;padding:24px clamp(22px,5vw,76px);background:var(--foote
 :root:not([data-theme="light"]) .leaderboard-table thead th{color:#f1f4ee;font-weight:900}
 .route-section{margin-top:24px}
 
+/* Latest synchronized quote comparison */
+.latest-comparison{margin:0 2px 10px;overflow:hidden;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+.latest-comparison>header{min-height:62px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:20px;border-bottom:1px solid var(--line);background:var(--table-head)}
+.latest-comparison>header .eyebrow{margin:0 0 5px;color:var(--mint);font-size:8px}
+.latest-comparison>header h3{margin:0;color:var(--ink);font:900 13px var(--font-geist-mono);letter-spacing:.01em}
+.quote-audit-link{flex:0 0 auto;padding:7px 9px;display:grid;gap:3px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);text-align:right;cursor:pointer}
+.quote-audit-link:hover,.quote-audit-link:focus-visible{border-color:var(--ink);outline:0;background:var(--soft)}
+.quote-audit-link span{font:900 9px var(--font-geist-mono);text-transform:uppercase;letter-spacing:.05em}
+.quote-audit-link b{color:var(--muted);font:700 7px var(--font-geist-mono)}
+.latest-comparison-row{padding:10px;display:flex;align-items:stretch;gap:9px}
+.latest-input-card{width:150px;flex:0 0 150px;padding:10px 11px;display:grid;align-content:center;gap:5px;border:1px solid var(--line);border-radius:8px;background:var(--chrome);color:var(--on-chrome)}
+.latest-input-card small{color:var(--chrome-muted);font:800 7px var(--font-geist-mono);text-transform:uppercase;letter-spacing:.08em}
+.latest-input-card strong{font:900 13px var(--font-geist-mono)}
+.latest-input-card strong span{color:var(--acid);font-size:9px}
+.latest-input-card b{color:var(--chrome-muted);font:700 8px var(--font-geist-mono)}
+.latest-comparison-arrow{flex:0 0 auto;align-self:center;color:var(--muted);font:normal 18px var(--font-geist-mono)}
+.latest-quote-results{min-width:0;flex:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:7px}
+.latest-quote-card{min-width:0;min-height:78px;padding:9px 10px;display:grid;align-content:center;gap:6px;border:1px solid transparent;border-radius:8px;background:var(--soft)}
+.latest-quote-card.protocol-thorchain{background:var(--thor-bg)}
+.latest-quote-card.protocol-chainflip{background:var(--flip-bg)}
+.latest-quote-card.protocol-near-intents{background:var(--near-bg)}
+.latest-quote-card.protocol-maya{background:var(--maya-bg)}
+.latest-quote-card.winner{border-color:var(--mint);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--mint) 22%,transparent)}
+.latest-quote-card>div{min-width:0;display:flex;align-items:center;gap:6px}
+.latest-quote-card .partner-mark{width:20px;height:20px;margin:0;border:0;border-radius:6px}
+.latest-quote-card>div>b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:900 8px var(--font-geist-mono)}
+.latest-quote-card em{margin-left:auto;padding:3px 5px;border-radius:4px;background:var(--mint);color:#10231e;font:900 7px var(--font-geist-mono);font-style:normal;text-transform:uppercase;letter-spacing:.06em}
+.latest-quote-card>strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:900 13px var(--font-geist-mono)}
+.latest-quote-card>strong span{color:var(--muted);font-size:8px}
+.latest-quote-card>strong.quote-unavailable{white-space:normal;color:var(--muted);font-size:10px;line-height:1.25}
+.latest-quote-card>small{overflow:hidden;color:var(--muted);font:700 7px var(--font-geist-mono);text-overflow:ellipsis;white-space:nowrap}
+.latest-comparison-meta{padding:8px 12px;display:flex;align-items:center;justify-content:space-between;gap:14px;border-top:1px solid var(--line);color:var(--muted);font:7px var(--font-geist-mono)}
+.latest-comparison-meta b{font-weight:700}
+.latest-comparison-state{min-height:112px;padding:24px;display:grid;place-content:center;gap:6px;text-align:center}
+.latest-comparison-state b{font:900 11px var(--font-geist-mono)}
+.latest-comparison-state span{color:var(--muted);font:8px var(--font-geist-mono)}
+.analysis-toolbar{grid-template-columns:minmax(0,1fr)}
+
+@media(max-width:760px){
+  .latest-comparison{margin-bottom:9px}
+  .latest-comparison>header{min-height:58px;padding:10px 11px}
+  .latest-comparison>header h3{font-size:10px}
+  .quote-audit-link{padding:7px 8px}
+  .latest-comparison-row{overflow-x:auto;align-items:stretch;padding:9px;gap:7px;scroll-snap-type:x proximity}
+  .latest-input-card{width:128px;flex-basis:128px;scroll-snap-align:start}
+  .latest-comparison-arrow{font-size:14px}
+  .latest-quote-results{display:flex;flex:0 0 auto}
+  .latest-quote-card{width:164px;flex:0 0 164px;scroll-snap-align:start}
+  .latest-comparison-meta{align-items:flex-start;font-size:6px}
+  .latest-comparison-meta b{text-align:right}
+}
+
 .mobile-route-list{display:none}
 .leaderboard-filter-summary,.mobile-back-link,.mobile-toolbar-label{display:none}
 .mobile-route-card-header,.mobile-result-button,.mobile-size-item{font:inherit}

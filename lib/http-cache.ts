@@ -1,5 +1,62 @@
 type CloudflareCacheStorage = CacheStorage & { default: Cache };
 
+const comparableProtocols = ["near-intents", "chainflip", "thorchain"];
+
+function normalizedMode(url: URL) {
+  return url.searchParams.get("mode") === "optimized" ? "optimized" : "standard";
+}
+
+function normalizedProtocols(url: URL) {
+  const requested = (url.searchParams.get("protocols") ?? "").split(",");
+  const selected = comparableProtocols.filter((protocol) => requested.includes(protocol));
+  return (selected.length >= 2 ? selected : comparableProtocols).join(",");
+}
+
+function replaceSearch(url: URL, entries: Array<[string, string]>) {
+  url.search = "";
+  for (const [key, value] of entries) {
+    if (value) url.searchParams.set(key, value);
+  }
+  return url;
+}
+
+export function canonicalPublicCacheUrl(request: Request) {
+  const url = new URL(request.url);
+  if (url.pathname === "/api/routes") return replaceSearch(url, []).toString();
+  if (url.pathname === "/api/comparison") {
+    const requestedWindow = url.searchParams.get("window") ?? "now";
+    const window = ["now", "7d", "14d", "30d"].includes(requestedWindow) ? requestedWindow : "now";
+    return replaceSearch(url, [
+      ["window", window],
+      ["mode", normalizedMode(url)],
+      ["protocols", normalizedProtocols(url)],
+    ]).toString();
+  }
+  if (url.pathname === "/api/runs") {
+    return replaceSearch(url, [
+      ["routeId", url.searchParams.get("routeId")?.trim() ?? ""],
+      ["amountId", url.searchParams.get("amountId")?.trim() ?? ""],
+      ["mode", normalizedMode(url)],
+    ]).toString();
+  }
+  if (url.pathname === "/api/trends") {
+    const requestedDays = Number(url.searchParams.get("days") ?? 7);
+    const days = [7, 14, 30].includes(requestedDays) ? String(requestedDays) : "7";
+    return replaceSearch(url, [
+      ["routeId", url.searchParams.get("routeId")?.trim() ?? ""],
+      ["amountId", url.searchParams.get("amountId")?.trim() ?? ""],
+      ["mode", normalizedMode(url)],
+      ["days", days],
+      ["protocols", normalizedProtocols(url)],
+    ]).toString();
+  }
+  return url.toString();
+}
+
+function publicCacheKey(request: Request) {
+  return new Request(canonicalPublicCacheUrl(request), { method: "GET" });
+}
+
 function defaultCache() {
   return (globalThis.caches as CloudflareCacheStorage | undefined)?.default;
 }
@@ -13,7 +70,7 @@ export function publicCacheHeaders(maxAgeSeconds: number) {
 export async function readPublicCache(request: Request) {
   if (request.method !== "GET") return undefined;
   try {
-    const cached = await defaultCache()?.match(new Request(request.url, { method: "GET" }));
+    const cached = await defaultCache()?.match(publicCacheKey(request));
     if (!cached) return undefined;
 
     // Responses returned directly by Cloudflare Cache can have immutable
@@ -33,7 +90,7 @@ export async function writePublicCache(request: Request, response: Response) {
   const cache = defaultCache();
   if (cache && request.method === "GET" && response.ok) {
     try {
-      await cache.put(new Request(request.url, { method: "GET" }), response.clone());
+      await cache.put(publicCacheKey(request), response.clone());
     } catch {
       // Cache availability must never make a public API request fail.
     }

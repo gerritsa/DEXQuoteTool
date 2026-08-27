@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { canonicalPublicCacheUrl } from "../lib/http-cache.ts";
 
 async function render(path = "/", environment = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -145,11 +146,28 @@ test("leaderboard and graph use fifteen-minute shared caching", async () => {
 
 test("the dashboard refreshes stale long-lived tabs", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const cache = await readFile(new URL("../lib/http-cache.ts", import.meta.url), "utf8");
   assert.match(page, /visibilitychange/);
   assert.match(page, /pageRefreshIntervalMs = 15 \* 60_000/);
+  assert.match(page, /manualRefreshCooldownMs = 60_000/);
   assert.match(page, /Refresh page data/);
-  assert.match(page, /Math\.floor\(Date\.now\(\) \/ 60_000\)/);
-  assert.match(page, /params\.set\("refresh", freshParam\)/);
+  assert.match(page, /Refresh available after cooldown/);
+  assert.doesNotMatch(page, /params\.set\("refresh"/);
+  assert.match(cache, /canonicalPublicCacheUrl/);
+  assert.match(cache, /publicCacheKey/);
+});
+
+test("public cache keys ignore cache-busting and irrelevant parameters", () => {
+  const semantic = "https://swaprank.test/api/trends?routeId=eth_btc&amountId=500000&mode=optimized&days=7&protocols=thorchain,chainflip,near-intents";
+  const noisy = `${semantic}&refresh=999&v=random&junk=anything`;
+  assert.equal(
+    canonicalPublicCacheUrl(new Request(noisy)),
+    canonicalPublicCacheUrl(new Request(semantic)),
+  );
+  assert.equal(
+    canonicalPublicCacheUrl(new Request("https://swaprank.test/api/routes?refresh=999&junk=anything")),
+    "https://swaprank.test/api/routes",
+  );
 });
 
 test("route analysis keeps the latest synchronized DEX outputs visible", async () => {

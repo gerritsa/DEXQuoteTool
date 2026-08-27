@@ -11,6 +11,7 @@ type Theme = "dark" | "light";
 
 const pageRefreshIntervalMs = 15 * 60_000;
 const resumeRefreshThresholdMs = 60_000;
+const manualRefreshCooldownMs = 60_000;
 
 type Route = {
   id: string;
@@ -405,19 +406,17 @@ export default function Home() {
   const [theme, setTheme] = useState<Theme>("dark");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [refreshVersion, setRefreshVersion] = useState(0);
+  const [manualRefreshAvailableAt, setManualRefreshAvailableAt] = useState(0);
   const lastRefreshRequestedAt = useRef(0);
   const activePartners = useMemo(() => partners.filter((partner) => enabledProtocols.includes(partner.id)), [enabledProtocols]);
   const protocolParam = enabledProtocols.join(",");
-  const freshParam = refreshVersion > 0 ? String(refreshVersion) : null;
 
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setLoading(true);
       try {
-        const params = new URLSearchParams();
-        if (freshParam) params.set("refresh", freshParam);
-        const response = await fetch(`/api/routes${params.size ? `?${params}` : ""}`, { signal: controller.signal, cache: "no-store" });
+        const response = await fetch("/api/routes", { signal: controller.signal, cache: "no-store" });
         const data = await response.json() as CatalogResponse;
         if (!response.ok) throw new Error(data.error ?? "Route catalog unavailable");
         setCatalog(data);
@@ -429,25 +428,34 @@ export default function Home() {
       }
     }, 200);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [freshParam]);
+  }, [refreshVersion]);
 
   useEffect(() => {
-    const params = new URLSearchParams();
-    if (freshParam) params.set("refresh", freshParam);
-    const refresh = () => fetch(`/api/health${params.size ? `?${params}` : ""}`, { cache: "no-store" })
+    const refresh = () => fetch("/api/health", { cache: "no-store" })
       .then(async (response) => setHealth(await response.json() as HealthResponse))
       .catch(() => setHealth({ status: "unhealthy", checkedAt: new Date().toISOString(), latestSweep: null, minutesSinceTerminalSweep: null, error: "Health endpoint unavailable" }));
     refresh();
     const clockTimer = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(clockTimer);
-  }, [freshParam]);
+  }, [refreshVersion]);
+
+  useEffect(() => {
+    if (!manualRefreshAvailableAt) return;
+    const remaining = manualRefreshAvailableAt - Date.now();
+    if (remaining <= 0) {
+      Promise.resolve().then(() => setManualRefreshAvailableAt(0));
+      return;
+    }
+    const timer = window.setTimeout(() => setManualRefreshAvailableAt(0), remaining);
+    return () => window.clearTimeout(timer);
+  }, [manualRefreshAvailableAt]);
 
   useEffect(() => {
     lastRefreshRequestedAt.current = Date.now();
     const refreshIfVisibleAndStale = () => {
       if (document.visibilityState !== "visible" || Date.now() - lastRefreshRequestedAt.current < resumeRefreshThresholdMs) return;
       lastRefreshRequestedAt.current = Date.now();
-      setRefreshVersion(Math.floor(Date.now() / 60_000));
+      setRefreshVersion((current) => current + 1);
     };
     const refreshTimer = window.setInterval(refreshIfVisibleAndStale, pageRefreshIntervalMs);
     document.addEventListener("visibilitychange", refreshIfVisibleAndStale);
@@ -463,7 +471,6 @@ export default function Home() {
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) setComparisonLoading(true); });
     const params = new URLSearchParams({ window: viewWindow, mode: executionMode, protocols: protocolParam });
-    if (freshParam) params.set("refresh", freshParam);
     fetch(`/api/comparison?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const data = await response.json() as ComparisonResponse;
@@ -475,14 +482,13 @@ export default function Home() {
       })
       .finally(() => { if (!controller.signal.aborted) setComparisonLoading(false); });
     return () => controller.abort();
-  }, [executionMode, freshParam, protocolParam, viewWindow]);
+  }, [executionMode, protocolParam, refreshVersion, viewWindow]);
 
   useEffect(() => {
     if (!selectedRoute) return;
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) setRunLoading(true); });
     const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode });
-    if (freshParam) params.set("refresh", freshParam);
     fetch(`/api/runs?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const data = await response.json() as RunResponse;
@@ -494,14 +500,13 @@ export default function Home() {
       })
       .finally(() => { if (!controller.signal.aborted) setRunLoading(false); });
     return () => controller.abort();
-  }, [executionMode, freshParam, selectedRoute, selectedSize.id]);
+  }, [executionMode, refreshVersion, selectedRoute, selectedSize.id]);
 
   useEffect(() => {
     if (!selectedRoute) return;
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) { setTrendLoading(true); setTrendError(null); } });
     const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode, days: String(trendDays), protocols: protocolParam, v: "4" });
-    if (freshParam) params.set("refresh", freshParam);
     fetch(`/api/trends?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const data = await response.json() as TrendResponse;
@@ -513,7 +518,7 @@ export default function Home() {
       })
       .finally(() => { if (!controller.signal.aborted) setTrendLoading(false); });
     return () => controller.abort();
-  }, [executionMode, freshParam, protocolParam, selectedRoute, selectedSize.id, trendDays]);
+  }, [executionMode, protocolParam, refreshVersion, selectedRoute, selectedSize.id, trendDays]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("swaprank-theme");
@@ -570,11 +575,15 @@ export default function Home() {
   }
 
   function refreshPageData() {
-    lastRefreshRequestedAt.current = Date.now();
-    setRefreshVersion(Math.floor(Date.now() / 60_000));
+    const requestedAt = Date.now();
+    if (manualRefreshAvailableAt > requestedAt) return;
+    lastRefreshRequestedAt.current = requestedAt;
+    setManualRefreshAvailableAt(requestedAt + manualRefreshCooldownMs);
+    setRefreshVersion((current) => current + 1);
   }
 
   const pageRefreshing = loading || comparisonLoading || runLoading || trendLoading;
+  const refreshCoolingDown = manualRefreshAvailableAt > now;
 
   return <main className="app-shell" id="top">
     <header className="topbar">
@@ -585,7 +594,7 @@ export default function Home() {
     <section className="route-section" id="leaderboard">
       <header className="page-heading">
         <div className="page-heading-main"><div><p className="eyebrow">Market data / leaderboard</p><h1>QUOTE LEADERBOARD</h1><p className="page-heading-description">Cross-chain DEX quotes compared by trade size.</p></div></div>
-        <div className="latest-check"><div><span>LATEST CHECK</span><button className="refresh-button" type="button" onClick={refreshPageData} disabled={pageRefreshing} aria-label="Refresh page data"><i aria-hidden="true">↻</i><span>{pageRefreshing ? "Refreshing" : "Refresh"}</span></button></div><strong>{latestCheckAt ? formatLocalTime(latestCheckAt) : "No completed check"}</strong><small aria-live="polite">{latestCheckAt ? formatAgeLabel(latestCheckAt, now) : "Waiting for first refresh"}</small></div>
+        <div className="latest-check"><div><span>LATEST CHECK</span><button className="refresh-button" type="button" onClick={refreshPageData} disabled={pageRefreshing || refreshCoolingDown} aria-label={refreshCoolingDown ? "Refresh available after cooldown" : "Refresh page data"}><i aria-hidden="true">↻</i><span>{pageRefreshing ? "Refreshing" : refreshCoolingDown ? "Cooldown" : "Refresh"}</span></button></div><strong>{latestCheckAt ? formatLocalTime(latestCheckAt) : "No completed check"}</strong><small aria-live="polite">{latestCheckAt ? formatAgeLabel(latestCheckAt, now) : "Waiting for first refresh"}</small></div>
       </header>
 
       <section className={`leaderboard-filter-panel ${mobileFiltersOpen ? "open" : ""}`}>

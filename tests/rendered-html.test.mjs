@@ -78,6 +78,17 @@ test("route catalog keeps a durable display fallback while protecting benchmark 
   assert.match(collector, /Benchmark collection paused because fresh catalog pricing is unavailable/);
 });
 
+test("SOL routes keep working across the paused THORChain rollout", async () => {
+  const catalog = await readFile(new URL("../lib/routes/catalog.ts", import.meta.url), "utf8");
+  const run = await readFile(new URL("../lib/quotes/run.ts", import.meta.url), "utf8");
+  const pool = await readFile(new URL("../lib/quotes/adapters/pool-protocol.ts", import.meta.url), "utf8");
+  assert.match(catalog, /chainflipId: "Sol", chain: "Solana", symbol: "SOL"/);
+  assert.match(catalog, /"SOL\.SOL": 9/);
+  assert.match(catalog, /\["BTC\.BTC", "SOL\.SOL"\]/);
+  assert.match(run, /BENCHMARK_SOL_ADDRESS/);
+  assert.match(pool, /trading \(\?:is \)\?\(\?:halted\|paused\)/);
+});
+
 test("quote adapters separate expected unavailability from operational errors", async () => {
   const chainflip = await readFile(new URL("../lib/quotes/adapters/chainflip.ts", import.meta.url), "utf8");
   const pool = await readFile(new URL("../lib/quotes/adapters/pool-protocol.ts", import.meta.url), "utf8");

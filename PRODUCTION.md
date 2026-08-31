@@ -1,12 +1,12 @@
 # Production collector
 
-The production collector is designed for 20 fixed routes, seven USD sizes, two
+The production collector is designed for 30 fixed routes, seven USD sizes, two
 execution modes, and one sweep every 30 minutes.
 
 ## Runtime shape
 
-- The half-hour Cron Trigger creates 280 route/size/mode jobs.
-- Jobs are bundled in groups of 20, producing 14 queue messages per sweep.
+- The half-hour Cron Trigger creates 420 route/size/mode jobs.
+- Jobs are bundled in groups of 20, producing 21 queue messages per sweep.
 - Queue messages are processed with four concurrent benchmark workers.
 - D1 stores normalized quote data for 90 days and daily aggregates for 400 days.
 - R2 stores one normalized and one raw gzip archive per queue bundle.
@@ -33,6 +33,11 @@ Configure these Worker secrets or variables:
 - `BENCHMARK_BTC_ADDRESS`
 - `BENCHMARK_EVM_ADDRESS`
 - `BENCHMARK_TRON_ADDRESS`
+- `BENCHMARK_SOL_ADDRESS`
+- `BENCHMARK_LTC_ADDRESS`
+- `BENCHMARK_BCH_ADDRESS`
+- `BENCHMARK_XRP_ADDRESS`
+- `BENCHMARK_DOGE_ADDRESS`
 - `COLLECTOR_ADMIN_TOKEN` only when administrator-triggered single runs are needed
 
 `POST /api/runs` is hidden unless a matching administrator bearer token is

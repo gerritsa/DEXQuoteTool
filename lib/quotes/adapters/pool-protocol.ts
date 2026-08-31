@@ -54,7 +54,7 @@ export async function getPoolProtocolQuote(
 
     if (!response.ok) {
       const message = responseMessage(rawResponse) ?? "Quote unavailable";
-      const expectedUnavailable = response.status === 400 && /insufficient|no (?:pool|route|quote)|not supported|(?:min(?:imum)?|max(?:imum)?) (?:swap )?amount|dust threshold|amount (?:less than|exceeds)/i.test(message);
+      const expectedUnavailable = response.status === 400 && /insufficient|no (?:pool|route|quote)|not supported|(?:min(?:imum)?|max(?:imum)?) (?:swap )?amount|dust threshold|amount (?:less than|exceeds)|trading (?:is )?(?:halted|paused)|chain (?:is )?(?:halted|paused)/i.test(message);
       return { protocol, strategy, status: expectedUnavailable ? "unavailable" : "error", requestStartedAt, responseReceivedAt, responseHttpStatus, responseLatencyMs, requestUrl: url.toString(), errorCode: expectedUnavailable ? "INSUFFICIENT_LIQUIDITY" : `HTTP_${response.status}`, errorMessage: message, rawResponse };
     }
 

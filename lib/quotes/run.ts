@@ -18,6 +18,11 @@ type BenchmarkRuntimeEnv = {
   BENCHMARK_BTC_ADDRESS?: string;
   BENCHMARK_EVM_ADDRESS?: string;
   BENCHMARK_TRON_ADDRESS?: string;
+  BENCHMARK_SOL_ADDRESS?: string;
+  BENCHMARK_LTC_ADDRESS?: string;
+  BENCHMARK_BCH_ADDRESS?: string;
+  BENCHMARK_XRP_ADDRESS?: string;
+  BENCHMARK_DOGE_ADDRESS?: string;
 };
 
 export type BenchmarkRunOptions = { sweepId?: string; bundleIndex?: number };
@@ -67,6 +72,11 @@ function addressForChain(chain: string, values: BenchmarkRuntimeEnv) {
   if (chain === "bitcoin") return values.BENCHMARK_BTC_ADDRESS;
   if (["ethereum", "arbitrum", "avalanche", "base", "bsc"].includes(chain)) return values.BENCHMARK_EVM_ADDRESS;
   if (chain === "tron") return values.BENCHMARK_TRON_ADDRESS;
+  if (chain === "sol") return values.BENCHMARK_SOL_ADDRESS;
+  if (chain === "ltc") return values.BENCHMARK_LTC_ADDRESS;
+  if (chain === "bch") return values.BENCHMARK_BCH_ADDRESS;
+  if (chain === "xrp") return values.BENCHMARK_XRP_ADDRESS;
+  if (chain === "doge") return values.BENCHMARK_DOGE_ADDRESS;
   return undefined;
 }
 
@@ -249,7 +259,7 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
   await ensureBenchmarkSchema();
   const catalog = await getCatalog({ d1: getD1(), allowStale: true, maxStaleMs: benchmarkCatalogGraceMs });
   const route = topThorRoutes(catalog.assets).find((candidate) => candidate.id === routeId);
-  if (!route) throw new Error("Select one of the fixed 20 THORChain routes");
+  if (!route) throw new Error("Select one of the fixed THORChain routes");
   const quoteSize = quoteSizes.find((candidate) => candidate.id === amountId);
   if (!quoteSize) throw new Error("Unknown quote amount");
 

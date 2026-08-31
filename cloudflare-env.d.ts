@@ -9,6 +9,11 @@ declare global {
       BENCHMARK_BTC_ADDRESS?: string;
       BENCHMARK_EVM_ADDRESS?: string;
       BENCHMARK_TRON_ADDRESS?: string;
+      BENCHMARK_SOL_ADDRESS?: string;
+      BENCHMARK_LTC_ADDRESS?: string;
+      BENCHMARK_BCH_ADDRESS?: string;
+      BENCHMARK_XRP_ADDRESS?: string;
+      BENCHMARK_DOGE_ADDRESS?: string;
     }
   }
 }

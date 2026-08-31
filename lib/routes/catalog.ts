@@ -66,6 +66,7 @@ const CHAINFLIP_ASSETS: ChainflipAssetDefinition[] = [
   { chainflipId: "Usdc", chain: "Ethereum", symbol: "USDC", contractAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" },
   { chainflipId: "Eth", chain: "Ethereum", symbol: "ETH" },
   { chainflipId: "Btc", chain: "Bitcoin", symbol: "BTC" },
+  { chainflipId: "Sol", chain: "Solana", symbol: "SOL" },
   { chainflipId: "TrxUsdt", chain: "Tron", symbol: "USDT", contractAddress: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t" },
   { chainflipId: "Usdt", chain: "Ethereum", symbol: "USDT", contractAddress: "0xdAC17F958D2ee523a2206206994597C13D831ec7" },
   { chainflipId: "Trx", chain: "Tron", symbol: "TRX" },
@@ -75,7 +76,12 @@ const chainAliases: Record<string, string> = {
   BTC: "bitcoin", Bitcoin: "bitcoin", btc: "bitcoin",
   ETH: "ethereum", Ethereum: "ethereum", eth: "ethereum",
   AVAX: "avalanche", avax: "avalanche",
+  SOL: "sol", Solana: "sol", sol: "sol",
   TRON: "tron", Tron: "tron", tron: "tron",
+};
+
+const nativeDecimalFallbacks: Record<string, number> = {
+  "SOL.SOL": 9,
 };
 
 function normalizeChain(chain: string) {
@@ -136,6 +142,7 @@ async function buildCatalog() {
 
   const assets: CatalogAsset[] = thorPools.map((pool) => {
     const parsed = parsePoolAsset(pool.asset);
+    const reportedDecimals = Number(pool.nativeDecimal ?? NaN);
     const cfSource = cfSourceAssets.get(parsed.id);
     const cfDestination = cfDestinationAssets.get(parsed.id);
     const nearAsset = nearAssets.get(parsed.id);
@@ -146,7 +153,9 @@ async function buildCatalog() {
       symbol: parsed.symbol,
       thorAsset: pool.asset,
       priceUsd: pool.assetPriceUSD ? Number(pool.assetPriceUSD) : null,
-      decimals: Number(pool.nativeDecimal ?? 8),
+      decimals: Number.isInteger(reportedDecimals) && reportedDecimals >= 0
+        ? reportedDecimals
+        : nativeDecimalFallbacks[pool.asset] ?? 8,
       support: {
         thorchain: { source: true, destination: true, assetId: pool.asset },
         chainflip: { source: Boolean(cfSource), destination: Boolean(cfDestination), assetId: cfSource ?? cfDestination },
@@ -240,24 +249,34 @@ export async function getCatalog(options: CatalogOptions = {}): Promise<CatalogR
 const fixedThorAssetPairs: Array<[string, string]> = [
   ["BTC.BTC", "ETH.ETH"],
   ["ETH.ETH", "BTC.BTC"],
-  ["BTC.BTC", "TRON.TRX"],
-  ["TRON.TRX", "BTC.BTC"],
-  ["ETH.ETH", "TRON.TRX"],
-  ["TRON.TRX", "ETH.ETH"],
   ["BTC.BTC", "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48"],
   ["ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", "BTC.BTC"],
-  ["ETH.ETH", "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48"],
-  ["ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", "ETH.ETH"],
-  ["BTC.BTC", "ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7"],
-  ["ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7", "BTC.BTC"],
-  ["ETH.ETH", "ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7"],
-  ["ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7", "ETH.ETH"],
   ["BTC.BTC", "TRON.USDT-TR7NHQJEKQXGTCI8Q8ZY4PL8OTSZGJLJ6T"],
   ["TRON.USDT-TR7NHQJEKQXGTCI8Q8ZY4PL8OTSZGJLJ6T", "BTC.BTC"],
+  ["BTC.BTC", "ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7"],
+  ["ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7", "BTC.BTC"],
+  ["ETH.ETH", "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48"],
+  ["ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", "ETH.ETH"],
   ["ETH.ETH", "TRON.USDT-TR7NHQJEKQXGTCI8Q8ZY4PL8OTSZGJLJ6T"],
   ["TRON.USDT-TR7NHQJEKQXGTCI8Q8ZY4PL8OTSZGJLJ6T", "ETH.ETH"],
-  ["AVAX.AVAX", "BTC.BTC"],
-  ["BTC.BTC", "AVAX.AVAX"],
+  ["ETH.ETH", "ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7"],
+  ["ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7", "ETH.ETH"],
+  ["BTC.BTC", "LTC.LTC"],
+  ["LTC.LTC", "BTC.BTC"],
+  ["BTC.BTC", "BSC.BNB"],
+  ["BSC.BNB", "BTC.BTC"],
+  ["BTC.BTC", "BCH.BCH"],
+  ["BCH.BCH", "BTC.BTC"],
+  ["BTC.BTC", "XRP.XRP"],
+  ["XRP.XRP", "BTC.BTC"],
+  ["BTC.BTC", "DOGE.DOGE"],
+  ["DOGE.DOGE", "BTC.BTC"],
+  ["BTC.BTC", "SOL.SOL"],
+  ["SOL.SOL", "BTC.BTC"],
+  ["BTC.BTC", "TRON.TRX"],
+  ["TRON.TRX", "BTC.BTC"],
+  ["ETH.ETH", "LTC.LTC"],
+  ["LTC.LTC", "ETH.ETH"],
 ];
 const fixedThorAssets = new Set(fixedThorAssetPairs.flat());
 export const fixedThorRouteCount = fixedThorAssetPairs.length;
@@ -271,11 +290,16 @@ const staticAssetDefinitions: Array<{
 }> = [
   { thorAsset: "BTC.BTC", chain: "bitcoin", symbol: "BTC", decimals: 8, chainflipAssetId: "Bitcoin:BTC" },
   { thorAsset: "ETH.ETH", chain: "ethereum", symbol: "ETH", decimals: 18, chainflipAssetId: "Ethereum:ETH" },
-  { thorAsset: "TRON.TRX", chain: "tron", symbol: "TRX", decimals: 6, chainflipAssetId: "Tron:TRX" },
   { thorAsset: "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", chain: "ethereum", symbol: "USDC", decimals: 6, chainflipAssetId: "Ethereum:USDC" },
   { thorAsset: "ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7", chain: "ethereum", symbol: "USDT", decimals: 6, chainflipAssetId: "Ethereum:USDT" },
   { thorAsset: "TRON.USDT-TR7NHQJEKQXGTCI8Q8ZY4PL8OTSZGJLJ6T", chain: "tron", symbol: "USDT", decimals: 6, chainflipAssetId: "Tron:USDT" },
-  { thorAsset: "AVAX.AVAX", chain: "avalanche", symbol: "AVAX", decimals: 18 },
+  { thorAsset: "LTC.LTC", chain: "ltc", symbol: "LTC", decimals: 8 },
+  { thorAsset: "BSC.BNB", chain: "bsc", symbol: "BNB", decimals: 18 },
+  { thorAsset: "BCH.BCH", chain: "bch", symbol: "BCH", decimals: 8 },
+  { thorAsset: "XRP.XRP", chain: "xrp", symbol: "XRP", decimals: 6 },
+  { thorAsset: "DOGE.DOGE", chain: "doge", symbol: "DOGE", decimals: 8 },
+  { thorAsset: "SOL.SOL", chain: "sol", symbol: "SOL", decimals: 9, chainflipAssetId: "Solana:SOL" },
+  { thorAsset: "TRON.TRX", chain: "tron", symbol: "TRX", decimals: 6, chainflipAssetId: "Tron:TRX" },
 ];
 
 function staticCatalogAssets(): CatalogAsset[] {
@@ -322,6 +346,6 @@ export function resolveFixedThorRoutes(assets: CatalogAsset[], limit = fixedThor
   return { routes, missingRouteIds };
 }
 
-export function topThorRoutes(assets: CatalogAsset[], limit = 20) {
+export function topThorRoutes(assets: CatalogAsset[], limit = fixedThorRouteCount) {
   return resolveFixedThorRoutes(assets, limit).routes;
 }

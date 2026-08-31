@@ -1,4 +1,5 @@
 import type { BenchmarkRequest, NormalizedQuote } from "../types";
+import { readQuoteJsonResponse } from "./response";
 
 type NearQuoteResponse = {
   quote?: {
@@ -15,8 +16,12 @@ type NearQuoteResponse = {
   [key: string]: unknown;
 };
 
-function responseMessage(value: NearQuoteResponse) {
-  return typeof value.message === "string" ? value.message : undefined;
+function isNearQuoteResponse(value: unknown): value is NearQuoteResponse {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function responseMessage(value: unknown) {
+  return isNearQuoteResponse(value) && typeof value.message === "string" ? value.message : undefined;
 }
 
 export async function getNearIntentsQuote(
@@ -51,8 +56,9 @@ export async function getNearIntentsQuote(
     quoteWaitingTimeMs: 5_000,
   };
 
+  const started = Date.now();
+
   try {
-    const started = Date.now();
     const response = await fetch(url, {
       method: "POST",
       signal,
@@ -63,20 +69,28 @@ export async function getNearIntentsQuote(
       },
       body: JSON.stringify(payload),
     });
-    const rawResponse = await response.json() as NearQuoteResponse;
-    const responseReceivedAt = new Date().toISOString();
-    const responseLatencyMs = Date.now() - started;
-    const quote = rawResponse.quote ?? rawResponse;
-    const amountOut = quote.amountOut;
+    const result = await readQuoteJsonResponse(response, started, "NEAR Intents");
+    const { responseReceivedAt, responseHttpStatus, responseLatencyMs, rawResponse } = result;
+
+    if (!result.parsed) {
+      return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt, responseHttpStatus, responseLatencyMs, requestUrl: url, requestPayload: payload, errorCode: response.ok ? "INVALID_RESPONSE" : `HTTP_${response.status}`, errorMessage: result.errorMessage, rawResponse };
+    }
 
     if (!response.ok) {
       const message = responseMessage(rawResponse) ?? "NEAR Intents quote unavailable";
       const expectedUnavailable = response.status === 400 && /no liquidity|insufficient liquidity|no (?:route|quote)|not supported/i.test(message);
-      return { protocol, strategy, status: expectedUnavailable ? "unavailable" : "error", requestStartedAt, responseReceivedAt, responseHttpStatus: response.status, responseLatencyMs, requestUrl: url, requestPayload: payload, errorCode: expectedUnavailable ? "INSUFFICIENT_LIQUIDITY" : `HTTP_${response.status}`, errorMessage: message, rawResponse };
+      return { protocol, strategy, status: expectedUnavailable ? "unavailable" : "error", requestStartedAt, responseReceivedAt, responseHttpStatus, responseLatencyMs, requestUrl: url, requestPayload: payload, errorCode: expectedUnavailable ? "INSUFFICIENT_LIQUIDITY" : `HTTP_${response.status}`, errorMessage: message, rawResponse };
     }
 
+    if (!isNearQuoteResponse(rawResponse)) {
+      return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt, responseHttpStatus, responseLatencyMs, requestUrl: url, requestPayload: payload, errorCode: "INVALID_RESPONSE", errorMessage: "NEAR Intents returned an unexpected JSON value", rawResponse };
+    }
+
+    const quote = rawResponse.quote ?? rawResponse;
+    const amountOut = quote.amountOut;
+
     if (typeof amountOut !== "string") {
-      return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt, responseHttpStatus: response.status, responseLatencyMs, requestUrl: url, requestPayload: payload, errorCode: "INVALID_RESPONSE", errorMessage: "NEAR Intents quote omitted the expected output amount", rawResponse };
+      return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt, responseHttpStatus, responseLatencyMs, requestUrl: url, requestPayload: payload, errorCode: "INVALID_RESPONSE", errorMessage: "NEAR Intents quote omitted the expected output amount", rawResponse };
     }
 
     return {
@@ -89,13 +103,13 @@ export async function getNearIntentsQuote(
       quoteExpiresAt: quote.deadline ?? payload.deadline,
       requestStartedAt,
       responseReceivedAt,
-      responseHttpStatus: response.status,
+      responseHttpStatus,
       responseLatencyMs,
       requestUrl: url,
       requestPayload: payload,
       rawResponse,
     };
   } catch (error) {
-    return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt: new Date().toISOString(), requestUrl: url, requestPayload: payload, errorCode: "REQUEST_FAILED", errorMessage: error instanceof Error ? error.message : "Quote request failed", rawResponse: null };
+    return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt: new Date().toISOString(), responseLatencyMs: Date.now() - started, requestUrl: url, requestPayload: payload, errorCode: "REQUEST_FAILED", errorMessage: error instanceof Error ? error.message : "Quote request failed", rawResponse: null };
   }
 }

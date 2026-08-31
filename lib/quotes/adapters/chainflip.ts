@@ -1,5 +1,6 @@
 import { formatBaseUnits } from "../amounts";
 import type { BenchmarkRequest, NormalizedQuote } from "../types";
+import { readQuoteJsonResponse } from "./response";
 
 type ChainflipQuote = {
   egressAmount?: string;
@@ -14,8 +15,12 @@ function splitAsset(value: string) {
   return { chain: value.slice(0, separator), asset: value.slice(separator + 1) };
 }
 
-function responseMessage(value: ChainflipQuote[] | Record<string, unknown>) {
-  if (Array.isArray(value)) return undefined;
+function isChainflipQuote(value: unknown): value is ChainflipQuote {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function responseMessage(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   return typeof value.message === "string" ? value.message : undefined;
 }
 
@@ -46,13 +51,30 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
   url.searchParams.set("isOnChain", "false");
   url.searchParams.set("dcaV2Enabled", String(request.mode === "optimized"));
 
+  const started = Date.now();
+
   try {
-    const started = Date.now();
     const response = await fetch(url, { signal, headers: { accept: "application/json", "X-Chainflip-Sdk-Version": "2.2.1" } });
-    const rawResponse = await response.json() as ChainflipQuote[] | Record<string, unknown>;
-    const responseReceivedAt = new Date().toISOString();
-    const responseLatencyMs = Date.now() - started;
-    const quotes = Array.isArray(rawResponse) ? rawResponse : [];
+    const result = await readQuoteJsonResponse(response, started, "Chainflip");
+    const { responseReceivedAt, responseHttpStatus, responseLatencyMs, rawResponse } = result;
+
+    if (!result.parsed) {
+      return {
+        protocol,
+        strategy: requestedStrategy,
+        status: "error",
+        requestStartedAt,
+        responseReceivedAt,
+        responseHttpStatus,
+        responseLatencyMs,
+        requestUrl: url.toString(),
+        errorCode: response.ok ? "INVALID_RESPONSE" : `HTTP_${response.status}`,
+        errorMessage: result.errorMessage,
+        rawResponse,
+      };
+    }
+
+    const quotes = Array.isArray(rawResponse) ? rawResponse.filter(isChainflipQuote) : [];
     const requestedType = request.mode === "optimized" ? "DCA" : "REGULAR";
     const quote = quotes.find((candidate) => candidate.type === requestedType)
       ?? (request.mode === "optimized" ? quotes.find((candidate) => candidate.type === "REGULAR") : undefined);
@@ -67,7 +89,7 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
         status: expectedUnavailable ? "unavailable" : "error",
         requestStartedAt,
         responseReceivedAt,
-        responseHttpStatus: response.status,
+        responseHttpStatus,
         responseLatencyMs,
         requestUrl: url.toString(),
         errorCode: expectedUnavailable ? "INSUFFICIENT_LIQUIDITY" : `HTTP_${response.status}`,
@@ -84,7 +106,7 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
         status: "unavailable",
         requestStartedAt,
         responseReceivedAt,
-        responseHttpStatus: response.status,
+        responseHttpStatus,
         responseLatencyMs,
         requestUrl: url.toString(),
         errorCode: strategyUnavailable ? "STRATEGY_UNAVAILABLE" : "NO_USABLE_QUOTE",
@@ -100,7 +122,7 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
         status: "error",
         requestStartedAt,
         responseReceivedAt,
-        responseHttpStatus: response.status,
+        responseHttpStatus,
         responseLatencyMs,
         requestUrl: url.toString(),
         errorCode: "INVALID_RESPONSE",
@@ -118,7 +140,7 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
       estimatedDurationSeconds: quote.estimatedDurationSeconds,
       requestStartedAt,
       responseReceivedAt,
-      responseHttpStatus: response.status,
+      responseHttpStatus,
       responseLatencyMs,
       requestUrl: url.toString(),
       rawResponse,
@@ -130,6 +152,7 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
       status: "error",
       requestStartedAt,
       responseReceivedAt: new Date().toISOString(),
+      responseLatencyMs: Date.now() - started,
       requestUrl: url.toString(),
       errorCode: "REQUEST_FAILED",
       errorMessage: error instanceof Error ? error.message : "Quote request failed",

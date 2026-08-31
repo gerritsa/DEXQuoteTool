@@ -1,6 +1,7 @@
 import { convertAtomicDecimals, formatBaseUnits } from "../amounts";
 import { strategyFor } from "../protocols";
 import type { BenchmarkRequest, NormalizedQuote, ProtocolId } from "../types";
+import { readQuoteJsonResponse } from "./response";
 
 type PoolProtocolId = Extract<ProtocolId, "thorchain" | "maya">;
 
@@ -8,6 +9,14 @@ const endpoints: Record<PoolProtocolId, string> = {
   thorchain: "https://gateway.liquify.com/chain/thorchain_api/thorchain/quote/swap",
   maya: "https://mayanode.mayachain.info/mayachain/quote/swap",
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function responseMessage(value: unknown) {
+  return isRecord(value) && typeof value.message === "string" ? value.message : undefined;
+}
 
 export async function getPoolProtocolQuote(
   protocol: PoolProtocolId,
@@ -28,23 +37,33 @@ export async function getPoolProtocolQuote(
   url.searchParams.set("to_asset", toAsset);
   url.searchParams.set("amount", convertAtomicDecimals(request.sourceAmountBaseUnits, request.source.decimals, 8));
   url.searchParams.set("liquidity_tolerance_bps", String(request.slippageToleranceBps));
-  url.searchParams.set("streaming_interval", "1");
+  const streamingInterval = protocol === "thorchain" && request.mode === "optimized" ? "0" : "1";
+  url.searchParams.set("streaming_interval", streamingInterval);
   url.searchParams.set("streaming_quantity", request.mode === "optimized" ? "0" : "1");
 
+  const started = Date.now();
+
   try {
-    const started = Date.now();
     const response = await fetch(url, { signal, headers: { accept: "application/json" } });
-    const rawResponse = await response.json() as Record<string, unknown>;
-    const responseReceivedAt = new Date().toISOString();
-    const responseLatencyMs = Date.now() - started;
+    const result = await readQuoteJsonResponse(response, started, protocol === "thorchain" ? "THORChain" : "Maya");
+    const { responseReceivedAt, responseHttpStatus, responseLatencyMs, rawResponse } = result;
+
+    if (!result.parsed) {
+      return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt, responseHttpStatus, responseLatencyMs, requestUrl: url.toString(), errorCode: response.ok ? "INVALID_RESPONSE" : `HTTP_${response.status}`, errorMessage: result.errorMessage, rawResponse };
+    }
+
     if (!response.ok) {
-      const message = String(rawResponse.message ?? "Quote unavailable");
+      const message = responseMessage(rawResponse) ?? "Quote unavailable";
       const expectedUnavailable = response.status === 400 && /insufficient|no (?:pool|route|quote)|not supported|(?:min(?:imum)?|max(?:imum)?) (?:swap )?amount|dust threshold|amount (?:less than|exceeds)/i.test(message);
-      return { protocol, strategy, status: expectedUnavailable ? "unavailable" : "error", requestStartedAt, responseReceivedAt, responseHttpStatus: response.status, responseLatencyMs, requestUrl: url.toString(), errorCode: expectedUnavailable ? "INSUFFICIENT_LIQUIDITY" : `HTTP_${response.status}`, errorMessage: message, rawResponse };
+      return { protocol, strategy, status: expectedUnavailable ? "unavailable" : "error", requestStartedAt, responseReceivedAt, responseHttpStatus, responseLatencyMs, requestUrl: url.toString(), errorCode: expectedUnavailable ? "INSUFFICIENT_LIQUIDITY" : `HTTP_${response.status}`, errorMessage: message, rawResponse };
+    }
+
+    if (!isRecord(rawResponse)) {
+      return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt, responseHttpStatus, responseLatencyMs, requestUrl: url.toString(), errorCode: "INVALID_RESPONSE", errorMessage: "Quote endpoint returned an unexpected JSON value", rawResponse };
     }
 
     if (typeof rawResponse.expected_amount_out !== "string") {
-      return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt, responseHttpStatus: response.status, responseLatencyMs, requestUrl: url.toString(), errorCode: "INVALID_RESPONSE", errorMessage: "Quote response omitted the expected output amount", rawResponse };
+      return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt, responseHttpStatus, responseLatencyMs, requestUrl: url.toString(), errorCode: "INVALID_RESPONSE", errorMessage: "Quote response omitted the expected output amount", rawResponse };
     }
 
     const inboundSeconds = Number(rawResponse.inbound_confirmation_seconds ?? 0);
@@ -64,12 +83,12 @@ export async function getPoolProtocolQuote(
       requestStartedAt,
       responseReceivedAt,
       quoteExpiresAt: typeof rawResponse.expiry === "number" ? new Date(rawResponse.expiry * 1000).toISOString() : undefined,
-      responseHttpStatus: response.status,
+      responseHttpStatus,
       responseLatencyMs,
       requestUrl: url.toString(),
       rawResponse,
     };
   } catch (error) {
-    return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt: new Date().toISOString(), requestUrl: url.toString(), errorCode: "REQUEST_FAILED", errorMessage: error instanceof Error ? error.message : "Quote request failed", rawResponse: null };
+    return { protocol, strategy, status: "error", requestStartedAt, responseReceivedAt: new Date().toISOString(), responseLatencyMs: Date.now() - started, requestUrl: url.toString(), errorCode: "REQUEST_FAILED", errorMessage: error instanceof Error ? error.message : "Quote request failed", rawResponse: null };
   }
 }

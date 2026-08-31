@@ -57,7 +57,7 @@ footer{margin-top:115px;padding:42px clamp(22px,5vw,76px);border-top:1px solid v
 .segmented.light{background:var(--soft)}
 .segmented.light button.selected{background:var(--chrome);color:var(--on-chrome)}
 .trend-visual .grid-line{stroke:var(--line)}
-.trend-visual svg .axis-title{fill:var(--ink);font-size:7px;font-weight:900;letter-spacing:.08em}
+.trend-visual svg .axis-title{fill:var(--ink);font-size:7px;font-weight:900;letter-spacing:.08em}.trend-point.interactive{cursor:pointer;outline:none}.trend-point.interactive:focus .trend-point-dot{stroke:var(--ink);stroke-width:2;vector-effect:non-scaling-stroke}
 .trend-note{background:var(--soft)}
 .request-list details{background:var(--soft)}
 .request-list summary strong.winner{color:var(--mint);background:color-mix(in srgb,var(--mint) 14%,transparent)}

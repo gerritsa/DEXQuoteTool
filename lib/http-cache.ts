@@ -33,6 +33,10 @@ export function canonicalPublicCacheUrl(request: Request) {
     ]).toString();
   }
   if (url.pathname === "/api/runs") {
+    const requestedRunId = Number(url.searchParams.get("runId"));
+    if (Number.isInteger(requestedRunId) && requestedRunId > 0) {
+      return replaceSearch(url, [["runId", String(requestedRunId)]]).toString();
+    }
     return replaceSearch(url, [
       ["routeId", url.searchParams.get("routeId")?.trim() ?? ""],
       ["amountId", url.searchParams.get("amountId")?.trim() ?? ""],

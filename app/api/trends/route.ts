@@ -199,12 +199,12 @@ export async function GET(request: Request) {
     const pointGroups = pointMode === "comparison"
       ? [...Map.groupBy(rows, (row) => row.runId).values()]
           .sort((a, b) => Number(a[0]?.timestamp) - Number(b[0]?.timestamp))
-          .map((runRows) => ({ timestamp: Number(runRows[0]?.timestamp), rows: runRows }))
+          .map((runRows) => ({ timestamp: Number(runRows[0]?.timestamp), runId: runRows[0]?.runId ?? null, rows: runRows }))
       : Array.from({ length: Math.floor((endAt - firstBucketAt) / bucketMs) + 1 }, (_, index) => {
           const timestamp = firstBucketAt + index * bucketMs;
-          return { timestamp, rows: rows.filter((row) => Math.floor(row.timestamp / bucketMs) * bucketMs === timestamp) };
+          return { timestamp, runId: null, rows: rows.filter((row) => Math.floor(row.timestamp / bucketMs) * bucketMs === timestamp) };
         });
-    const buckets = pointGroups.map(({ timestamp, rows: pointRows }) => {
+    const buckets = pointGroups.map(({ timestamp, runId, rows: pointRows }) => {
       const points = selectedProtocols.map((protocol) => {
         const protocolRows = pointRows.filter((row) => row.protocol === protocol);
         const pointRuns = new Set(pointRows.map((row) => row.runId)).size;
@@ -215,7 +215,7 @@ export async function GET(request: Request) {
           winRate: pointRuns ? protocolRows.reduce((sum, row) => sum + row.winCredit, 0) / pointRuns : null,
         };
       });
-      return { timestamp, points };
+      return { timestamp, runId, points };
     });
 
     return writePublicCache(request, Response.json({

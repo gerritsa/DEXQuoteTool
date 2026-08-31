@@ -3,6 +3,7 @@ import { and, desc, eq, isNotNull, inArray } from "drizzle-orm";
 import { ensureBenchmarkSchema, getD1, getDb } from "../../../db";
 import { benchmarkRuns, protocolQuotes } from "../../../db/schema";
 import { runSelectedBenchmark, type BenchmarkArchiveRecord } from "../../../lib/quotes/run";
+import { rawArchiveRetentionMs } from "../../../lib/quotes/retention";
 import type { ExecutionMode } from "../../../lib/quotes/types";
 import { publicCacheHeaders, readPublicCache, writePublicCache } from "../../../lib/http-cache";
 
@@ -59,7 +60,7 @@ async function archivedPayloads(run: StoredRun) {
 }
 
 async function availableNavigation(run: StoredRun) {
-  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const cutoff = new Date(Date.now() - rawArchiveRetentionMs).toISOString();
   const result = await getD1().prepare(`
     WITH available_runs AS (
       SELECT r.id AS runId, r.initiated_at AS initiatedAt
@@ -131,18 +132,20 @@ export async function GET(request: Request) {
           .orderBy(desc(benchmarkRuns.initiatedAt), desc(benchmarkRuns.id)).limit(1);
     if (!run) return writePublicCache(request, Response.json({ run: null, quotes: [] }, { headers: publicCacheHeaders(60) }));
 
-    const quotes = await db.select().from(protocolQuotes)
-      .where(eq(protocolQuotes.runId, run.id))
-      .orderBy(protocolQuotes.requestStartedAt, protocolQuotes.id);
-    const payloads = await getD1().prepare(`
-      SELECT protocol, request_url AS requestUrl, request_payload_json AS requestPayloadJson,
-        raw_response_json AS rawResponseJson, error_message AS payloadErrorMessage
-      FROM latest_quote_payloads
-      WHERE run_id = ? AND pair_id = ? AND amount_id = ? AND mode = ?
-    `).bind(run.id, run.pairId, run.amountId, run.mode).all<StoredPayload>();
+    const [quotes, payloads, archived, navigation] = await Promise.all([
+      db.select().from(protocolQuotes)
+        .where(eq(protocolQuotes.runId, run.id))
+        .orderBy(protocolQuotes.requestStartedAt, protocolQuotes.id),
+      getD1().prepare(`
+        SELECT protocol, request_url AS requestUrl, request_payload_json AS requestPayloadJson,
+          raw_response_json AS rawResponseJson, error_message AS payloadErrorMessage
+        FROM latest_quote_payloads
+        WHERE run_id = ? AND pair_id = ? AND amount_id = ? AND mode = ?
+      `).bind(run.id, run.pairId, run.amountId, run.mode).all<StoredPayload>(),
+      hasRunId ? archivedPayloads(run) : Promise.resolve({ available: false, payloads: new Map<string, StoredPayload>() }),
+      availableNavigation(run),
+    ]);
     const payloadByProtocol = new Map(payloads.results.map((payload) => [payload.protocol, payload]));
-    const archived = hasRunId ? await archivedPayloads(run) : { available: false, payloads: new Map<string, StoredPayload>() };
-    const navigation = await availableNavigation(run);
     return writePublicCache(request, Response.json({
       run,
       rawDetailsAvailable: payloads.results.length > 0 || archived.available,

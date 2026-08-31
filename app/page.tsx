@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { quoteSizes, type QuoteSize } from "../lib/quotes/sizes";
+import { rawArchiveRetentionDays } from "../lib/quotes/retention";
 
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 type ViewWindow = "now" | "7d" | "14d" | "30d";
@@ -349,7 +350,7 @@ function RequestDetails({ runDetails, runLoading, selectedSize, historical = fal
       <p>Captured {formatTime(runDetails.run.initiatedAt)} · ${runDetails.run.sourceAmountUsd.toLocaleString()} exact input · synchronized within {runDetails.run.maxRequestSkewMs ?? "—"} ms</p>
       <nav className="request-history-nav" aria-label="Raw quote history">
         <button type="button" disabled={runLoading || !runDetails.navigation?.previous} onClick={() => runDetails.navigation?.previous && onNavigate(runDetails.navigation.previous.runId)} title={runDetails.navigation?.previous ? `Previous batch: ${formatTime(runDetails.navigation.previous.initiatedAt)}` : "No earlier raw batch available"}>← Previous</button>
-        <span><b>{historical ? "Archived batch" : "Latest batch"}</b><small>Raw history is retained for 7 days</small></span>
+        <span><b>{historical ? "Archived batch" : "Latest batch"}</b><small>Raw history is retained for {rawArchiveRetentionDays} days</small></span>
         <button type="button" disabled={runLoading || !runDetails.navigation?.next} onClick={() => runDetails.navigation?.next && onNavigate(runDetails.navigation.next.runId)} title={runDetails.navigation?.next ? `Next batch: ${formatTime(runDetails.navigation.next.initiatedAt)}` : "No newer raw batch available"}>Next →</button>
       </nav>
       {runDetails.rawDetailsAvailable === false && <p>Raw payloads are unavailable for this batch. Normalized quote results are still shown below.</p>}
@@ -427,7 +428,7 @@ export default function Home() {
   const [runLoading, setRunLoading] = useState(false);
   const [auditDetails, setAuditDetails] = useState<RunResponse | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
-  const [auditHistorical, setAuditHistorical] = useState(false);
+  const [auditRunId, setAuditRunId] = useState<number | null>(null);
   const [requestsOpen, setRequestsOpen] = useState(false);
   const [trendDays, setTrendDays] = useState<TrendDays>(1);
   const [trend, setTrend] = useState<TrendResponse | null>(null);
@@ -565,6 +566,7 @@ export default function Home() {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       auditRequest.current?.abort();
+      auditRequest.current = null;
       setAuditLoading(false);
       setRequestsOpen(false);
     };
@@ -584,6 +586,10 @@ export default function Home() {
 
   function inspect(route: Route, size: QuoteSize) {
     auditRequest.current?.abort();
+    auditRequest.current = null;
+    setAuditRunId(null);
+    setAuditDetails(null);
+    setAuditLoading(false);
     setSelectedRoute(route);
     setSelectedSize(size);
     if (viewWindow !== "now") setTrendDays(Number(viewWindow.slice(0, -1)) as TrendDays);
@@ -598,15 +604,22 @@ export default function Home() {
 
   function openLatestDetails() {
     auditRequest.current?.abort();
-    setAuditHistorical(false);
+    auditRequest.current = null;
+    setAuditRunId(null);
+    setAuditDetails(null);
+    setAuditLoading(false);
     setRequestsOpen(true);
   }
 
   function navigateRunDetails(runId: number) {
+    if (runId === runDetails?.run?.id) {
+      openLatestDetails();
+      return;
+    }
     auditRequest.current?.abort();
     const controller = new AbortController();
     auditRequest.current = controller;
-    setAuditHistorical(true);
+    setAuditRunId(runId);
     setAuditDetails(null);
     setAuditLoading(true);
     setRequestsOpen(true);
@@ -614,19 +627,20 @@ export default function Home() {
       .then(async (response) => {
         const data = await response.json() as RunResponse;
         if (!response.ok) throw new Error(data.error ?? "Historical quote details unavailable");
-        if (!controller.signal.aborted) {
-          setAuditDetails(data);
-          setAuditHistorical(data.run?.id !== runDetails?.run?.id);
-        }
+        if (!controller.signal.aborted) setAuditDetails(data);
       })
       .catch((error) => {
         if (!controller.signal.aborted) setAuditDetails({ run: null, quotes: [], error: error instanceof Error ? error.message : "Historical quote details unavailable" });
       })
-      .finally(() => { if (!controller.signal.aborted) setAuditLoading(false); });
+      .finally(() => {
+        if (!controller.signal.aborted) setAuditLoading(false);
+        if (auditRequest.current === controller) auditRequest.current = null;
+      });
   }
 
   function closeRequestDrawer() {
     auditRequest.current?.abort();
+    auditRequest.current = null;
     setAuditLoading(false);
     setRequestsOpen(false);
   }
@@ -736,7 +750,7 @@ export default function Home() {
         <button className="request-drawer-dismiss" onClick={closeRequestDrawer} aria-label="Close quote details" />
         <aside className="request-drawer" role="dialog" aria-modal="true" aria-labelledby="request-drawer-title">
           <header><div><p className="eyebrow">Quote audit</p><h2 id="request-drawer-title">{selectedRoute ? `${selectedRoute.source.symbol} → ${selectedRoute.destination.symbol}` : "Quote details"}</h2></div><button onClick={closeRequestDrawer} aria-label="Close quote details">×</button></header>
-          <RequestDetails runDetails={auditHistorical ? auditDetails : runDetails} runLoading={auditHistorical ? auditLoading : runLoading} selectedSize={selectedSize} historical={auditHistorical} onNavigate={navigateRunDetails} />
+          <RequestDetails runDetails={auditRunId == null ? runDetails : auditDetails} runLoading={auditRunId == null ? runLoading : auditLoading} selectedSize={selectedSize} historical={auditRunId != null} onNavigate={navigateRunDetails} />
         </aside>
       </div>}
     </section>

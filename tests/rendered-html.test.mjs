@@ -218,10 +218,11 @@ test("route analysis keeps the latest synchronized DEX outputs visible", async (
 test("the raw details drawer navigates retained quote batches", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const runs = await readFile(new URL("../app/api/runs/route.ts", import.meta.url), "utf8");
+  const retention = await readFile(new URL("../lib/quotes/retention.ts", import.meta.url), "utf8");
   assert.match(page, /function navigateRunDetails/);
   assert.match(page, /← Previous/);
   assert.match(page, /Next →/);
-  assert.match(page, /Raw history is retained for 7 days/);
+  assert.match(page, /Raw history is retained for \{rawArchiveRetentionDays\} days/);
   assert.doesNotMatch(page, /onInspectRun/);
   assert.match(runs, /raw_archive_key AS rawArchiveKey/);
   assert.match(runs, /archiveBucket\.get\(bundle\.rawArchiveKey\)/);
@@ -231,6 +232,8 @@ test("the raw details drawer navigates retained quote batches", async () => {
   assert.match(runs, /WITH available_runs AS/);
   assert.match(runs, /previous_run AS/);
   assert.match(runs, /next_run AS/);
+  assert.match(runs, /Date\.now\(\) - rawArchiveRetentionMs/);
+  assert.match(retention, /rawArchiveRetentionDays = 7/);
 });
 
 test("leaderboard uses THORChain green and compact unranked asset paths", async () => {

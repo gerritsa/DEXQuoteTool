@@ -152,6 +152,14 @@ const partners: Array<{ id: PartnerId; name: string; cellName: string; color: st
   { id: "near-intents", name: "NEAR", cellName: "NEAR", color: "var(--near-series)", logo: "/partners/near.svg" },
 ];
 
+function chainLabel(chain: string) {
+  return chain.replace(/(^|[-_ ])\w/g, (value) => value.toUpperCase());
+}
+
+function routeMatchesAssets(route: Route, selected: ReadonlySet<string>) {
+  return selected.size === 0 || selected.has(route.source.id) || selected.has(route.destination.id);
+}
+
 function PartnerMark({ id, muted = false }: { id: PartnerId; muted?: boolean }) {
   const partner = partners.find((item) => item.id === id)!;
   return <span className={`partner-mark logo-${id} ${muted ? "muted" : ""}`} role="img" aria-label={partner.name} title={partner.name}><img src={partner.logo} alt="" /></span>;
@@ -418,6 +426,7 @@ export default function Home() {
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [enabledProtocols, setEnabledProtocols] = useState<PartnerId[]>(() => partners.filter((partner) => !partner.disabled).map((partner) => partner.id));
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("optimized");
   const [viewWindow, setViewWindow] = useState<ViewWindow>("now");
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
@@ -444,6 +453,23 @@ export default function Home() {
   const auditRequest = useRef<AbortController | null>(null);
   const activePartners = useMemo(() => partners.filter((partner) => enabledProtocols.includes(partner.id)), [enabledProtocols]);
   const protocolParam = enabledProtocols.join(",");
+  const availableAssets = useMemo(() => Array.from(new Map((catalog?.routes ?? [])
+    .flatMap((route) => [route.source, route.destination])
+    .map((asset) => [asset.id, asset])).values())
+    .sort((left, right) => left.symbol.localeCompare(right.symbol) || left.chain.localeCompare(right.chain)), [catalog?.routes]);
+  const filteredRoutes = useMemo(() => {
+    const routes = catalog?.routes ?? [];
+    const selected = new Set(selectedAssetIds);
+    return routes.filter((route) => routeMatchesAssets(route, selected));
+  }, [catalog?.routes, selectedAssetIds]);
+  const assetSummary = selectedAssetIds.length === 0
+    ? "All assets"
+    : selectedAssetIds.length <= 2
+      ? selectedAssetIds.map((id) => {
+        const asset = availableAssets.find((item) => item.id === id);
+        return asset ? `${asset.symbol} · ${chainLabel(asset.chain)}` : id;
+      }).join(" + ")
+      : `${selectedAssetIds.length} assets`;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -655,6 +681,18 @@ export default function Home() {
     });
   }
 
+  function toggleAsset(assetId: string) {
+    const next = selectedAssetIds.includes(assetId)
+      ? selectedAssetIds.length === 1 ? [] : selectedAssetIds.filter((item) => item !== assetId)
+      : availableAssets.map((asset) => asset.id).filter((id) => id === assetId || selectedAssetIds.includes(id));
+    const normalized = next.length === availableAssets.length ? [] : next;
+    const selected = new Set(normalized);
+    setSelectedAssetIds(normalized);
+    setSelectedRoute((current) => current && routeMatchesAssets(current, selected)
+      ? current
+      : (catalog?.routes ?? []).find((route) => routeMatchesAssets(route, selected)) ?? null);
+  }
+
   function toggleTheme() {
     const next: Theme = theme === "dark" ? "light" : "dark";
     setTheme(next);
@@ -686,9 +724,10 @@ export default function Home() {
       </header>
 
       <section className={`leaderboard-filter-panel ${mobileFiltersOpen ? "open" : ""}`}>
-        <button className="leaderboard-filter-summary" type="button" onClick={() => setMobileFiltersOpen((current) => !current)} aria-expanded={mobileFiltersOpen} aria-controls="leaderboard-filters"><span><b>Ranking settings</b><small>{activePartners.length} protocols · {executionLabel(executionMode)} · {viewWindow === "now" ? "Latest" : viewWindow}</small></span><strong>Filters</strong></button>
+        <button className="leaderboard-filter-summary" type="button" onClick={() => setMobileFiltersOpen((current) => !current)} aria-expanded={mobileFiltersOpen} aria-controls="leaderboard-filters"><span><b>Ranking settings</b><small>{assetSummary} · {activePartners.length} protocols · {executionLabel(executionMode)} · {viewWindow === "now" ? "Latest" : viewWindow}</small></span><strong>Filters</strong></button>
         <div className="filter-bar leaderboard-tools" id="leaderboard-filters">
           <fieldset className="protocol-filter"><legend>Compare protocols</legend><div>{partners.map((partner) => <button key={partner.id} className={`${enabledProtocols.includes(partner.id) ? "selected" : ""} ${partner.disabled ? "disabled" : ""}`} onClick={() => toggleProtocol(partner.id)} aria-pressed={enabledProtocols.includes(partner.id)} disabled={Boolean(partner.disabled) || (enabledProtocols.length <= 2 && enabledProtocols.includes(partner.id))}><PartnerMark id={partner.id} muted={!enabledProtocols.includes(partner.id)} /><span>{partner.name}{partner.disabled ? " · DISABLED" : ""}</span></button>)}</div><small>Choose at least two. Maya is disabled while the protocol is halted.</small></fieldset>
+          <fieldset className="asset-filter"><legend>Assets</legend><div className="filter-chip-group"><button type="button" className={`asset-filter-chip all-assets ${selectedAssetIds.length === 0 ? "selected" : ""}`} onClick={() => setSelectedAssetIds([])} aria-pressed={selectedAssetIds.length === 0}><span><b>All</b><small>assets</small></span></button>{availableAssets.map((asset) => <button type="button" key={asset.id} className={`asset-filter-chip ${selectedAssetIds.includes(asset.id) ? "selected" : ""}`} onClick={() => toggleAsset(asset.id)} aria-pressed={selectedAssetIds.includes(asset.id)} aria-label={`Filter routes by ${asset.symbol} on ${asset.chain}`}><AssetMark asset={asset} /><span><b>{asset.symbol}</b><small>{chainLabel(asset.chain)}</small></span></button>)}</div><small className="filter-helper">{filteredRoutes.length} of {catalog?.routes.length ?? 0} routes · Matches either endpoint.</small></fieldset>
           <fieldset><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Streaming/DCA</button><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Standard swap</button></div></fieldset>
           <fieldset><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Latest check" : window.replace("d", " days")}</button>)}</div></fieldset>
         </div>
@@ -702,7 +741,7 @@ export default function Home() {
       {catalog?.error ? <div className="error-state"><b>Route catalog unavailable</b><span>{catalog.error}</span></div> : <div className={`leaderboard-wrap ${loading || comparisonLoading ? "loading" : ""}`}>
         <table className="leaderboard-table">
           <thead><tr><th>Route / asset pair</th>{quoteSizes.map((size) => <th key={size.id}>{size.label}</th>)}</tr></thead>
-          <tbody>{(catalog?.routes ?? []).map((route) => <tr key={route.id}>
+          <tbody>{filteredRoutes.map((route) => <tr key={route.id}>
             <th><button className="route-cell" onClick={() => inspect(route, selectedSize)}><LeaderboardRoutePath route={route} /><span className="coverage-dots">{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!route.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</span></button></th>
             {quoteSizes.map((size) => <td key={size.id}><button className="result-button" onClick={() => inspect(route, size)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol} at ${size.label}`}><ComparisonResult cell={cells.get(`${route.id}::${size.id}`)} window={viewWindow} now={now} /></button></td>)}
           </tr>)}</tbody>
@@ -710,9 +749,10 @@ export default function Home() {
         <div className="mobile-route-list" id="leaderboard-results" aria-label="Mobile route leaderboard">
           <header className="mobile-leaderboard-header"><div><b>Ranked routes</b><small>Choose a trade size</small></div><div className="mobile-leaderboard-sizes" role="group" aria-label="Trade size for mobile leaderboard">{quoteSizes.map((size) => <button key={size.id} className={selectedSize.id === size.id ? "selected" : ""} onClick={() => setSelectedSize(size)} aria-pressed={selectedSize.id === size.id}>{size.label}</button>)}</div></header>
           {loading && <div className="mobile-route-loading" role="status">Loading ranked routes…</div>}
-          {(catalog?.routes ?? []).map((route) => <MobileRouteCard key={route.id} route={route} selectedSize={selectedSize} cells={cells} viewWindow={viewWindow} now={now} activePartnerCount={activePartners.length} onInspect={inspect} />)}
+          {filteredRoutes.map((route) => <MobileRouteCard key={route.id} route={route} selectedSize={selectedSize} cells={cells} viewWindow={viewWindow} now={now} activePartnerCount={activePartners.length} onInspect={inspect} />)}
         </div>
         {!loading && catalog?.routes.length === 0 && <div className="empty-table">No fixed routes are available.</div>}
+        {!loading && Boolean(catalog?.routes.length) && filteredRoutes.length === 0 && <div className="empty-table">No routes contain the selected assets.</div>}
       </div>}
     </section>
 

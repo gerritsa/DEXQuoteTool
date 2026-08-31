@@ -14,6 +14,7 @@ WITH bucketed_runs AS (
     ) AS bucket_start
   FROM benchmark_runs r
   WHERE unixepoch(r.initiated_at) >= unixepoch('now', '-8 days')
+    AND r.oracle_captured_at IS NOT NULL
     AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
 )
 SELECT
@@ -29,12 +30,14 @@ SELECT
     'quotes', json(COALESCE((
       SELECT json_group_array(json_object(
         'protocol', q.protocol,
-        'output', CAST(q.expected_output_formatted AS REAL)
+        'output', CAST(q.expected_output_formatted AS REAL),
+        'oracleGapBps', q.oracle_gap_bps
       ))
       FROM protocol_quotes q
       WHERE q.run_id = bucketed_runs.id
         AND q.status = 'quoted'
         AND CAST(q.expected_output_formatted AS REAL) > 0
+        AND q.oracle_gap_bps IS NOT NULL
     ), '[]'))
   )),
   MAX(initiated_at)
@@ -54,6 +57,7 @@ WITH bucketed_runs AS (
     ) AS bucket_start
   FROM benchmark_runs r
   WHERE unixepoch(r.initiated_at) >= unixepoch('now', '-32 days')
+    AND r.oracle_captured_at IS NOT NULL
     AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
 )
 SELECT
@@ -69,12 +73,14 @@ SELECT
     'quotes', json(COALESCE((
       SELECT json_group_array(json_object(
         'protocol', q.protocol,
-        'output', CAST(q.expected_output_formatted AS REAL)
+        'output', CAST(q.expected_output_formatted AS REAL),
+        'oracleGapBps', q.oracle_gap_bps
       ))
       FROM protocol_quotes q
       WHERE q.run_id = bucketed_runs.id
         AND q.status = 'quoted'
         AND CAST(q.expected_output_formatted AS REAL) > 0
+        AND q.oracle_gap_bps IS NOT NULL
     ), '[]'))
   )),
   MAX(initiated_at)

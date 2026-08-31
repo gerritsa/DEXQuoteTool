@@ -29,6 +29,8 @@ type CatalogStateRow = {
   lastError: string | null;
 };
 
+type OracleHealthRow = { runs: number; referencedRuns: number };
+
 function parseMissingRoutes(value: string | null) {
   try {
     const parsed = value ? JSON.parse(value) : [];
@@ -82,6 +84,12 @@ export async function GET() {
       GROUP BY q.protocol
       ORDER BY q.protocol
     `).bind(quoteCutoff).all<ProtocolHealthRow>();
+    const oracleHealth = await d1.prepare(`
+      SELECT COUNT(*) AS runs,
+        SUM(CASE WHEN oracle_captured_at IS NOT NULL THEN 1 ELSE 0 END) AS referencedRuns
+      FROM benchmark_runs
+      WHERE initiated_at >= ? AND completed_at IS NOT NULL
+    `).bind(quoteCutoff).first<OracleHealthRow>();
     const catalogState = await d1.prepare(`
       SELECT refreshed_at AS refreshedAt, last_attempt_at AS lastAttemptAt, last_error AS lastError
       FROM catalog_state WHERE id = 'primary'
@@ -143,6 +151,13 @@ export async function GET() {
         latestResponseAt: partner.latestResponseAt,
       };
     });
+    const oracleRuns = Number(oracleHealth?.runs ?? 0);
+    const oracleReferencedRuns = Number(oracleHealth?.referencedRuns ?? 0);
+    const oracleCoverage = oracleRuns ? oracleReferencedRuns / oracleRuns : 0;
+    if (oracleRuns >= 10 && oracleCoverage < 0.9) {
+      if (status === "healthy") status = "degraded";
+      warnings.push("THORChain oracle coverage fell below 90% over the last two hours.");
+    }
 
     return Response.json({
       status,
@@ -161,6 +176,11 @@ export async function GET() {
       } : null,
       minutesSinceTerminalSweep: minutesSinceTerminal,
       partners,
+      oracle: {
+        runs: oracleRuns,
+        referencedRuns: oracleReferencedRuns,
+        coverage: oracleCoverage,
+      },
       catalog: catalogState ? {
         status: catalogState.lastError ? collectionPaused ? "paused" : "stored" : "fresh",
         refreshedAt: catalogState.refreshedAt,

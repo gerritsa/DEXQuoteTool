@@ -41,15 +41,16 @@ type ComparisonCell = {
   marginBps?: number | null;
   tie?: boolean;
   successfulQuotes?: number;
-  averageEdgeBps?: number | null;
   winRate?: number | null;
   sampleCount?: number;
   availability?: number | null;
+  oracleGapBps?: number | null;
+  averageOracleGapBps?: number | null;
 };
 
 type TrendPoint = {
   protocol: PartnerId;
-  edgeBps: number | null;
+  oracleGapBps: number | null;
   sampleCount: number;
   winRate: number | null;
 };
@@ -61,8 +62,8 @@ type TrendResponse = {
   startAt: string;
   endAt: string;
   comparableRuns: number;
-  leader: null | { protocol: PartnerId; averageEdgeBps: number; medianEdgeBps: number; winRate: number; sampleCount: number; availability: number };
-  summary: Array<{ protocol: PartnerId; averageEdgeBps: number | null; medianEdgeBps: number | null; winRate: number | null; sampleCount: number; availability: number }>;
+  leader: null | { protocol: PartnerId; averageOracleGapBps: number; medianOracleGapBps: number; winRate: number; sampleCount: number; availability: number };
+  summary: Array<{ protocol: PartnerId; averageOracleGapBps: number | null; medianOracleGapBps: number | null; winRate: number | null; sampleCount: number; availability: number }>;
   buckets: Array<{ timestamp: number; points: TrendPoint[] }>;
   error?: string;
 };
@@ -111,6 +112,10 @@ type RunResponse = {
     mode: string;
     status: string;
     maxRequestSkewMs?: number | null;
+    oracleSourcePriceUsd?: number | null;
+    oracleDestinationPriceUsd?: number | null;
+    oracleReferenceOutput?: number | null;
+    oracleCapturedAt?: string | null;
   };
   quotes: Array<{
     id: number;
@@ -120,6 +125,7 @@ type RunResponse = {
     errorCode?: string | null;
     expectedOutputFormatted?: string | null;
     expectedOutputBaseUnits?: string | null;
+    oracleGapBps?: number | null;
     requestStartedAt: string;
     responseLatencyMs?: number | null;
     responseHttpStatus?: number | null;
@@ -209,6 +215,11 @@ function trendPeriodLabel(days: TrendDays) {
   return days === 1 ? "the last 24 hours" : `${days} days`;
 }
 
+function trendPointContext(point: TrendPoint, pointMode: TrendResponse["pointMode"]) {
+  if (pointMode === "comparison") return point.winRate ? "batch winner · synchronized comparison" : "synchronized comparison";
+  return `${Math.round((point.winRate ?? 0) * 100)}% wins · ${point.sampleCount} samples in bucket`;
+}
+
 function formatTokenAmount(value?: string | number | null) {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return "—";
@@ -242,10 +253,10 @@ function ComparisonResult({ cell, window, now }: { cell?: ComparisonCell; window
   if (!cell.leader) return <span className="cell-empty"><b>—</b><small>{cell.successfulQuotes === 1 ? "1 valid quote" : cell.successfulQuotes === 0 ? "No valid quote at this size" : cell.sampleCount ? "No valid quotes" : "Awaiting refresh"}</small></span>;
   const partner = partners.find((item) => item.id === cell.leader)!;
   if (window !== "now") {
-    return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span><strong>{Math.round((cell.winRate ?? 0) * 100)}% wins</strong><small>avg {formatBps(cell.averageEdgeBps)} vs median · {cell.sampleCount ?? 0} checks</small></span>;
+    return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span><strong>{Math.round((cell.winRate ?? 0) * 100)}% wins</strong><small>avg {formatBps(cell.averageOracleGapBps)} vs oracle · {cell.sampleCount ?? 0} checks</small></span>;
   }
   const quoteCount = cell.successfulQuotes ?? 0;
-  return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "ONLY QUOTE" : cell.tie ? "Exact tie" : formatBps(cell.marginBps)}{cell.marginBps != null && cell.runnerUp && !cell.tie && <span className="margin-context">vs <PartnerMark id={cell.runnerUp} /></span>}</strong><small>{quoteCount} {quoteCount === 1 ? "quote" : "quotes"} · {formatAgeLabel(cell.capturedAt, now)}</small></span>;
+  return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "ONLY QUOTE" : cell.tie ? "Exact tie" : formatBps(cell.marginBps)}{cell.marginBps != null && cell.runnerUp && !cell.tie && <span className="margin-context">vs <PartnerMark id={cell.runnerUp} /></span>}</strong><small>{formatBps(cell.oracleGapBps)} vs oracle · {quoteCount} {quoteCount === 1 ? "quote" : "quotes"} · {formatAgeLabel(cell.capturedAt, now)}</small></span>;
 }
 
 function MobileRouteCard({ route, selectedSize, cells, viewWindow, now, activePartnerCount, onInspect }: {
@@ -306,10 +317,11 @@ function LatestQuoteComparison({ route, runDetails, runLoading, selectedSize, on
             const isQuoted = output != null && Number.isFinite(output);
             const isWinner = isQuoted && bestOutput != null && output === bestOutput;
             const gapBps = isQuoted && bestOutput ? (output / bestOutput - 1) * 10_000 : null;
+            const oracleContext = quote.oracleGapBps != null ? `${formatBps(quote.oracleGapBps)} vs oracle` : "Oracle unavailable";
             return <article key={quote.id} className={`latest-quote-card protocol-${quote.protocol} ${isWinner ? "winner" : ""}`}>
               <div><PartnerMark id={quote.protocol} /><b>{partners.find((partner) => partner.id === quote.protocol)?.cellName}</b>{isWinner && <em>Best</em>}</div>
               {isQuoted ? <strong>{formatTokenAmount(quote.expectedOutputFormatted)} <span>{route.destination.symbol}</span></strong> : <strong className="quote-unavailable">{quoteStatusLabel(quote)}</strong>}
-              <small>{isWinner ? "Best output" : gapBps != null ? `${formatBps(gapBps)} vs best` : quote.errorCode ?? quote.status}{quote.responseLatencyMs != null ? ` · ${quote.responseLatencyMs} ms` : ""}</small>
+              <small>{isWinner ? `${oracleContext} · Best output` : gapBps != null ? `${oracleContext} · ${formatBps(gapBps)} vs best` : quote.errorCode ?? quote.status}{quote.responseLatencyMs != null ? ` · ${quote.responseLatencyMs} ms` : ""}</small>
             </article>;
           })}
         </div>
@@ -331,7 +343,7 @@ function RequestDetails({ runDetails, runLoading, selectedSize }: { runDetails: 
       <p>Captured {formatTime(runDetails.run.initiatedAt)} · ${runDetails.run.sourceAmountUsd.toLocaleString()} exact input · synchronized within {runDetails.run.maxRequestSkewMs ?? "—"} ms</p>
       <div className="request-list">{orderedQuotes.map((quote) => <details key={quote.id}>
         <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.protocol === "chainflip" && runDetails.run?.mode === "optimized" && quote.strategy === "regular" ? "regular fallback" : quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quoteStatusLabel(quote)}</strong></summary>
-        <dl><div><dt>Requested</dt><dd>{formatTime(quote.requestStartedAt)}</dd></div><div><dt>HTTP status</dt><dd>{quote.responseHttpStatus ?? "—"}</dd></div><div><dt>Expected output</dt><dd>{quote.expectedOutputFormatted ?? quote.expectedOutputBaseUnits ?? "—"}</dd></div><div><dt>Quote expiry</dt><dd>{formatTime(quote.quoteExpiresAt ?? undefined)}</dd></div></dl>
+        <dl><div><dt>Requested</dt><dd>{formatTime(quote.requestStartedAt)}</dd></div><div><dt>HTTP status</dt><dd>{quote.responseHttpStatus ?? "—"}</dd></div><div><dt>Expected output</dt><dd>{quote.expectedOutputFormatted ?? quote.expectedOutputBaseUnits ?? "—"}</dd></div><div><dt>Oracle deviation</dt><dd>{quote.oracleGapBps == null ? "—" : formatBps(quote.oracleGapBps)}</dd></div><div><dt>Quote expiry</dt><dd>{formatTime(quote.quoteExpiresAt ?? undefined)}</dd></div></dl>
         <span className="json-label">Request</span><pre>{quote.requestPayloadJson ?? quote.requestUrl ?? "No request payload stored"}</pre><span className="json-label">Response</span><pre>{quote.rawResponseJson ?? quote.errorMessage ?? "No response payload stored"}</pre>
       </details>)}</div>
     </> : <><h3>No captured requests yet</h3><p>{runDetails?.error ?? "The latest scheduled quote refresh for this route, size, and execution mode will appear here when available."}</p><dl><div><dt>Request timestamp</dt><dd>—</dd></div><div><dt>Exact input amount</dt><dd>{selectedSize.label}</dd></div><div><dt>Raw request / response</dt><dd>Available after collection</dd></div></dl></>}
@@ -343,35 +355,35 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
   const height = 300;
   const padding = { top: 24, right: 18, bottom: 30, left: 58 };
   const plotted = data.buckets.flatMap((bucket) => bucket.points.flatMap((point) => {
-    const value = point.edgeBps;
+    const value = point.oracleGapBps;
     return value == null ? [] : [{ timestamp: bucket.timestamp, value, point }];
   }));
   if (!plotted.length) return <div className="trend-empty"><b>No trend line yet</b><span>Run this exact route and size at least twice to start the chart.</span></div>;
 
-  const gaps = plotted.map((point) => Math.max(0, -point.value)).sort((a, b) => a - b);
-  const percentile = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * 0.95))] ?? 5;
+  const deviations = plotted.map((point) => Math.abs(point.value)).sort((a, b) => a - b);
+  const percentile = deviations[Math.min(deviations.length - 1, Math.floor(deviations.length * 0.95))] ?? 5;
   const bound = Math.max(5, Math.ceil(Math.min(percentile * 1.15, 1_000) / 5) * 5);
   const start = new Date(data.startAt).getTime();
   const end = new Date(data.endAt).getTime();
   const x = (timestamp: number) => padding.left + ((timestamp - start) / Math.max(1, end - start)) * (width - padding.left - padding.right);
-  const y = (value: number) => padding.top + (-Math.max(-bound, Math.min(0, value)) / bound) * (height - padding.top - padding.bottom);
-  const ticks = [0, -bound / 4, -bound / 2, -(bound * 3) / 4, -bound];
+  const y = (value: number) => padding.top + ((bound - Math.max(-bound, Math.min(bound, value))) / (bound * 2)) * (height - padding.top - padding.bottom);
+  const ticks = [bound, bound / 2, 0, -bound / 2, -bound];
 
   const series = activePartners.map((partner) => ({
     partner,
     points: data.buckets.flatMap((bucket) => {
       const point = bucket.points.find((item) => item.protocol === partner.id);
-      const value = point?.edgeBps ?? null;
+      const value = point?.oracleGapBps ?? null;
       return point && value != null ? [{ timestamp: bucket.timestamp, value, point }] : [];
     }),
   }));
 
   return <div className="trend-visual">
-    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${data.days === 1 ? "24-hour" : `${data.days}-day`} quote gap in basis points from the best synchronized quote`}>
-      <text className="axis-title" x={padding.left} y="11">BPS FROM BEST</text>
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${data.days === 1 ? "24-hour" : `${data.days}-day`} quote deviation in basis points from the THORChain CEX-derived oracle`}>
+      <text className="axis-title" x={padding.left} y="11">BPS VS ORACLE</text>
       {ticks.map((value) => <g key={value}><line x1={padding.left} x2={width - padding.right} y1={y(value)} y2={y(value)} className={value === 0 ? "zero-line" : "grid-line"} /><text x={padding.left - 9} y={y(value) + 3} textAnchor="end">{Number.isInteger(value) ? value : value.toFixed(1)}</text></g>)}
-      <text x={padding.left} y={height - 7}>{new Date(start).toLocaleDateString([], { month: "short", day: "numeric" })}</text>
-      <text x={width - padding.right} y={height - 7} textAnchor="end">{new Date(end).toLocaleDateString([], { month: "short", day: "numeric" })}</text>
+      <text x={padding.left} y={height - 7}>{new Date(start).toLocaleString([], data.days === 1 ? { hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric" })}</text>
+      <text x={width - padding.right} y={height - 7} textAnchor="end">{new Date(end).toLocaleString([], data.days === 1 ? { hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric" })}</text>
       {series.map(({ partner, points }) => {
         const segments: typeof points[] = [];
         for (const point of points) {
@@ -379,12 +391,12 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
           if (!current || point.timestamp - current[current.length - 1].timestamp > data.bucketMs * 1.5) segments.push([point]);
           else current.push(point);
         }
-        return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => <circle key={point.timestamp} cx={x(point.timestamp)} cy={y(point.value)} r="3" fill={partner.color}><title>{partner.name} · {formatBps(point.value)} from best · {data.pointMode === "comparison" ? "synchronized comparison" : `${point.point.sampleCount} samples in bucket`}</title></circle>)}</g>;
+        return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => <circle key={point.timestamp} cx={x(point.timestamp)} cy={y(point.value)} r={data.pointMode === "comparison" && point.point.winRate ? "4" : "3"} fill={partner.color}><title>{partner.name} · {formatBps(point.value)} vs oracle · {trendPointContext(point.point, data.pointMode)}</title></circle>)}</g>;
       })}
     </svg>
     <div className="trend-legend">{activePartners.map((partner) => {
       const summary = data.summary.find((item) => item.protocol === partner.id);
-      return <span key={partner.id}><i style={{ background: partner.color }} /><b>{partner.name}</b><small>{summary?.sampleCount ? `${Math.round((summary.winRate ?? 0) * 100)}% best · ${formatBps(summary.averageEdgeBps)} avg gap · ${Math.round(summary.availability * 100)}% availability` : "No data"}</small></span>;
+      return <span key={partner.id}><i style={{ background: partner.color }} /><b>{partner.name}</b><small>{summary?.sampleCount ? `${Math.round((summary.winRate ?? 0) * 100)}% wins · ${formatBps(summary.averageOracleGapBps)} avg vs oracle · ${Math.round(summary.availability * 100)}% availability` : "No data"}</small></span>;
     })}</div>
   </div>;
 }
@@ -654,13 +666,13 @@ export default function Home() {
 
       <section className="trend-card" aria-labelledby="trend-title">
         <header className="trend-header">
-          <div><p className="eyebrow">Historical {executionLabel(executionMode)} gap to best · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} won most quotes over {trendPeriodLabel(trendDays)}</> : <>Performance over {trendPeriodLabel(trendDays)}</>}</h3><p>{trend?.leader ? `${Math.round(trend.leader.winRate * 100)}% best-quote share · ${formatBps(trend.leader.averageEdgeBps)} average gap · ${Math.round(trend.leader.availability * 100)}% quote availability · ${trend.comparableRuns} comparisons` : "A period leader appears after the first comparable quote batch."}</p></div>
+          <div><p className="eyebrow">Historical {executionLabel(executionMode)} deviation from THORChain oracle · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} won most quotes over {trendPeriodLabel(trendDays)}</> : <>Performance over {trendPeriodLabel(trendDays)}</>}</h3><p>{trend?.leader ? `${Math.round(trend.leader.winRate * 100)}% win share · ${formatBps(trend.leader.averageOracleGapBps)} average vs oracle · ${Math.round(trend.leader.availability * 100)}% quote availability · ${trend.comparableRuns} comparisons` : "A period leader appears after the first oracle-referenced quote batch."}</p></div>
           <div className="trend-controls">
             <fieldset><legend>Period</legend><div className="segmented light">{([1, 7, 14, 30] as const).map((days) => <button key={days} className={trendDays === days ? "selected" : ""} onClick={() => setTrendDays(days)}>{days === 1 ? "Last 24 hours" : `${days}d`}</button>)}</div></fieldset>
           </div>
         </header>
         {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} activePartners={activePartners} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
-        <div className="trend-note"><b>0 bps is the batch best</b><span>{trend?.pointMode === "comparison" ? "Every point is one synchronized comparison, so at least one available DEX sits at zero. Lower quotes show their shortfall; exact ties split it equally." : "Each synchronized batch sets its highest output to zero. For longer periods, every point shows each DEX’s median gap within that time bucket; exact ties split it equally."}</span></div>
+        <div className="trend-note"><b>0 bps is THORChain oracle parity</b><span>{trend?.pointMode === "comparison" ? "Every point compares the quoted output with the same synchronized CEX-derived oracle cross-rate. The highest point is the batch winner; points below zero return less than oracle parity and points above zero return more." : "Every point shows each DEX’s median signed deviation from the synchronized CEX-derived oracle within that time bucket. Winner share is still calculated from the highest quoted output in each batch."}</span></div>
       </section>
 
       {requestsOpen && <div className="request-drawer-backdrop">

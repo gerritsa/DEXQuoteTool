@@ -29,6 +29,7 @@ export type NormalizedQuote = {
   status: "quoted" | "unavailable" | "error";
   expectedOutputBaseUnits?: string;
   expectedOutputFormatted?: string;
+  oracleGapBps?: number;
   quotedFeeUsd?: number;
   estimatedDurationSeconds?: number;
   requestStartedAt: string;

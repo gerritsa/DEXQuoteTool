@@ -6,8 +6,8 @@ type ExecutionMode = "standard" | "optimized";
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 const protocols: PartnerId[] = ["near-intents", "chainflip", "thorchain"];
 const metricProtocolOrder: PartnerId[] = ["thorchain", "chainflip", "near-intents"];
-type NowRow = { pairId: string; amountId: string; initiatedAt: string; protocol: string; status: string; output: number | null };
-type HistoryRow = { pairId: string; amountId: string; protocol: string; attempts: number; successes: number; comparableSamples: number; edgeSumBps: number; wins: number; latestAt: string };
+type NowRow = { pairId: string; amountId: string; initiatedAt: string; protocol: string; status: string; output: number | null; oracleGapBps: number | null };
+type HistoryRow = { pairId: string; amountId: string; protocol: string; attempts: number; successes: number; comparableSamples: number; oracleSamples: number; oracleGapSumBps: number; wins: number; latestAt: string };
 
 function groupByCell<T extends { pairId: string; amountId: string }>(rows: T[]) {
   const grouped = new Map<string, T[]>();
@@ -28,14 +28,16 @@ async function latestComparison(mode: ExecutionMode, selectedProtocols: PartnerI
           ORDER BY initiated_at DESC, id DESC
         ) AS recency_rank
       FROM benchmark_runs
-      WHERE mode = ? AND completed_at IS NOT NULL AND status IN ('complete', 'partial')
+      WHERE mode = ? AND oracle_captured_at IS NOT NULL
+        AND completed_at IS NOT NULL AND status IN ('complete', 'partial')
     ), latest AS (
       SELECT run_id, pair_id, amount_id
       FROM ranked_runs
       WHERE recency_rank = 1
     )
     SELECT r.pair_id AS pairId, r.amount_id AS amountId, r.initiated_at AS initiatedAt,
-      q.protocol AS protocol, q.status AS status, CAST(q.expected_output_formatted AS REAL) AS output
+      q.protocol AS protocol, q.status AS status, CAST(q.expected_output_formatted AS REAL) AS output,
+      q.oracle_gap_bps AS oracleGapBps
     FROM latest l
     JOIN benchmark_runs r ON r.id = l.run_id
     JOIN protocol_quotes q ON q.run_id = r.id
@@ -58,8 +60,9 @@ async function latestComparison(mode: ExecutionMode, selectedProtocols: PartnerI
       runnerUp: quoted.length >= 2 ? runnerUp.protocol : null,
       marginBps,
       tie: exactTie,
+      oracleGapBps: winner?.oracleGapBps ?? null,
       successfulQuotes: quoted.length,
-      results: rows.map((row) => ({ protocol: row.protocol, status: row.status, output: row.output })),
+      results: rows.map((row) => ({ protocol: row.protocol, status: row.status, output: row.output, oracleGapBps: row.oracleGapBps })),
     };
   });
   return { window: "now" as const, mode, cells };
@@ -78,20 +81,23 @@ async function periodComparison(window: Exclude<WindowName, "now">, mode: Execut
         SUM(attempts) AS attempts,
         SUM(successes) AS successes,
         SUM(comparable_samples) AS comparable_samples,
-        SUM(edge_sum_bps) AS edge_sum_bps,
+        SUM(oracle_samples) AS oracle_samples,
+        SUM(oracle_gap_sum_bps) AS oracle_gap_sum_bps,
         SUM(wins) AS wins,
         MAX(latest_at) AS latest_at
       FROM daily_comparison_metrics
       WHERE mode = ? AND day > ? AND day < ? AND protocol_mask = ?
+        AND oracle_samples > 0
         AND protocol IN (${protocolPlaceholders})
       GROUP BY pair_id, amount_id, protocol
     ), raw_attempts AS (
       SELECT r.id AS run_id, r.pair_id AS pair_id, r.amount_id AS amount_id,
         r.initiated_at AS initiated_at, q.protocol AS protocol, q.status AS status,
-        CAST(q.expected_output_formatted AS REAL) AS output
+        CAST(q.expected_output_formatted AS REAL) AS output, q.oracle_gap_bps AS oracle_gap_bps
       FROM benchmark_runs r
       JOIN protocol_quotes q ON q.run_id = r.id
       WHERE r.mode = ? AND r.initiated_at >= ?
+        AND r.oracle_captured_at IS NOT NULL
         AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
         AND q.protocol IN (${protocolPlaceholders})
         AND (
@@ -130,7 +136,8 @@ async function periodComparison(window: Exclude<WindowName, "now">, mode: Execut
         COUNT(*) AS attempts,
         SUM(CASE WHEN status = 'quoted' THEN 1 ELSE 0 END) AS successes,
         SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 THEN 1 ELSE 0 END) AS comparable_samples,
-        SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 THEN ((output / median_output) - 1) * 10000 ELSE 0 END) AS edge_sum_bps,
+        SUM(CASE WHEN status = 'quoted' AND oracle_gap_bps IS NOT NULL THEN 1 ELSE 0 END) AS oracle_samples,
+        SUM(CASE WHEN status = 'quoted' AND oracle_gap_bps IS NOT NULL THEN oracle_gap_bps ELSE 0 END) AS oracle_gap_sum_bps,
         SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 AND output = best_output THEN 1.0 / winner_count ELSE 0 END) AS wins,
         MAX(initiated_at) AS latest_at
       FROM scored
@@ -144,7 +151,8 @@ async function periodComparison(window: Exclude<WindowName, "now">, mode: Execut
       SUM(attempts) AS attempts,
       SUM(successes) AS successes,
       SUM(comparable_samples) AS comparableSamples,
-      SUM(edge_sum_bps) AS edgeSumBps,
+      SUM(oracle_samples) AS oracleSamples,
+      SUM(oracle_gap_sum_bps) AS oracleGapSumBps,
       SUM(wins) AS wins,
       MAX(latest_at) AS latestAt
     FROM combined
@@ -160,12 +168,12 @@ async function periodComparison(window: Exclude<WindowName, "now">, mode: Execut
     const measured = rows.map((row) => ({
       ...row,
       availability: row.attempts ? row.successes / row.attempts : 0,
-      averageEdgeBps: row.comparableSamples ? row.edgeSumBps / row.comparableSamples : null,
+      averageOracleGapBps: row.oracleSamples ? row.oracleGapSumBps / row.oracleSamples : null,
       winRate: comparableChecks ? row.wins / comparableChecks : null,
     }));
     const ranked = measured.filter((row) => row.comparableSamples > 0 && row.winRate != null)
       .sort((a, b) => Number(b.winRate) - Number(a.winRate)
-        || Number(b.averageEdgeBps ?? -Infinity) - Number(a.averageEdgeBps ?? -Infinity)
+        || Number(b.averageOracleGapBps ?? -Infinity) - Number(a.averageOracleGapBps ?? -Infinity)
         || b.availability - a.availability);
     const leader = ranked[0];
     return {
@@ -173,14 +181,14 @@ async function periodComparison(window: Exclude<WindowName, "now">, mode: Execut
       amountId: rows[0].amountId,
       capturedAt: rows.reduce((latest, row) => row.latestAt > latest ? row.latestAt : latest, rows[0].latestAt),
       leader: leader?.protocol ?? null,
-      averageEdgeBps: leader?.averageEdgeBps ?? null,
+      averageOracleGapBps: leader?.averageOracleGapBps ?? null,
       winRate: leader?.winRate ?? null,
       sampleCount: comparableChecks,
       availability: leader?.availability ?? null,
-      results: measured.map((row) => ({ protocol: row.protocol, averageEdgeBps: row.averageEdgeBps, wins: row.wins, winRate: row.winRate, samples: row.comparableSamples, comparisons: comparableChecks, availability: row.availability })),
+      results: measured.map((row) => ({ protocol: row.protocol, averageOracleGapBps: row.averageOracleGapBps, wins: row.wins, winRate: row.winRate, samples: row.oracleSamples, comparisons: comparableChecks, availability: row.availability })),
     };
   });
-  return { window, mode, cutoff, baseline: "batch_median", ranking: "overall_win_share", cells };
+  return { window, mode, cutoff, baseline: "thorchain_cex_oracle", ranking: "overall_win_share", cells };
 }
 
 export async function GET(request: Request) {

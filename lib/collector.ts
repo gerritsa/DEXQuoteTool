@@ -41,6 +41,7 @@ function normalizedQuote(quote: NormalizedQuote) {
     status: quote.status,
     expectedOutputBaseUnits: quote.expectedOutputBaseUnits,
     expectedOutputFormatted: quote.expectedOutputFormatted,
+    oracleGapBps: quote.oracleGapBps,
     quotedFeeUsd: quote.quotedFeeUsd,
     estimatedDurationSeconds: quote.estimatedDurationSeconds,
     requestStartedAt: quote.requestStartedAt,
@@ -62,6 +63,7 @@ function normalizedRecord(record: BenchmarkArchiveRecord) {
     initiatedAt: record.initiatedAt,
     completedAt: record.completedAt,
     maxRequestSkewMs: record.maxRequestSkewMs,
+    oracle: record.oracle,
     request: {
       pairId: record.request.pairId,
       source: record.request.source,
@@ -231,6 +233,7 @@ async function refreshTrendBucketRange(start: string, end: string, bucketSeconds
         ) AS bucket_start
       FROM benchmark_runs r
       WHERE r.initiated_at >= ? AND r.initiated_at < ?
+        AND r.oracle_captured_at IS NOT NULL
         AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
     )
     SELECT
@@ -246,12 +249,14 @@ async function refreshTrendBucketRange(start: string, end: string, bucketSeconds
         'quotes', json(COALESCE((
           SELECT json_group_array(json_object(
             'protocol', q.protocol,
-            'output', CAST(q.expected_output_formatted AS REAL)
+            'output', CAST(q.expected_output_formatted AS REAL),
+            'oracleGapBps', q.oracle_gap_bps
           ))
           FROM protocol_quotes q
           WHERE q.run_id = bucketed_runs.id
             AND q.status = 'quoted'
             AND CAST(q.expected_output_formatted AS REAL) > 0
+            AND q.oracle_gap_bps IS NOT NULL
         ), '[]'))
       )),
       MAX(initiated_at)
@@ -343,14 +348,17 @@ async function aggregateDay(day: string, d1: D1Database) {
     await d1.prepare(`
       INSERT INTO daily_comparison_metrics (
         id, day, pair_id, amount_id, mode, protocol_mask, protocol,
-        attempts, successes, comparable_samples, edge_sum_bps, wins, latest_at
+        attempts, successes, comparable_samples, edge_sum_bps,
+        oracle_samples, oracle_gap_sum_bps, wins, latest_at
       )
       WITH attempts AS (
         SELECT r.id AS run_id, r.pair_id, r.amount_id, r.mode, r.initiated_at,
-          q.protocol, q.status, CAST(q.expected_output_formatted AS REAL) AS output
+          q.protocol, q.status, CAST(q.expected_output_formatted AS REAL) AS output,
+          q.oracle_gap_bps
         FROM benchmark_runs r
         JOIN protocol_quotes q ON q.run_id = r.id
         WHERE r.initiated_at >= ? AND r.initiated_at < ?
+          AND r.oracle_captured_at IS NOT NULL
           AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
           AND q.protocol IN (${quotedProtocols})
       ), valid AS (
@@ -383,6 +391,8 @@ async function aggregateDay(day: string, d1: D1Database) {
         SUM(CASE WHEN status = 'quoted' THEN 1 ELSE 0 END),
         SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 THEN 1 ELSE 0 END),
         SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 THEN ((output / median_output) - 1) * 10000 ELSE 0 END),
+        SUM(CASE WHEN status = 'quoted' AND oracle_gap_bps IS NOT NULL THEN 1 ELSE 0 END),
+        SUM(CASE WHEN status = 'quoted' AND oracle_gap_bps IS NOT NULL THEN oracle_gap_bps ELSE 0 END),
         SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 AND output = best_output THEN 1.0 / winner_count ELSE 0 END),
         MAX(initiated_at)
       FROM scored

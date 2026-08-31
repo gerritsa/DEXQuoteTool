@@ -22,6 +22,11 @@ in `wrangler.production.jsonc`.
 Run `npm run db:migrate:production` before deploying application code. Runtime
 requests never create or alter production tables.
 
+Migration `0003_windy_enchantress.sql` introduces THORChain oracle-relative
+benchmarking and intentionally clears the active benchmark, comparison, trend,
+and collector tables for a fresh oracle-referenced history. The persisted route
+catalog and lifecycle-managed R2 archives are not removed.
+
 Configure these Worker secrets or variables:
 
 - `NEAR_INTENTS_API_KEY`

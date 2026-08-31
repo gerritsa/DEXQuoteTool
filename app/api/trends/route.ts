@@ -5,14 +5,14 @@ type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 type ExecutionMode = "standard" | "optimized";
 type TrendBucketRow = { bucketStart: string; samplesJson: string };
 type AvailabilityRow = { protocol: PartnerId; attempts: number; successes: number };
-type StoredQuote = { protocol: PartnerId; output: number };
+type StoredQuote = { protocol: PartnerId; output: number; oracleGapBps: number };
 type StoredRun = { runId: number; initiatedAt: string; quotes: StoredQuote[] };
 type ScoredRow = {
   runId: number;
   initiatedAt: string;
   timestamp: number;
   protocol: PartnerId;
-  edgeBps: number;
+  oracleGapBps: number;
   winCredit: number;
 };
 
@@ -37,8 +37,9 @@ function parseStoredRuns(value: string) {
       const quotes = candidate.quotes.flatMap((quote): StoredQuote[] => {
         if (!quote || typeof quote !== "object") return [];
         const storedQuote = quote as Partial<StoredQuote>;
-        if (!storedQuote.protocol || !protocols.includes(storedQuote.protocol) || !Number.isFinite(Number(storedQuote.output))) return [];
-        return [{ protocol: storedQuote.protocol, output: Number(storedQuote.output) }];
+        if (!storedQuote.protocol || !protocols.includes(storedQuote.protocol)
+          || !Number.isFinite(Number(storedQuote.output)) || !Number.isFinite(Number(storedQuote.oracleGapBps))) return [];
+        return [{ protocol: storedQuote.protocol, output: Number(storedQuote.output), oracleGapBps: Number(storedQuote.oracleGapBps) }];
       });
       return [{ runId: candidate.runId, initiatedAt: candidate.initiatedAt, quotes }];
     });
@@ -65,7 +66,7 @@ function scoreRuns(storedRuns: StoredRun[], selectedProtocols: PartnerId[], star
         initiatedAt: run.initiatedAt,
         timestamp,
         protocol: quote.protocol,
-        edgeBps: ((output / bestOutput) - 1) * 10_000,
+        oracleGapBps: quote.oracleGapBps,
         winCredit: output === bestOutput ? 1 / winnerCount : 0,
       });
     }
@@ -90,6 +91,7 @@ async function loadAvailability(
       FROM daily_comparison_metrics
       WHERE pair_id = ? AND amount_id = ? AND mode = ?
         AND day > ? AND day < ? AND protocol_mask = ?
+        AND oracle_samples > 0
         AND protocol IN (${protocolPlaceholders})
       GROUP BY protocol
     ), raw_metrics AS (
@@ -99,6 +101,7 @@ async function loadAvailability(
       JOIN protocol_quotes q ON q.run_id = r.id
       WHERE r.pair_id = ? AND r.amount_id = ? AND r.mode = ?
         AND r.initiated_at >= ?
+        AND r.oracle_captured_at IS NOT NULL
         AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
         AND q.protocol IN (${protocolPlaceholders})
         AND (
@@ -176,12 +179,12 @@ export async function GET(request: Request) {
     const comparableRuns = new Set(rows.map((row) => row.runId)).size;
     const summary = selectedProtocols.map((protocol) => {
       const protocolRows = rows.filter((row) => row.protocol === protocol);
-      const edges = protocolRows.map((row) => row.edgeBps);
+      const oracleGaps = protocolRows.map((row) => row.oracleGapBps);
       const availability = availabilityByProtocol.get(protocol);
       return {
         protocol,
-        averageEdgeBps: edges.length ? edges.reduce((sum, value) => sum + value, 0) / edges.length : null,
-        medianEdgeBps: median(edges),
+        averageOracleGapBps: oracleGaps.length ? oracleGaps.reduce((sum, value) => sum + value, 0) / oracleGaps.length : null,
+        medianOracleGapBps: median(oracleGaps),
         winRate: comparableRuns ? protocolRows.reduce((sum, row) => sum + row.winCredit, 0) / comparableRuns : null,
         sampleCount: protocolRows.length,
         availability: availability?.attempts ? availability.successes / availability.attempts : 0,
@@ -189,7 +192,7 @@ export async function GET(request: Request) {
     });
     const leader = [...summary].filter((item) => item.sampleCount > 0 && item.winRate != null)
       .sort((a, b) => Number(b.winRate) - Number(a.winRate)
-        || Number(b.averageEdgeBps ?? -Infinity) - Number(a.averageEdgeBps ?? -Infinity)
+        || Number(b.averageOracleGapBps ?? -Infinity) - Number(a.averageOracleGapBps ?? -Infinity)
         || b.availability - a.availability)[0] ?? null;
 
     const pointMode = days <= 7 ? "comparison" : "bucket_median";
@@ -207,7 +210,7 @@ export async function GET(request: Request) {
         const pointRuns = new Set(pointRows.map((row) => row.runId)).size;
         return {
           protocol,
-          edgeBps: median(protocolRows.map((row) => row.edgeBps)),
+          oracleGapBps: median(protocolRows.map((row) => row.oracleGapBps)),
           sampleCount: protocolRows.length,
           winRate: pointRuns ? protocolRows.reduce((sum, row) => sum + row.winCredit, 0) / pointRuns : null,
         };
@@ -216,9 +219,9 @@ export async function GET(request: Request) {
     });
 
     return writePublicCache(request, Response.json({
-      routeId, amountId, mode, protocols: selectedProtocols, days, baseline: "batch_best",
+      routeId, amountId, mode, protocols: selectedProtocols, days, baseline: "thorchain_cex_oracle",
       ranking: "overall_win_share",
-      comparisonRule: "The period leader has the highest share of comparable batch wins. Unavailable quotes cannot win, and exact ties split the win equally.",
+      comparisonRule: "Every quote is measured against the synchronized THORChain CEX-derived oracle cross-rate. The period leader still has the highest share of comparable batch wins; exact ties split the win equally.",
       bucketMs, pointMode,
       startAt: new Date(startAt).toISOString(), endAt: new Date(endAt).toISOString(),
       comparableRuns, leader, summary, buckets,

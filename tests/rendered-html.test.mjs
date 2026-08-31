@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { canonicalPublicCacheUrl } from "../lib/http-cache.ts";
+import { oracleGapBps, referenceForAmount } from "../lib/oracle.ts";
 
 async function render(path = "/", environment = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -32,8 +33,8 @@ test("server-renders the SwapRank dashboard", async () => {
   assert.match(html, /30 days/);
   assert.match(html, /Latest check/);
   assert.match(html, /Refresh page data/);
-  assert.match(html, /0 bps is the batch best/);
-  assert.match(html, /exact ties split it equally/);
+  assert.match(html, /0 bps is THORChain oracle parity/);
+  assert.match(html, /Winner share is still calculated from the highest quoted output/);
   assert.match(html, /Execution mode/);
   assert.match(html, /Compare protocols/);
   assert.match(html, /Standard swap/);
@@ -59,6 +60,7 @@ test("health endpoint covers stale sweeps, partial routes, and partner errors", 
   assert.match(source, /AS unavailable/);
   assert.match(source, /response_http_status >= 500/);
   assert.match(source, /operational quote errors exceeded 20%/);
+  assert.match(source, /oracleCoverage < 0\.9/);
   assert.match(source, /Live collection is paused until fresh route pricing is available/);
   assert.match(source, /FROM catalog_state/);
   assert.match(source, /status === "healthy" \? 200 : 503/);
@@ -99,6 +101,20 @@ test("comparison inputs remain durable and latest results do not depend on raw p
   assert.match(run, /async function finalizeRun/);
   assert.match(run, /await d1\.batch\(\[/);
   assert.match(schema, /requestJson: text\("request_json"\)/);
+  assert.match(schema, /oracleGapBps: real\("oracle_gap_bps"\)/);
+});
+
+test("oracle references normalize quotes against a shared cross-rate", () => {
+  const reference = referenceForAmount({
+    sourceSymbol: "BTC",
+    destinationSymbol: "ETH",
+    sourcePriceUsd: 80_000,
+    destinationPriceUsd: 2_000,
+    capturedAt: "2026-08-30T00:00:00.000Z",
+  }, "100000000", 8);
+  assert.equal(reference?.referenceOutput, 40);
+  assert.equal(oracleGapBps("40", reference), 0);
+  assert.ok(Math.abs(oracleGapBps("39.8", reference) + 50) < 1e-9);
 });
 
 test("catalog failures and trend availability are not reported as successful support", async () => {
@@ -133,16 +149,25 @@ test("the clean baseline includes collector resilience and precomputed trends", 
   assert.match(migration, /idx_trend_buckets_lookup/);
 });
 
+test("oracle migration starts benchmark history fresh", async () => {
+  const migration = await readFile(new URL("../drizzle/0003_windy_enchantress.sql", import.meta.url), "utf8");
+  assert.match(migration, /oracle_source_price_usd/);
+  assert.match(migration, /oracle_gap_bps/);
+  assert.match(migration, /DELETE FROM `protocol_quotes`/);
+  assert.match(migration, /DELETE FROM `benchmark_runs`/);
+  assert.match(migration, /DELETE FROM `trend_buckets`/);
+});
+
 test("leaderboard and graph use fifteen-minute shared caching", async () => {
   const comparison = await readFile(new URL("../app/api/comparison/route.ts", import.meta.url), "utf8");
   const trends = await readFile(new URL("../app/api/trends/route.ts", import.meta.url), "utf8");
   assert.match(comparison, /publicCacheHeaders\(900\)/);
   assert.match(trends, /FROM trend_buckets/);
-  assert.match(trends, /output \/ bestOutput/);
-  assert.match(trends, /baseline: "batch_best"/);
+  assert.match(trends, /oracleGapBps: quote\.oracleGapBps/);
+  assert.match(trends, /baseline: "thorchain_cex_oracle"/);
   assert.match(trends, /days <= 7 \? "comparison" : "bucket_median"/);
   assert.match(trends, /publicCacheHeaders\(900\)/);
-  assert.match(await readFile(new URL("../app/page.tsx", import.meta.url), "utf8"), /Every point is one synchronized comparison/);
+  assert.match(await readFile(new URL("../app/page.tsx", import.meta.url), "utf8"), /Every point compares the quoted output/);
 });
 
 test("the dashboard refreshes stale long-lived tabs", async () => {
@@ -181,6 +206,7 @@ test("route analysis keeps the latest synchronized DEX outputs visible", async (
   assert.match(page, /Latest quote comparison/);
   assert.match(page, /Exact input/);
   assert.match(page, /vs best/);
+  assert.match(page, /vs oracle/);
   assert.match(page, /Raw details/);
   assert.match(page, /setRequestsOpen\(true\)/);
 });

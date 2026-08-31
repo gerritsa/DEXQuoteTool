@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { and, eq } from "drizzle-orm";
 import { ensureBenchmarkSchema, getD1, getDb } from "../../db";
 import { benchmarkRuns, protocolQuotes } from "../../db/schema";
+import { getOracleSnapshot, oracleGapBps, referenceForAmount, type OracleReference } from "../oracle";
 import { benchmarkCatalogGraceMs, getCatalog, topThorRoutes, type CatalogAsset, type CatalogRoute, type PartnerId } from "../routes/catalog";
 import { getChainflipQuote } from "./adapters/chainflip";
 import { getNearIntentsQuote } from "./adapters/near-intents";
@@ -29,6 +30,7 @@ export type BenchmarkArchiveRecord = {
   initiatedAt: string;
   completedAt: string;
   maxRequestSkewMs: number;
+  oracle: OracleReference | null;
   request: BenchmarkRequest;
   quotes: NormalizedQuote[];
 };
@@ -136,6 +138,7 @@ async function loadStoredArchive(
       status: quote.status,
       expectedOutputBaseUnits: quote.expectedOutputBaseUnits ?? undefined,
       expectedOutputFormatted: quote.expectedOutputFormatted ?? undefined,
+      oracleGapBps: quote.oracleGapBps ?? undefined,
       quotedFeeUsd: quote.quotedFeeUsd ?? undefined,
       estimatedDurationSeconds: quote.estimatedDurationSeconds ?? undefined,
       requestStartedAt: quote.requestStartedAt,
@@ -163,6 +166,16 @@ async function loadStoredArchive(
     refundAddress: addressForChain(route.source.chain, runtime) ?? "archived",
     slippageToleranceBps: 100,
   };
+  const oracle = run.oracleSourcePriceUsd && run.oracleDestinationPriceUsd && run.oracleReferenceOutput && run.oracleCapturedAt
+    ? {
+        sourceSymbol: route.source.symbol,
+        destinationSymbol: route.destination.symbol,
+        sourcePriceUsd: run.oracleSourcePriceUsd,
+        destinationPriceUsd: run.oracleDestinationPriceUsd,
+        referenceOutput: run.oracleReferenceOutput,
+        capturedAt: run.oracleCapturedAt,
+      }
+    : null;
   return {
     runId,
     routeId,
@@ -171,6 +184,7 @@ async function loadStoredArchive(
     initiatedAt: run.initiatedAt,
     completedAt: run.completedAt,
     maxRequestSkewMs: run.maxRequestSkewMs ?? 0,
+    oracle,
     request: storedRequest ?? fallbackRequest,
     quotes,
   };
@@ -238,7 +252,6 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
   if (!route) throw new Error("Select one of the fixed 20 THORChain routes");
   const quoteSize = quoteSizes.find((candidate) => candidate.id === amountId);
   if (!quoteSize) throw new Error("Unknown quote amount");
-  if (!route.source.priceUsd || route.source.priceUsd <= 0) throw new Error("Source asset USD price is unavailable");
 
   const db = getDb();
   const runtime = env as unknown as BenchmarkRuntimeEnv;
@@ -261,15 +274,20 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
   if (!recipient || !refundAddress) throw new Error(`Benchmark addresses are not configured for ${route.source.chain} → ${route.destination.chain}`);
 
   const sourceAmountUsd = quoteSize.amountUsd;
+  const oracleSnapshot = await getOracleSnapshot(route.source.symbol, route.destination.symbol);
+  const sourcePriceUsd = oracleSnapshot?.sourcePriceUsd ?? route.source.priceUsd;
+  if (!sourcePriceUsd || sourcePriceUsd <= 0) throw new Error("Source asset USD price is unavailable");
+  const sourceAmountBaseUnits = usdToBaseUnits(sourceAmountUsd, sourcePriceUsd, route.source.decimals);
+  const oracle = referenceForAmount(oracleSnapshot, sourceAmountBaseUnits, route.source.decimals);
   const source = toChainAsset(route.source);
   const destination = toChainAsset(route.destination);
   const request: BenchmarkRequest = {
     pairId: route.id,
     source,
     destination,
-    sourceAmountBaseUnits: usdToBaseUnits(sourceAmountUsd, route.source.priceUsd, route.source.decimals),
+    sourceAmountBaseUnits,
     sourceAmountUsd,
-    sourcePriceUsd: route.source.priceUsd,
+    sourcePriceUsd,
     mode,
     recipient,
     refundAddress,
@@ -292,7 +310,11 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
       destinationAsset: route.destination.thorAsset,
       sourceAmountBaseUnits: request.sourceAmountBaseUnits,
       sourceAmountUsd,
-      sourcePriceUsd: route.source.priceUsd,
+      sourcePriceUsd,
+      oracleSourcePriceUsd: oracle?.sourcePriceUsd ?? null,
+      oracleDestinationPriceUsd: oracle?.destinationPriceUsd ?? null,
+      oracleReferenceOutput: oracle?.referenceOutput ?? null,
+      oracleCapturedAt: oracle?.capturedAt ?? null,
       requestJson: JSON.stringify(request),
       status: "pending",
       initiatedAt,
@@ -307,7 +329,11 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
       destinationAsset: route.destination.thorAsset,
       sourceAmountBaseUnits: request.sourceAmountBaseUnits,
       sourceAmountUsd,
-      sourcePriceUsd: route.source.priceUsd,
+      sourcePriceUsd,
+      oracleSourcePriceUsd: oracle?.sourcePriceUsd,
+      oracleDestinationPriceUsd: oracle?.destinationPriceUsd,
+      oracleReferenceOutput: oracle?.referenceOutput,
+      oracleCapturedAt: oracle?.capturedAt,
       requestJson: JSON.stringify(request),
       mode,
       status: "pending",
@@ -318,7 +344,8 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
     runId = run.id;
   }
 
-  const quotes = await Promise.all(allProtocols.map((protocol) => requestQuote(protocol, request, route.partners.includes(protocol), runtime.NEAR_INTENTS_API_KEY)));
+  const rawQuotes = await Promise.all(allProtocols.map((protocol) => requestQuote(protocol, request, route.partners.includes(protocol), runtime.NEAR_INTENTS_API_KEY)));
+  const quotes = rawQuotes.map((quote) => ({ ...quote, oracleGapBps: oracleGapBps(quote.expectedOutputFormatted, oracle) }));
   const startTimes = quotes.map((quote) => new Date(quote.requestStartedAt).getTime()).filter(Number.isFinite);
   const maxRequestSkewMs = startTimes.length ? Math.max(...startTimes) - Math.min(...startTimes) : 0;
   const completedAt = new Date().toISOString();
@@ -331,6 +358,7 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
     status: quote.status,
     expectedOutputBaseUnits: quote.expectedOutputBaseUnits,
     expectedOutputFormatted: quote.expectedOutputFormatted,
+    oracleGapBps: quote.oracleGapBps,
     quotedFeeUsd: quote.quotedFeeUsd,
     estimatedDurationSeconds: quote.estimatedDurationSeconds,
     requestStartedAt: quote.requestStartedAt,
@@ -345,6 +373,6 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
 
   await finalizeRun(runId, routeId, amountId, mode, hasError ? "partial" : "complete", completedAt, maxRequestSkewMs, quotes);
 
-  const archive: BenchmarkArchiveRecord = { runId, routeId, amountId, mode, initiatedAt, completedAt, maxRequestSkewMs, request, quotes };
+  const archive: BenchmarkArchiveRecord = { runId, routeId, amountId, mode, initiatedAt, completedAt, maxRequestSkewMs, oracle, request, quotes };
   return { runId, routeId, amountId, mode, quoteCount: quotes.length, completedAt, skipped: false, archive };
 }

@@ -91,7 +91,7 @@ footer{margin-top:100px;padding:24px clamp(22px,5vw,76px);background:var(--foote
 .protocol-filter button.disabled{border-style:dashed;color:var(--chrome-muted);cursor:not-allowed}.protocol-filter button.disabled .partner-mark{filter:grayscale(1);opacity:.45}
 .cell-result strong{display:flex;align-items:center;gap:6px}.cell-result .margin-context{display:inline-flex;align-items:center;gap:4px;color:var(--muted);font:8px var(--font-geist-mono);text-transform:uppercase}.cell-result .margin-context .partner-mark{width:17px;height:17px;margin:0;border-width:1px}
 .execution-filter .segmented button,.comparison-window-filter .segmented button,.asset-filter-chip.all-assets b{text-transform:uppercase}
-.trend-header h3,.trend-header>div:first-child>p:last-child,.trend-controls .segmented button,.cell-result b,.cell-result strong,.cell-result small{font-family:var(--font-geist-mono,ui-monospace),SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-variant-ligatures:none}
+.execution-filter legend,.execution-filter .segmented button,.comparison-window-filter legend,.comparison-window-filter .segmented button,.asset-filter legend,.asset-filter-chip.all-assets,.leaderboard-table,.leaderboard-route-path code,.cell-empty,.trend-header h3,.trend-header>div:first-child>p:last-child,.trend-controls .segmented button,.cell-result b,.cell-result strong,.cell-result small{font-family:var(--font-geist-mono,ui-monospace),SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-variant-ligatures:none}
 :root:not([data-theme="light"]) .leaderboard-table thead th{color:#f1f4ee;font-weight:900}
 .route-section{margin-top:24px}
 

@@ -160,6 +160,10 @@ function routeMatchesAssets(route: Route, selected: ReadonlySet<string>) {
   return selected.size === 0 || selected.has(route.source.id) || selected.has(route.destination.id);
 }
 
+function routeMatchesProtocols(route: Route, selected: ReadonlySet<PartnerId>) {
+  return route.partners.filter((partner) => selected.has(partner)).length >= 2;
+}
+
 function PartnerMark({ id, muted = false }: { id: PartnerId; muted?: boolean }) {
   const partner = partners.find((item) => item.id === id)!;
   return <span className={`partner-mark logo-${id} ${muted ? "muted" : ""}`} role="img" aria-label={partner.name} title={partner.name}><img src={partner.logo} alt="" /></span>;
@@ -171,7 +175,8 @@ function executionLabel(mode: ExecutionMode) {
 
 function AssetMark({ asset }: { asset: Route["source"] }) {
   const symbol = asset.symbol.toLowerCase();
-  return <span className="asset-mark" role="img" aria-label={`${asset.symbol} logo`}><img src={`/assets/${symbol}.png`} alt="" /></span>;
+  const extension = ["bch", "bnb", "doge", "ltc", "sol", "xrp"].includes(symbol) ? "svg" : "png";
+  return <span className="asset-mark" role="img" aria-label={`${asset.symbol} asset`}><img src={`/assets/${symbol}.${extension}`} alt="" /></span>;
 }
 
 function RoutePair({ route }: { route: Route }) {
@@ -274,16 +279,17 @@ function ComparisonResult({ cell, window, now }: { cell?: ComparisonCell; window
   return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "ONLY QUOTE" : cell.tie ? "Exact tie" : formatBps(cell.marginBps)}{cell.marginBps != null && cell.runnerUp && !cell.tie && <span className="margin-context">vs <PartnerMark id={cell.runnerUp} /></span>}</strong><small>{formatBps(cell.oracleGapBps)} vs oracle · {quoteCount} {quoteCount === 1 ? "quote" : "quotes"} · {formatAgeLabel(cell.capturedAt, now)}</small></span>;
 }
 
-function MobileRouteCard({ route, selectedSize, cells, viewWindow, now, activePartnerCount, onInspect }: {
+function MobileRouteCard({ route, selectedSize, cells, viewWindow, now, enabledProtocols, onInspect }: {
   route: Route;
   selectedSize: QuoteSize;
   cells: Map<string, ComparisonCell>;
   viewWindow: ViewWindow;
   now: number;
-  activePartnerCount: number;
+  enabledProtocols: PartnerId[];
   onInspect: (route: Route, size: QuoteSize) => void;
 }) {
   const selectedCell = cells.get(`${route.id}::${selectedSize.id}`);
+  const activeRoutePartnerCount = route.partners.filter((partner) => enabledProtocols.includes(partner)).length;
   return <article className="mobile-route-card">
     <button className="mobile-route-card-header" onClick={() => onInspect(route, selectedSize)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol}`}>
       <LeaderboardRoutePath route={route} />
@@ -294,7 +300,7 @@ function MobileRouteCard({ route, selectedSize, cells, viewWindow, now, activePa
       <button className="mobile-result-button" onClick={() => onInspect(route, selectedSize)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol} at ${selectedSize.label}`}>
         <ComparisonResult cell={selectedCell} window={viewWindow} now={now} />
       </button>
-      <div className="mobile-route-coverage"><span>{activePartnerCount} protocols compared</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!route.partners.includes(partner.id)} />)}</div></div>
+      <div className="mobile-route-coverage"><span>{activeRoutePartnerCount} protocols compared</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!route.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</div></div>
     </div>
   </article>;
 }
@@ -447,10 +453,14 @@ export default function Home() {
   const [now, setNow] = useState(() => Date.now());
   const [theme, setTheme] = useState<Theme>("dark");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [assetMenuOpen, setAssetMenuOpen] = useState(false);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [manualRefreshAvailableAt, setManualRefreshAvailableAt] = useState(0);
+  const enabledProtocolsRef = useRef(enabledProtocols);
+  const selectedAssetIdsRef = useRef(selectedAssetIds);
   const lastRefreshRequestedAt = useRef(0);
   const auditRequest = useRef<AbortController | null>(null);
+  const assetMenu = useRef<HTMLDivElement | null>(null);
   const activePartners = useMemo(() => partners.filter((partner) => enabledProtocols.includes(partner.id)), [enabledProtocols]);
   const protocolParam = enabledProtocols.join(",");
   const availableAssets = useMemo(() => Array.from(new Map((catalog?.routes ?? [])
@@ -459,9 +469,10 @@ export default function Home() {
     .sort((left, right) => left.symbol.localeCompare(right.symbol) || left.chain.localeCompare(right.chain)), [catalog?.routes]);
   const filteredRoutes = useMemo(() => {
     const routes = catalog?.routes ?? [];
-    const selected = new Set(selectedAssetIds);
-    return routes.filter((route) => routeMatchesAssets(route, selected));
-  }, [catalog?.routes, selectedAssetIds]);
+    const selectedAssets = new Set(selectedAssetIds);
+    const selectedProtocols = new Set(enabledProtocols);
+    return routes.filter((route) => routeMatchesAssets(route, selectedAssets) && routeMatchesProtocols(route, selectedProtocols));
+  }, [catalog?.routes, enabledProtocols, selectedAssetIds]);
   const assetSummary = selectedAssetIds.length === 0
     ? "All assets"
     : selectedAssetIds.length <= 2
@@ -470,6 +481,10 @@ export default function Home() {
         return asset ? `${asset.symbol} · ${chainLabel(asset.chain)}` : id;
       }).join(" + ")
       : `${selectedAssetIds.length} assets`;
+  const selectedAssets = selectedAssetIds.flatMap((id) => {
+    const asset = availableAssets.find((item) => item.id === id);
+    return asset ? [asset] : [];
+  });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -480,7 +495,14 @@ export default function Home() {
         const data = await response.json() as CatalogResponse;
         if (!response.ok) throw new Error(data.error ?? "Route catalog unavailable");
         setCatalog(data);
-        setSelectedRoute((current) => current && data.routes.some((route) => route.id === current.id) ? current : data.routes[0] ?? null);
+        const selectedAssets = new Set(selectedAssetIdsRef.current);
+        const selectedProtocols = new Set(enabledProtocolsRef.current);
+        setSelectedRoute((current) => {
+          const refreshedCurrent = current ? data.routes.find((route) => route.id === current.id) : null;
+          return refreshedCurrent && routeMatchesAssets(refreshedCurrent, selectedAssets) && routeMatchesProtocols(refreshedCurrent, selectedProtocols)
+            ? refreshedCurrent
+            : data.routes.find((route) => routeMatchesAssets(route, selectedAssets) && routeMatchesProtocols(route, selectedProtocols)) ?? null;
+        });
       } catch (error) {
         if (!controller.signal.aborted) setCatalog({ error: error instanceof Error ? error.message : "Route catalog unavailable" } as CatalogResponse);
       } finally {
@@ -600,6 +622,22 @@ export default function Home() {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [requestsOpen]);
 
+  useEffect(() => {
+    if (!assetMenuOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!assetMenu.current?.contains(event.target as Node)) setAssetMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAssetMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [assetMenuOpen]);
+
   const cells = useMemo(() => new Map((comparison?.cells ?? []).map((cell) => [`${cell.pairId}::${cell.amountId}`, cell])), [comparison]);
   const trendLeaderPartner = partners.find((partner) => partner.id === trend?.leader?.protocol);
   const latestCheckAt = useMemo(() => {
@@ -672,13 +710,17 @@ export default function Home() {
   }
 
   function toggleProtocol(id: PartnerId) {
-    setEnabledProtocols((current) => {
-      if (partners.find((partner) => partner.id === id)?.disabled) return current;
-      if (current.includes(id)) {
-        return current.length <= 2 ? current : current.filter((protocol) => protocol !== id);
-      }
-      return partners.filter((partner) => [...current, id].includes(partner.id)).map((partner) => partner.id);
-    });
+    if (partners.find((partner) => partner.id === id)?.disabled) return;
+    const next = enabledProtocols.includes(id)
+      ? enabledProtocols.length <= 2 ? enabledProtocols : enabledProtocols.filter((protocol) => protocol !== id)
+      : partners.filter((partner) => [...enabledProtocols, id].includes(partner.id)).map((partner) => partner.id);
+    const selectedAssets = new Set(selectedAssetIds);
+    const selectedProtocols = new Set(next);
+    enabledProtocolsRef.current = next;
+    setEnabledProtocols(next);
+    setSelectedRoute((current) => current && routeMatchesAssets(current, selectedAssets) && routeMatchesProtocols(current, selectedProtocols)
+      ? current
+      : (catalog?.routes ?? []).find((route) => routeMatchesAssets(route, selectedAssets) && routeMatchesProtocols(route, selectedProtocols)) ?? null);
   }
 
   function toggleAsset(assetId: string) {
@@ -686,11 +728,22 @@ export default function Home() {
       ? selectedAssetIds.length === 1 ? [] : selectedAssetIds.filter((item) => item !== assetId)
       : availableAssets.map((asset) => asset.id).filter((id) => id === assetId || selectedAssetIds.includes(id));
     const normalized = next.length === availableAssets.length ? [] : next;
-    const selected = new Set(normalized);
+    const selectedAssets = new Set(normalized);
+    const selectedProtocols = new Set(enabledProtocols);
+    selectedAssetIdsRef.current = normalized;
     setSelectedAssetIds(normalized);
-    setSelectedRoute((current) => current && routeMatchesAssets(current, selected)
+    setSelectedRoute((current) => current && routeMatchesAssets(current, selectedAssets) && routeMatchesProtocols(current, selectedProtocols)
       ? current
-      : (catalog?.routes ?? []).find((route) => routeMatchesAssets(route, selected)) ?? null);
+      : (catalog?.routes ?? []).find((route) => routeMatchesAssets(route, selectedAssets) && routeMatchesProtocols(route, selectedProtocols)) ?? null);
+  }
+
+  function clearAssetFilters() {
+    const selectedProtocols = new Set(enabledProtocols);
+    selectedAssetIdsRef.current = [];
+    setSelectedAssetIds([]);
+    setSelectedRoute((current) => current && routeMatchesProtocols(current, selectedProtocols)
+      ? current
+      : (catalog?.routes ?? []).find((route) => routeMatchesProtocols(route, selectedProtocols)) ?? null);
   }
 
   function toggleTheme() {
@@ -727,7 +780,22 @@ export default function Home() {
         <button className="leaderboard-filter-summary" type="button" onClick={() => setMobileFiltersOpen((current) => !current)} aria-expanded={mobileFiltersOpen} aria-controls="leaderboard-filters"><span><b>Ranking settings</b><small>{assetSummary} · {activePartners.length} protocols · {executionLabel(executionMode)} · {viewWindow === "now" ? "Latest" : viewWindow}</small></span><strong>Filters</strong></button>
         <div className="filter-bar leaderboard-tools" id="leaderboard-filters">
           <fieldset className="protocol-filter"><legend>Compare protocols</legend><div>{partners.map((partner) => <button key={partner.id} className={`${enabledProtocols.includes(partner.id) ? "selected" : ""} ${partner.disabled ? "disabled" : ""}`} onClick={() => toggleProtocol(partner.id)} aria-pressed={enabledProtocols.includes(partner.id)} disabled={Boolean(partner.disabled) || (enabledProtocols.length <= 2 && enabledProtocols.includes(partner.id))}><PartnerMark id={partner.id} muted={!enabledProtocols.includes(partner.id)} /><span>{partner.name}{partner.disabled ? " · DISABLED" : ""}</span></button>)}</div><small>Choose at least two. Maya is disabled while the protocol is halted.</small></fieldset>
-          <fieldset className="asset-filter"><legend>Assets</legend><div className="filter-chip-group"><button type="button" className={`asset-filter-chip all-assets ${selectedAssetIds.length === 0 ? "selected" : ""}`} onClick={() => setSelectedAssetIds([])} aria-pressed={selectedAssetIds.length === 0}><span><b>All</b><small>assets</small></span></button>{availableAssets.map((asset) => <button type="button" key={asset.id} className={`asset-filter-chip ${selectedAssetIds.includes(asset.id) ? "selected" : ""}`} onClick={() => toggleAsset(asset.id)} aria-pressed={selectedAssetIds.includes(asset.id)} aria-label={`Filter routes by ${asset.symbol} on ${asset.chain}`}><AssetMark asset={asset} /><span><b>{asset.symbol}</b><small>{chainLabel(asset.chain)}</small></span></button>)}</div><small className="filter-helper">{filteredRoutes.length} of {catalog?.routes.length ?? 0} routes · Matches either endpoint.</small></fieldset>
+          <fieldset className="asset-filter"><legend>Assets</legend><div className="asset-select" ref={assetMenu}>
+            <button className="asset-select-trigger" type="button" onClick={() => setAssetMenuOpen((current) => !current)} aria-expanded={assetMenuOpen} aria-controls="asset-select-menu">
+              <span className="asset-select-summary">{selectedAssets.length === 0
+                ? <span className="asset-summary-chip all">ALL</span>
+                : <>{selectedAssets.slice(0, 2).map((asset) => <span className="asset-summary-chip" key={asset.id} title={`${asset.symbol} on ${chainLabel(asset.chain)}`}>{asset.symbol}</span>)}{selectedAssets.length > 2 && <span className="asset-summary-more">+{selectedAssets.length - 2}</span>}</>}
+              </span><span className="asset-select-chevron" aria-hidden="true">⌄</span>
+            </button>
+            {assetMenuOpen && <div className="asset-select-menu" id="asset-select-menu" role="listbox" aria-multiselectable="true" aria-label="Filter routes by asset">
+              <button className={`asset-select-option all ${selectedAssetIds.length === 0 ? "selected" : ""}`} type="button" role="option" aria-selected={selectedAssetIds.length === 0} onClick={clearAssetFilters}><span className="asset-checkbox" aria-hidden="true">{selectedAssetIds.length === 0 ? "✓" : ""}</span><span className="asset-option-copy"><b>ALL ASSETS</b><small>Show every supported route</small></span></button>
+              {availableAssets.map((asset) => {
+                const selected = selectedAssetIds.includes(asset.id);
+                return <button className={`asset-select-option ${selected ? "selected" : ""}`} type="button" role="option" aria-selected={selected} key={asset.id} onClick={() => toggleAsset(asset.id)}><span className="asset-checkbox" aria-hidden="true">{selected ? "✓" : ""}</span><AssetMark asset={asset} /><span className="asset-option-copy"><b>{asset.symbol}</b><small>{chainLabel(asset.chain)}</small></span></button>;
+              })}
+              <div className="asset-select-footer">{filteredRoutes.length} of {catalog?.routes.length ?? 0} routes</div>
+            </div>}
+          </div></fieldset>
           <fieldset className="execution-filter"><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Streaming/DCA</button><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Standard swap</button></div></fieldset>
           <fieldset className="comparison-window-filter"><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Latest check" : window.replace("d", " days")}</button>)}</div></fieldset>
         </div>
@@ -749,10 +817,10 @@ export default function Home() {
         <div className="mobile-route-list" id="leaderboard-results" aria-label="Mobile route leaderboard">
           <header className="mobile-leaderboard-header"><div><b>Ranked routes</b><small>Choose a trade size</small></div><div className="mobile-leaderboard-sizes" role="group" aria-label="Trade size for mobile leaderboard">{quoteSizes.map((size) => <button key={size.id} className={selectedSize.id === size.id ? "selected" : ""} onClick={() => setSelectedSize(size)} aria-pressed={selectedSize.id === size.id}>{size.label}</button>)}</div></header>
           {loading && <div className="mobile-route-loading" role="status">Loading ranked routes…</div>}
-          {filteredRoutes.map((route) => <MobileRouteCard key={route.id} route={route} selectedSize={selectedSize} cells={cells} viewWindow={viewWindow} now={now} activePartnerCount={activePartners.length} onInspect={inspect} />)}
+          {filteredRoutes.map((route) => <MobileRouteCard key={route.id} route={route} selectedSize={selectedSize} cells={cells} viewWindow={viewWindow} now={now} enabledProtocols={enabledProtocols} onInspect={inspect} />)}
         </div>
         {!loading && catalog?.routes.length === 0 && <div className="empty-table">No fixed routes are available.</div>}
-        {!loading && Boolean(catalog?.routes.length) && filteredRoutes.length === 0 && <div className="empty-table">No routes contain the selected assets.</div>}
+        {!loading && Boolean(catalog?.routes.length) && filteredRoutes.length === 0 && <div className="empty-table">No routes match the selected assets and protocols.</div>}
       </div>}
     </section>
 

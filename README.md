@@ -3,7 +3,7 @@
 SwapRank compares synchronized cross-chain swap quotes from THORChain,
 Maya Protocol, Chainflip, and NEAR Intents.
 
-The benchmark covers 20 fixed directed routes, seven USD input sizes, and two
+The benchmark covers 30 fixed directed routes, seven USD input sizes, and two
 execution modes: Standard Swap and Streaming/DCA. Scheduled Cloudflare Workers
 enqueue a complete sweep every 30 minutes. D1 stores queryable quote history
 and R2 stores compressed archives.

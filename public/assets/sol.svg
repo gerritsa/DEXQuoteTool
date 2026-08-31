@@ -1,0 +1,6 @@
+<svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <title>Solana</title>
+  <defs><linearGradient id="sol" x1="3" y1="21" x2="21" y2="3" gradientUnits="userSpaceOnUse"><stop stop-color="#00ffa3"/><stop offset="1" stop-color="#dc1fff"/></linearGradient></defs>
+  <circle cx="12" cy="12" r="12" fill="#171817"/>
+  <path fill="url(#sol)" d="M19.55 16.59 17.2 19.04a.55.55 0 0 1-.4.17H5.67a.27.27 0 0 1-.2-.46l2.35-2.45a.55.55 0 0 1 .4-.17h11.13a.27.27 0 0 1 .2.46Zm-2.35-5.28a.55.55 0 0 0-.4-.17H5.67a.27.27 0 0 0-.2.46l2.35 2.45a.55.55 0 0 0 .4.17h11.13a.27.27 0 0 0 .2-.46L17.2 11.31ZM5.67 9.23H16.8a.55.55 0 0 0 .4-.17l2.35-2.45a.27.27 0 0 0-.2-.46H8.22a.55.55 0 0 0-.4.17L5.47 8.77a.27.27 0 0 0 .2.46Z"/>
+</svg>

@@ -267,6 +267,27 @@ test("leaderboard uses THORChain green and compact unranked asset paths", async 
   assert.doesNotMatch(styles, /#d1ff45|#d6ff4b/);
 });
 
+test("expanded route filters require two supported protocols and render every asset", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+  const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
+  assert.match(readme, /30 fixed directed routes/);
+  assert.match(layout, /across 30 fixed routes/);
+  assert.match(page, /function routeMatchesProtocols/);
+  assert.match(page, /routeMatchesAssets\(route, selectedAssets\) && routeMatchesProtocols\(route, selectedProtocols\)/);
+  assert.match(page, /activeRoutePartnerCount/);
+  assert.match(page, /\["bch", "bnb", "doge", "ltc", "sol", "xrp"\]/);
+  for (const symbol of ["bch", "bnb", "doge", "ltc", "sol", "xrp"]) {
+    const logo = await readFile(new URL(`../public/assets/${symbol}.svg`, import.meta.url), "utf8");
+    assert.match(logo, /<svg role="img"/);
+    assert.match(logo, /<title>/);
+  }
+  assert.match(page, /className="asset-select-trigger"/);
+  assert.match(page, /role="listbox" aria-multiselectable="true"/);
+  assert.match(page, /selectedAssets\.slice\(0, 2\)/);
+  assert.match(page, /className="asset-checkbox"/);
+});
+
 test("collector archives fixed-length gzip bodies and preserves finalization errors", async () => {
   const collector = await readFile(new URL("../lib/collector.ts", import.meta.url), "utf8");
   const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");

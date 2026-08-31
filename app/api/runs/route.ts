@@ -18,6 +18,8 @@ type StoredPayload = {
   rawResponseJson: string | null;
   payloadErrorMessage: string | null;
 };
+type NavigationTarget = { runId: number; initiatedAt: string };
+type NavigationRow = NavigationTarget & { direction: "previous" | "next" };
 
 function serialized(value: unknown) {
   return value == null ? null : JSON.stringify(value, null, 2);
@@ -54,6 +56,48 @@ async function archivedPayloads(run: StoredRun) {
     console.warn("Unable to read archived quote payloads", { runId: run.id, error });
     return empty;
   }
+}
+
+async function availableNavigation(run: StoredRun) {
+  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const result = await getD1().prepare(`
+    WITH available_runs AS (
+      SELECT r.id AS runId, r.initiated_at AS initiatedAt
+      FROM benchmark_runs r
+      LEFT JOIN collector_bundles b
+        ON b.sweep_id = r.sweep_id AND b.bundle_index = r.bundle_index
+      WHERE r.pair_id = ? AND r.amount_id = ? AND r.mode = ?
+        AND r.initiated_at >= ?
+        AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
+        AND (
+          b.raw_archive_key IS NOT NULL
+          OR EXISTS (SELECT 1 FROM latest_quote_payloads p WHERE p.run_id = r.id)
+        )
+    ), previous_run AS (
+      SELECT runId, initiatedAt FROM available_runs
+      WHERE initiatedAt < ? OR (initiatedAt = ? AND runId < ?)
+      ORDER BY initiatedAt DESC, runId DESC LIMIT 1
+    ), next_run AS (
+      SELECT runId, initiatedAt FROM available_runs
+      WHERE initiatedAt > ? OR (initiatedAt = ? AND runId > ?)
+      ORDER BY initiatedAt, runId LIMIT 1
+    )
+    SELECT 'previous' AS direction, runId, initiatedAt FROM previous_run
+    UNION ALL
+    SELECT 'next' AS direction, runId, initiatedAt FROM next_run
+  `).bind(
+    run.pairId, run.amountId, run.mode, cutoff,
+    run.initiatedAt, run.initiatedAt, run.id,
+    run.initiatedAt, run.initiatedAt, run.id,
+  ).all<NavigationRow>();
+  const targets = new Map(result.results.map((target) => [target.direction, {
+    runId: Number(target.runId),
+    initiatedAt: target.initiatedAt,
+  }]));
+  return {
+    previous: targets.get("previous") ?? null,
+    next: targets.get("next") ?? null,
+  };
 }
 
 export async function GET(request: Request) {
@@ -98,9 +142,11 @@ export async function GET(request: Request) {
     `).bind(run.id, run.pairId, run.amountId, run.mode).all<StoredPayload>();
     const payloadByProtocol = new Map(payloads.results.map((payload) => [payload.protocol, payload]));
     const archived = hasRunId ? await archivedPayloads(run) : { available: false, payloads: new Map<string, StoredPayload>() };
+    const navigation = await availableNavigation(run);
     return writePublicCache(request, Response.json({
       run,
       rawDetailsAvailable: payloads.results.length > 0 || archived.available,
+      navigation,
       quotes: quotes.map((quote) => {
         const payload = payloadByProtocol.get(quote.protocol) ?? archived.payloads.get(quote.protocol);
         return {

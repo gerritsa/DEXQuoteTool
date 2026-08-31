@@ -64,7 +64,7 @@ type TrendResponse = {
   comparableRuns: number;
   leader: null | { protocol: PartnerId; averageOracleGapBps: number; medianOracleGapBps: number; winRate: number; sampleCount: number; availability: number };
   summary: Array<{ protocol: PartnerId; averageOracleGapBps: number | null; medianOracleGapBps: number | null; winRate: number | null; sampleCount: number; availability: number }>;
-  buckets: Array<{ timestamp: number; runId: number | null; points: TrendPoint[] }>;
+  buckets: Array<{ timestamp: number; points: TrendPoint[] }>;
   error?: string;
 };
 
@@ -105,6 +105,10 @@ type HealthResponse = {
 
 type RunResponse = {
   rawDetailsAvailable?: boolean;
+  navigation?: {
+    previous: { runId: number; initiatedAt: string } | null;
+    next: { runId: number; initiatedAt: string } | null;
+  };
   run: null | {
     id: number;
     initiatedAt: string;
@@ -332,7 +336,7 @@ function LatestQuoteComparison({ route, runDetails, runLoading, selectedSize, on
   </section>;
 }
 
-function RequestDetails({ runDetails, runLoading, selectedSize, historical = false }: { runDetails: RunResponse | null; runLoading: boolean; selectedSize: QuoteSize; historical?: boolean }) {
+function RequestDetails({ runDetails, runLoading, selectedSize, historical = false, onNavigate }: { runDetails: RunResponse | null; runLoading: boolean; selectedSize: QuoteSize; historical?: boolean; onNavigate: (runId: number) => void }) {
   const winnerProtocol = [...(runDetails?.quotes ?? [])]
     .filter((quote) => quote.status === "quoted" && quote.expectedOutputFormatted)
     .sort((a, b) => Number(b.expectedOutputFormatted) - Number(a.expectedOutputFormatted))[0]?.protocol;
@@ -343,6 +347,11 @@ function RequestDetails({ runDetails, runLoading, selectedSize, historical = fal
     {runLoading ? <><h3>Loading requests…</h3><p>Reading the synchronized batch and its archived raw payloads.</p></> : runDetails?.run ? <>
       <h3>{runDetails.quotes.length} protocol results</h3>
       <p>Captured {formatTime(runDetails.run.initiatedAt)} · ${runDetails.run.sourceAmountUsd.toLocaleString()} exact input · synchronized within {runDetails.run.maxRequestSkewMs ?? "—"} ms</p>
+      <nav className="request-history-nav" aria-label="Raw quote history">
+        <button type="button" disabled={runLoading || !runDetails.navigation?.previous} onClick={() => runDetails.navigation?.previous && onNavigate(runDetails.navigation.previous.runId)} title={runDetails.navigation?.previous ? `Previous batch: ${formatTime(runDetails.navigation.previous.initiatedAt)}` : "No earlier raw batch available"}>← Previous</button>
+        <span><b>{historical ? "Archived batch" : "Latest batch"}</b><small>Raw history is retained for 7 days</small></span>
+        <button type="button" disabled={runLoading || !runDetails.navigation?.next} onClick={() => runDetails.navigation?.next && onNavigate(runDetails.navigation.next.runId)} title={runDetails.navigation?.next ? `Next batch: ${formatTime(runDetails.navigation.next.initiatedAt)}` : "No newer raw batch available"}>Next →</button>
+      </nav>
       {runDetails.rawDetailsAvailable === false && <p>Raw payloads are unavailable for this batch. Normalized quote results are still shown below.</p>}
       <div className="request-list">{orderedQuotes.map((quote) => <details key={quote.id}>
         <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.protocol === "chainflip" && runDetails.run?.mode === "optimized" && quote.strategy === "regular" ? "regular fallback" : quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quoteStatusLabel(quote)}</strong></summary>
@@ -353,7 +362,7 @@ function RequestDetails({ runDetails, runLoading, selectedSize, historical = fal
   </div>;
 }
 
-function TrendChart({ data, activePartners, onInspectRun }: { data: TrendResponse; activePartners: typeof partners; onInspectRun: (runId: number) => void }) {
+function TrendChart({ data, activePartners }: { data: TrendResponse; activePartners: typeof partners }) {
   const width = 920;
   const height = 300;
   const padding = { top: 24, right: 18, bottom: 30, left: 58 };
@@ -377,7 +386,7 @@ function TrendChart({ data, activePartners, onInspectRun }: { data: TrendRespons
     points: data.buckets.flatMap((bucket) => {
       const point = bucket.points.find((item) => item.protocol === partner.id);
       const value = point?.oracleGapBps ?? null;
-      return point && value != null ? [{ timestamp: bucket.timestamp, runId: bucket.runId, value, point }] : [];
+      return point && value != null ? [{ timestamp: bucket.timestamp, value, point }] : [];
     }),
   }));
 
@@ -394,16 +403,7 @@ function TrendChart({ data, activePartners, onInspectRun }: { data: TrendRespons
           if (!current || point.timestamp - current[current.length - 1].timestamp > data.bucketMs * 1.5) segments.push([point]);
           else current.push(point);
         }
-        return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => {
-          const interactive = data.days === 1 && point.runId != null;
-          const label = `${partner.name} · ${formatBps(point.value)} vs oracle · ${trendPointContext(point.point, data.pointMode)}`;
-          const dot = <circle className="trend-point-dot" cx={x(point.timestamp)} cy={y(point.value)} r={data.pointMode === "comparison" && point.point.winRate ? "4" : "3"} fill={partner.color}><title>{interactive ? `${label} · Open raw details` : label}</title></circle>;
-          if (!interactive) return <g key={point.timestamp}>{dot}</g>;
-          return <g key={point.timestamp} className="trend-point interactive" role="button" tabIndex={0} aria-label={`${label}. Open raw details.`} onClick={() => onInspectRun(point.runId!)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onInspectRun(point.runId!); } }}>
-            <circle className="trend-hit-area" cx={x(point.timestamp)} cy={y(point.value)} r="10" fill="transparent" />
-            {dot}
-          </g>;
-        })}</g>;
+        return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => <circle key={point.timestamp} cx={x(point.timestamp)} cy={y(point.value)} r={data.pointMode === "comparison" && point.point.winRate ? "4" : "3"} fill={partner.color}><title>{partner.name} · {formatBps(point.value)} vs oracle · {trendPointContext(point.point, data.pointMode)}</title></circle>)}</g>;
       })}
     </svg>
     <div className="trend-legend">{activePartners.map((partner) => {
@@ -602,7 +602,7 @@ export default function Home() {
     setRequestsOpen(true);
   }
 
-  function inspectHistoricalRun(runId: number) {
+  function navigateRunDetails(runId: number) {
     auditRequest.current?.abort();
     const controller = new AbortController();
     auditRequest.current = controller;
@@ -614,7 +614,10 @@ export default function Home() {
       .then(async (response) => {
         const data = await response.json() as RunResponse;
         if (!response.ok) throw new Error(data.error ?? "Historical quote details unavailable");
-        if (!controller.signal.aborted) setAuditDetails(data);
+        if (!controller.signal.aborted) {
+          setAuditDetails(data);
+          setAuditHistorical(data.run?.id !== runDetails?.run?.id);
+        }
       })
       .catch((error) => {
         if (!controller.signal.aborted) setAuditDetails({ run: null, quotes: [], error: error instanceof Error ? error.message : "Historical quote details unavailable" });
@@ -725,15 +728,15 @@ export default function Home() {
             <fieldset><legend>Period</legend><div className="segmented light">{([1, 7, 14, 30] as const).map((days) => <button key={days} className={trendDays === days ? "selected" : ""} onClick={() => setTrendDays(days)}>{days === 1 ? "Last 24 hours" : `${days}d`}</button>)}</div></fieldset>
           </div>
         </header>
-        {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} activePartners={activePartners} onInspectRun={inspectHistoricalRun} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
-        <div className="trend-note"><b>0 bps is THORChain oracle parity</b><span>{trend?.pointMode === "comparison" ? `Every point compares the quoted output with the same synchronized CEX-derived oracle cross-rate. The highest point is the batch winner; points below zero return less than oracle parity and points above zero return more.${trendDays === 1 ? " Select any point to inspect that batch’s raw details." : ""}` : "Every point shows each DEX’s median signed deviation from the synchronized CEX-derived oracle within that time bucket. Winner share is still calculated from the highest quoted output in each batch."}</span></div>
+        {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} activePartners={activePartners} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
+        <div className="trend-note"><b>0 bps is THORChain oracle parity</b><span>{trend?.pointMode === "comparison" ? "Every point compares the quoted output with the same synchronized CEX-derived oracle cross-rate. The highest point is the batch winner; points below zero return less than oracle parity and points above zero return more." : "Every point shows each DEX’s median signed deviation from the synchronized CEX-derived oracle within that time bucket. Winner share is still calculated from the highest quoted output in each batch."}</span></div>
       </section>
 
       {requestsOpen && <div className="request-drawer-backdrop">
         <button className="request-drawer-dismiss" onClick={closeRequestDrawer} aria-label="Close quote details" />
         <aside className="request-drawer" role="dialog" aria-modal="true" aria-labelledby="request-drawer-title">
           <header><div><p className="eyebrow">Quote audit</p><h2 id="request-drawer-title">{selectedRoute ? `${selectedRoute.source.symbol} → ${selectedRoute.destination.symbol}` : "Quote details"}</h2></div><button onClick={closeRequestDrawer} aria-label="Close quote details">×</button></header>
-          <RequestDetails runDetails={auditHistorical ? auditDetails : runDetails} runLoading={auditHistorical ? auditLoading : runLoading} selectedSize={selectedSize} historical={auditHistorical} />
+          <RequestDetails runDetails={auditHistorical ? auditDetails : runDetails} runLoading={auditHistorical ? auditLoading : runLoading} selectedSize={selectedSize} historical={auditHistorical} onNavigate={navigateRunDetails} />
         </aside>
       </div>}
     </section>

@@ -200,7 +200,7 @@ test("public cache keys ignore cache-busting and irrelevant parameters", () => {
   );
   assert.equal(
     canonicalPublicCacheUrl(new Request("https://swaprank.test/api/runs?runId=42&routeId=ignored&junk=anything")),
-    "https://swaprank.test/api/runs?runId=42",
+    "https://swaprank.test/api/runs?schema=2&runId=42",
   );
 });
 
@@ -215,20 +215,22 @@ test("route analysis keeps the latest synchronized DEX outputs visible", async (
   assert.match(page, /setRequestsOpen\(true\)/);
 });
 
-test("24-hour trend points open archived raw quote details", async () => {
+test("the raw details drawer navigates retained quote batches", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  const trends = await readFile(new URL("../app/api/trends/route.ts", import.meta.url), "utf8");
   const runs = await readFile(new URL("../app/api/runs/route.ts", import.meta.url), "utf8");
-  assert.match(trends, /runId: runRows\[0\]\?\.runId \?\? null/);
-  assert.match(page, /data\.days === 1 && point\.runId != null/);
-  assert.match(page, /function inspectHistoricalRun/);
-  assert.match(page, /Open raw details/);
-  assert.match(page, /event\.key === "Enter" \|\| event\.key === " "/);
+  assert.match(page, /function navigateRunDetails/);
+  assert.match(page, /← Previous/);
+  assert.match(page, /Next →/);
+  assert.match(page, /Raw history is retained for 7 days/);
+  assert.doesNotMatch(page, /onInspectRun/);
   assert.match(runs, /raw_archive_key AS rawArchiveKey/);
   assert.match(runs, /archiveBucket\.get\(bundle\.rawArchiveKey\)/);
   assert.match(runs, /new DecompressionStream\("gzip"\)/);
   assert.match(runs, /candidate\.runId === run\.id/);
   assert.match(runs, /rawDetailsAvailable/);
+  assert.match(runs, /WITH available_runs AS/);
+  assert.match(runs, /previous_run AS/);
+  assert.match(runs, /next_run AS/);
 });
 
 test("leaderboard uses THORChain green and compact unranked asset paths", async () => {

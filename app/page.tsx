@@ -6,6 +6,7 @@ import { quoteSizes, type QuoteSize } from "../lib/quotes/sizes";
 
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 type ViewWindow = "now" | "7d" | "14d" | "30d";
+type TrendDays = 1 | 7 | 14 | 30;
 type ExecutionMode = "standard" | "optimized";
 type Theme = "dark" | "light";
 
@@ -204,6 +205,10 @@ function formatBps(value?: number | null) {
   return `${value > 0 ? "+" : ""}${value.toFixed(precision)} bps`;
 }
 
+function trendPeriodLabel(days: TrendDays) {
+  return days === 1 ? "the last 24 hours" : `${days} days`;
+}
+
 function formatTokenAmount(value?: string | number | null) {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return "—";
@@ -362,7 +367,7 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
   }));
 
   return <div className="trend-visual">
-    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${data.days}-day quote gap in basis points from the best synchronized quote`}>
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${data.days === 1 ? "24-hour" : `${data.days}-day`} quote gap in basis points from the best synchronized quote`}>
       <text className="axis-title" x={padding.left} y="11">BPS FROM BEST</text>
       {ticks.map((value) => <g key={value}><line x1={padding.left} x2={width - padding.right} y1={y(value)} y2={y(value)} className={value === 0 ? "zero-line" : "grid-line"} /><text x={padding.left - 9} y={y(value) + 3} textAnchor="end">{Number.isInteger(value) ? value : value.toFixed(1)}</text></g>)}
       <text x={padding.left} y={height - 7}>{new Date(start).toLocaleDateString([], { month: "short", day: "numeric" })}</text>
@@ -397,7 +402,7 @@ export default function Home() {
   const [runDetails, setRunDetails] = useState<RunResponse | null>(null);
   const [runLoading, setRunLoading] = useState(false);
   const [requestsOpen, setRequestsOpen] = useState(false);
-  const [trendDays, setTrendDays] = useState<7 | 14 | 30>(7);
+  const [trendDays, setTrendDays] = useState<TrendDays>(1);
   const [trend, setTrend] = useState<TrendResponse | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
@@ -547,14 +552,14 @@ export default function Home() {
   function inspect(route: Route, size: QuoteSize) {
     setSelectedRoute(route);
     setSelectedSize(size);
-    if (viewWindow !== "now") setTrendDays(Number(viewWindow.slice(0, -1)) as 7 | 14 | 30);
+    if (viewWindow !== "now") setTrendDays(Number(viewWindow.slice(0, -1)) as TrendDays);
     setRequestsOpen(false);
     window.requestAnimationFrame(() => document.getElementById("analysis")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
 
   function changeWindow(window: ViewWindow) {
     setViewWindow(window);
-    if (window !== "now") setTrendDays(Number(window.slice(0, -1)) as 7 | 14 | 30);
+    if (window !== "now") setTrendDays(Number(window.slice(0, -1)) as TrendDays);
   }
 
   function toggleProtocol(id: PartnerId) {
@@ -649,9 +654,9 @@ export default function Home() {
 
       <section className="trend-card" aria-labelledby="trend-title">
         <header className="trend-header">
-          <div><p className="eyebrow">Historical {executionLabel(executionMode)} gap to best · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} won most quotes over {trendDays} days</> : <>Performance over {trendDays} days</>}</h3><p>{trend?.leader ? `${Math.round(trend.leader.winRate * 100)}% best-quote share · ${formatBps(trend.leader.averageEdgeBps)} average gap · ${Math.round(trend.leader.availability * 100)}% quote availability · ${trend.comparableRuns} comparisons` : "A period leader appears after the first comparable quote batch."}</p></div>
+          <div><p className="eyebrow">Historical {executionLabel(executionMode)} gap to best · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} won most quotes over {trendPeriodLabel(trendDays)}</> : <>Performance over {trendPeriodLabel(trendDays)}</>}</h3><p>{trend?.leader ? `${Math.round(trend.leader.winRate * 100)}% best-quote share · ${formatBps(trend.leader.averageEdgeBps)} average gap · ${Math.round(trend.leader.availability * 100)}% quote availability · ${trend.comparableRuns} comparisons` : "A period leader appears after the first comparable quote batch."}</p></div>
           <div className="trend-controls">
-            <fieldset><legend>Period</legend><div className="segmented light">{([7, 14, 30] as const).map((days) => <button key={days} className={trendDays === days ? "selected" : ""} onClick={() => setTrendDays(days)}>{days}d</button>)}</div></fieldset>
+            <fieldset><legend>Period</legend><div className="segmented light">{([1, 7, 14, 30] as const).map((days) => <button key={days} className={trendDays === days ? "selected" : ""} onClick={() => setTrendDays(days)}>{days === 1 ? "Last 24 hours" : `${days}d`}</button>)}</div></fieldset>
           </div>
         </header>
         {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} activePartners={activePartners} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}

@@ -137,8 +137,8 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const routeId = url.searchParams.get("routeId")?.trim();
     const amountId = url.searchParams.get("amountId")?.trim();
-    const requestedDays = Number(url.searchParams.get("days") ?? 7);
-    const days = [7, 14, 30].includes(requestedDays) ? requestedDays : 7;
+    const requestedDays = Number(url.searchParams.get("days") ?? 1);
+    const days = [1, 7, 14, 30].includes(requestedDays) ? requestedDays : 1;
     const mode: ExecutionMode = url.searchParams.get("mode") === "optimized" ? "optimized" : "standard";
     const requestedProtocols = (url.searchParams.get("protocols") ?? "").split(",").filter((value): value is PartnerId => protocols.includes(value as PartnerId));
     const selectedProtocols = requestedProtocols.length >= 2 ? protocols.filter((protocol) => requestedProtocols.includes(protocol)) : protocols;
@@ -192,7 +192,7 @@ export async function GET(request: Request) {
         || Number(b.averageEdgeBps ?? -Infinity) - Number(a.averageEdgeBps ?? -Infinity)
         || b.availability - a.availability)[0] ?? null;
 
-    const pointMode = days === 7 ? "comparison" : "bucket_median";
+    const pointMode = days <= 7 ? "comparison" : "bucket_median";
     const pointGroups = pointMode === "comparison"
       ? [...Map.groupBy(rows, (row) => row.runId).values()]
           .sort((a, b) => Number(a[0]?.timestamp) - Number(b[0]?.timestamp))

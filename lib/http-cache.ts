@@ -40,8 +40,8 @@ export function canonicalPublicCacheUrl(request: Request) {
     ]).toString();
   }
   if (url.pathname === "/api/trends") {
-    const requestedDays = Number(url.searchParams.get("days") ?? 7);
-    const days = [7, 14, 30].includes(requestedDays) ? String(requestedDays) : "7";
+    const requestedDays = Number(url.searchParams.get("days") ?? 1);
+    const days = [1, 7, 14, 30].includes(requestedDays) ? String(requestedDays) : "1";
     return replaceSearch(url, [
       ["routeId", url.searchParams.get("routeId")?.trim() ?? ""],
       ["amountId", url.searchParams.get("amountId")?.trim() ?? ""],

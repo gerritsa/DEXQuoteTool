@@ -26,6 +26,7 @@ test("server-renders the SwapRank dashboard", async () => {
   assert.doesNotMatch(html, />\$10</);
   assert.doesNotMatch(html, />\$100</);
   assert.match(html, /\$10K/);
+  assert.match(html, /Last 24 hours/);
   assert.match(html, /7 days/);
   assert.match(html, /14 days/);
   assert.match(html, /30 days/);
@@ -139,7 +140,7 @@ test("leaderboard and graph use fifteen-minute shared caching", async () => {
   assert.match(trends, /FROM trend_buckets/);
   assert.match(trends, /output \/ bestOutput/);
   assert.match(trends, /baseline: "batch_best"/);
-  assert.match(trends, /days === 7 \? "comparison" : "bucket_median"/);
+  assert.match(trends, /days <= 7 \? "comparison" : "bucket_median"/);
   assert.match(trends, /publicCacheHeaders\(900\)/);
   assert.match(await readFile(new URL("../app/page.tsx", import.meta.url), "utf8"), /Every point is one synchronized comparison/);
 });
@@ -167,6 +168,10 @@ test("public cache keys ignore cache-busting and irrelevant parameters", () => {
   assert.equal(
     canonicalPublicCacheUrl(new Request("https://swaprank.test/api/routes?refresh=999&junk=anything")),
     "https://swaprank.test/api/routes",
+  );
+  assert.match(
+    canonicalPublicCacheUrl(new Request("https://swaprank.test/api/trends?routeId=eth_btc&amountId=500000")),
+    /[?&]days=1(?:&|$)/,
   );
 });
 

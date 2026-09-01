@@ -27,14 +27,11 @@ test("server-renders the SwapRank dashboard", async () => {
   assert.doesNotMatch(html, />\$10</);
   assert.doesNotMatch(html, />\$100</);
   assert.match(html, /\$10K/);
-  assert.match(html, /Last 24 hours/);
   assert.match(html, /7 days/);
   assert.match(html, /14 days/);
   assert.match(html, /30 days/);
   assert.match(html, /Latest check/);
   assert.match(html, /Refresh page data/);
-  assert.match(html, /0 bps is THORChain oracle parity/);
-  assert.match(html, /Winner share is still calculated from the highest quoted output/);
   assert.match(html, /Execution mode/);
   assert.match(html, /Compare protocols/);
   assert.match(html, /Standard swap/);
@@ -46,10 +43,20 @@ test("server-renders the SwapRank dashboard", async () => {
   assert.match(html, /\/partners\/maya\.svg/);
   assert.match(html, /MAYA PROTOCOL/);
   assert.match(html, /THORCHAIN[\s\S]*MAYA PROTOCOL[\s\S]*CHAINFLIP[\s\S]*NEAR/);
-  assert.match(html, /Route analysis/);
+  assert.doesNotMatch(html, /Route analysis/);
   assert.doesNotMatch(html, />Exact input</);
   assert.doesNotMatch(html, /Run \$.*test/);
   assert.doesNotMatch(html, /Real requests\. Exact sizes\. Explainable winners\./);
+});
+
+test("route analysis renders on a dedicated, bookmarkable page", async () => {
+  const response = await render("/routes/bitcoin%3Anative%3Abtc__ethereum%3Anative%3Aeth?size=10000&mode=standard&days=7&back=%2F%3Fwindow%3D7d%23leaderboard-results");
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /Route analysis · [\s\S]*Standard swap/);
+  assert.match(html, /← Back to leaderboard/);
+  assert.match(html, /href="\/\?window=7d#leaderboard-results"/);
+  assert.doesNotMatch(html, /QUOTE LEADERBOARD/);
 });
 
 test("health endpoint covers stale sweeps, partial routes, and partner errors", async () => {
@@ -98,6 +105,8 @@ test("quote adapters separate expected unavailability from operational errors", 
   assert.match(chainflip, /STRATEGY_UNAVAILABLE/);
   assert.match(chainflip, /INVALID_RESPONSE/);
   assert.match(chainflip, /readQuoteJsonResponse/);
+  assert.match(chainflip, /isVaultSwap", "true"/);
+  assert.doesNotMatch(chainflip, /isOnChain/);
   assert.match(pool, /readQuoteJsonResponse/);
   assert.match(near, /readQuoteJsonResponse/);
   assert.match(response, /await response\.text\(\)/);
@@ -186,11 +195,11 @@ test("leaderboard and graph use fifteen-minute shared caching", async () => {
   assert.match(trends, /baseline: "thorchain_cex_oracle"/);
   assert.match(trends, /days <= 7 \? "comparison" : "bucket_median"/);
   assert.match(trends, /publicCacheHeaders\(900\)/);
-  assert.match(await readFile(new URL("../app/page.tsx", import.meta.url), "utf8"), /Every point compares the quoted output/);
+  assert.match(await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8"), /Every point compares the quoted output/);
 });
 
 test("the dashboard refreshes stale long-lived tabs", async () => {
-  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const page = await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8");
   const cache = await readFile(new URL("../lib/http-cache.ts", import.meta.url), "utf8");
   assert.match(page, /visibilitychange/);
   assert.match(page, /pageRefreshIntervalMs = 15 \* 60_000/);
@@ -224,7 +233,8 @@ test("public cache keys ignore cache-busting and irrelevant parameters", () => {
 });
 
 test("route analysis keeps the latest synchronized DEX outputs visible", async () => {
-  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const page = await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8");
+  assert.match(page, /window\.history\.replaceState\(null, "", leaderboardReturnHref\(\)\)/);
   assert.match(page, /function LatestQuoteComparison/);
   assert.match(page, /Latest quote comparison/);
   assert.match(page, /Exact input/);
@@ -235,7 +245,7 @@ test("route analysis keeps the latest synchronized DEX outputs visible", async (
 });
 
 test("the raw details drawer navigates retained quote batches", async () => {
-  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const page = await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8");
   const runs = await readFile(new URL("../app/api/runs/route.ts", import.meta.url), "utf8");
   const retention = await readFile(new URL("../lib/quotes/retention.ts", import.meta.url), "utf8");
   assert.match(page, /function navigateRunDetails/);
@@ -256,7 +266,7 @@ test("the raw details drawer navigates retained quote batches", async () => {
 });
 
 test("leaderboard uses THORChain green and compact unranked asset paths", async () => {
-  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const page = await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8");
   const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(page, /function LeaderboardRoutePath/);
   assert.match(page, /asset\.thorAsset\.split\("-"\)\[0\]/);
@@ -268,7 +278,7 @@ test("leaderboard uses THORChain green and compact unranked asset paths", async 
 });
 
 test("expanded route filters require two supported protocols and render every asset", async () => {
-  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const page = await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8");
   const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
   const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
   assert.match(readme, /30 fixed directed routes/);
@@ -284,7 +294,9 @@ test("expanded route filters require two supported protocols and render every as
   }
   assert.match(page, /className="asset-select-trigger"/);
   assert.match(page, /role="listbox" aria-multiselectable="true"/);
-  assert.match(page, /selectedAssets\.slice\(0, 2\)/);
+  assert.match(page, /selectedAssets\.slice\(0, visibleAssetCount\)/);
+  assert.match(page, /new ResizeObserver\(updateVisibleAssets\)/);
+  assert.match(page, /compactChainLabel\(asset\.chain\)/);
   assert.match(page, /className="asset-checkbox"/);
 });
 

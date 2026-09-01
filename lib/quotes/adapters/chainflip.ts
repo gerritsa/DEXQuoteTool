@@ -21,7 +21,8 @@ function isChainflipQuote(value: unknown): value is ChainflipQuote {
 
 function responseMessage(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  return typeof value.message === "string" ? value.message : undefined;
+  const record = value as Record<string, unknown>;
+  return typeof record.message === "string" ? record.message : undefined;
 }
 
 function isExpectedUnavailable(status: number, message?: string) {
@@ -47,8 +48,7 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
   url.searchParams.set("srcAsset", source.asset);
   url.searchParams.set("destChain", destination.chain);
   url.searchParams.set("destAsset", destination.asset);
-  url.searchParams.set("isVaultSwap", "false");
-  url.searchParams.set("isOnChain", "false");
+  url.searchParams.set("isVaultSwap", "true");
   url.searchParams.set("dcaV2Enabled", String(request.mode === "optimized"));
 
   const started = Date.now();

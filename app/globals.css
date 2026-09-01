@@ -260,6 +260,48 @@ html{scroll-padding-top:82px}
 .asset-select-measure{position:absolute;left:-9999px;top:0;visibility:hidden;display:flex;align-items:center;gap:5px;white-space:nowrap;pointer-events:none}
 .asset-select-menu{width:100%}
 
+/* Light-theme versions of the terminal controls and analysis panels */
+:root[data-theme="light"] .filter-bar{border:1px solid var(--line);border-bottom:0;background:var(--card);color:var(--ink)}
+:root[data-theme="light"] .filter-bar legend,
+:root[data-theme="light"] .protocol-filter small{color:var(--muted)}
+:root[data-theme="light"] .protocol-filter button{border-color:var(--line);background:var(--card-raised);color:var(--muted)}
+:root[data-theme="light"] .protocol-filter button.selected{border-color:var(--muted);background:var(--soft-strong);color:var(--ink)}
+:root[data-theme="light"] .protocol-filter button.disabled{color:var(--muted)}
+:root[data-theme="light"] .segmented{background:var(--soft)}
+:root[data-theme="light"] .segmented button{color:var(--muted)}
+:root[data-theme="light"] .segmented button.selected{background:var(--acid);color:var(--acid-ink)}
+:root[data-theme="light"] .asset-select-trigger{border-color:var(--line);background:var(--card-raised);color:var(--ink)}
+:root[data-theme="light"] .asset-select-trigger:hover,
+:root[data-theme="light"] .asset-select-trigger:focus-visible,
+:root[data-theme="light"] .asset-select-trigger[aria-expanded="true"]{border-color:var(--muted)}
+:root[data-theme="light"] .asset-summary-chip,
+:root[data-theme="light"] .asset-summary-more{border-color:var(--line);background:var(--soft-strong);color:var(--ink)}
+:root[data-theme="light"] .asset-summary-chip.all{border-color:var(--acid);background:var(--acid);color:var(--acid-ink)}
+:root[data-theme="light"] .asset-summary-chip small,
+:root[data-theme="light"] .asset-summary-more,
+:root[data-theme="light"] .asset-select-chevron{color:var(--muted)}
+:root[data-theme="light"] .asset-select-menu{border-color:var(--line);background:var(--card-raised);box-shadow:0 16px 36px rgba(23,24,23,.16)}
+:root[data-theme="light"] .asset-select-option{border-bottom-color:var(--line);color:var(--ink)}
+:root[data-theme="light"] .asset-select-option:hover,
+:root[data-theme="light"] .asset-select-option:focus-visible{background:var(--soft)}
+:root[data-theme="light"] .asset-select-option.selected{background:color-mix(in srgb,var(--acid) 10%,var(--card-raised))}
+:root[data-theme="light"] .asset-checkbox{border-color:var(--muted);background:var(--card-raised)}
+:root[data-theme="light"] .asset-option-copy small{color:var(--muted)}
+:root[data-theme="light"] .asset-select-footer{border-top-color:var(--line);background:var(--soft);color:var(--muted)}
+:root[data-theme="light"] .route-telemetry,
+:root[data-theme="light"] .latest-comparison{background:var(--card-raised);color:var(--ink)}
+:root[data-theme="light"] .route-telemetry code,
+:root[data-theme="light"] .route-telemetry strong,
+:root[data-theme="light"] .quote-audit-link,
+:root[data-theme="light"] .latest-input-card{color:var(--ink)}
+:root[data-theme="light"] .route-telemetry b,
+:root[data-theme="light"] .latest-comparison>header>div>span,
+:root[data-theme="light"] .latest-input-card small,
+:root[data-theme="light"] .latest-input-card b,
+:root[data-theme="light"] .latest-quote-card>strong span,
+:root[data-theme="light"] .latest-quote-card>small,
+:root[data-theme="light"] .latest-comparison-state span{color:var(--muted)}
+
 /* Sharper cyber-terminal geometry */
 .theme-toggle{border-radius:4px}
 .leaderboard-intro{border-radius:4px 4px 0 0}

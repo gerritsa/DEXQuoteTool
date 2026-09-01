@@ -234,6 +234,7 @@ test("public cache keys ignore cache-busting and irrelevant parameters", () => {
 
 test("route analysis keeps the latest synchronized DEX outputs visible", async () => {
   const page = await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(page, /window\.history\.replaceState\(null, "", leaderboardReturnHref\(\)\)/);
   assert.match(page, /function LatestQuoteComparison/);
   assert.match(page, /Latest quote comparison/);
@@ -242,6 +243,10 @@ test("route analysis keeps the latest synchronized DEX outputs visible", async (
   assert.match(page, /vs oracle/);
   assert.match(page, /Raw details/);
   assert.match(page, /setRequestsOpen\(true\)/);
+  assert.match(styles, /:root\[data-theme="light"\] \.route-telemetry/);
+  assert.match(styles, /:root\[data-theme="light"\] \.latest-comparison/);
+  assert.match(styles, /:root\[data-theme="light"\] \.filter-bar/);
+  assert.match(styles, /:root\[data-theme="light"\] \.asset-select-menu/);
 });
 
 test("the raw details drawer navigates retained quote batches", async () => {

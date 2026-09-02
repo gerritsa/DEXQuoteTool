@@ -390,7 +390,7 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
     const value = point.oracleGapBps;
     return value == null ? [] : [{ timestamp: bucket.timestamp, value, point }];
   }));
-  if (!plotted.length) return <div className="trend-empty"><b>No trend line yet</b><span>Run this exact route and size at least twice to start the chart.</span></div>;
+  if (!plotted.length) return <div className="trend-empty"><b>No oracle-backed quote yet</b><span>Run this exact route and size once to start the chart.</span></div>;
 
   const deviations = plotted.map((point) => Math.abs(point.value)).sort((a, b) => a - b);
   const percentile = deviations[Math.min(deviations.length - 1, Math.floor(deviations.length * 0.95))] ?? 5;

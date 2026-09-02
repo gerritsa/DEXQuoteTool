@@ -152,6 +152,7 @@ test("catalog failures and trend availability are not reported as successful sup
   assert.match(catalog, /Chainflip catalog unavailable/);
   assert.match(trends, /availability\.successes \/ availability\.attempts/);
   assert.match(trends, /FROM daily_comparison_metrics/);
+  assert.doesNotMatch(trends, /quotes\.length < 2/);
 });
 
 test("does not expose a public collector page", async () => {

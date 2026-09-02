@@ -55,7 +55,7 @@ function scoreRuns(storedRuns: StoredRun[], selectedProtocols: PartnerId[], star
     const timestamp = new Date(run.initiatedAt).getTime();
     if (!Number.isFinite(timestamp) || timestamp < startAt || timestamp > endAt) continue;
     const quotes = run.quotes.filter((quote) => selected.has(quote.protocol) && Number.isFinite(Number(quote.output)) && Number(quote.output) > 0);
-    if (quotes.length < 2) continue;
+    if (!quotes.length) continue;
     const bestOutput = Math.max(...quotes.map((quote) => Number(quote.output)));
     if (!bestOutput) continue;
     const winnerCount = quotes.filter((quote) => Number(quote.output) === bestOutput).length;

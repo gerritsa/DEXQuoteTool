@@ -150,3 +150,11 @@ export const catalogState = sqliteTable("catalog_state", {
   lastAttemptAt: text("last_attempt_at").notNull(),
   lastError: text("last_error"),
 });
+
+export const catalogSources = sqliteTable("catalog_sources", {
+  source: text("source", { enum: ["thorchain", "near-intents", "chainflip"] }).primaryKey(),
+  payloadJson: text("payload_json"),
+  refreshedAt: text("refreshed_at"),
+  lastAttemptAt: text("last_attempt_at").notNull(),
+  lastError: text("last_error"),
+});

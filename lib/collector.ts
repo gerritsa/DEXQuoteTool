@@ -119,6 +119,13 @@ export async function enqueueScheduledSweep(scheduledTime: number, environment: 
   let catalog;
   try {
     catalog = await getCatalog({ d1, allowStale: true, maxStaleMs: benchmarkCatalogGraceMs });
+    if (catalog.warning) {
+      console.warn("Benchmark collection is using the last known route catalog", {
+        sweepId,
+        catalogSource: catalog.source,
+        reason: catalog.warning,
+      });
+    }
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Route catalog refresh failed";
     const now = new Date().toISOString();

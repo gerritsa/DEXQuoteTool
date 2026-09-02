@@ -29,6 +29,13 @@
       "when": 1788142042743,
       "tag": "0003_windy_enchantress",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1788302400000,
+      "tag": "0004_resilient_catalog_sources",
+      "breakpoints": true
     }
   ]
 }

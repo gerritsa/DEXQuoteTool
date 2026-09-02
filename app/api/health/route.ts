@@ -28,6 +28,12 @@ type CatalogStateRow = {
   lastAttemptAt: string;
   lastError: string | null;
 };
+type CatalogSourceRow = {
+  source: "thorchain" | "near-intents" | "chainflip";
+  refreshedAt: string | null;
+  lastAttemptAt: string;
+  lastError: string | null;
+};
 
 type OracleHealthRow = { runs: number; referencedRuns: number };
 
@@ -94,6 +100,17 @@ export async function GET() {
       SELECT refreshed_at AS refreshedAt, last_attempt_at AS lastAttemptAt, last_error AS lastError
       FROM catalog_state WHERE id = 'primary'
     `).first<CatalogStateRow>();
+    let catalogSourceRows: CatalogSourceRow[] = [];
+    try {
+      const sourceResult = await d1.prepare(`
+        SELECT source, refreshed_at AS refreshedAt, last_attempt_at AS lastAttemptAt, last_error AS lastError
+        FROM catalog_sources
+      `).all<CatalogSourceRow>();
+      catalogSourceRows = sourceResult.results;
+    } catch {
+      // The source-level table is added by the resilience migration. Keep the
+      // health endpoint usable while an older deployment is being migrated.
+    }
 
     const now = Date.now();
     const terminalAt = latestTerminal?.completedAt ?? latestTerminal?.scheduledFor;
@@ -106,6 +123,20 @@ export async function GET() {
       ? Math.max(0, Math.round((now - new Date(catalogState.refreshedAt).getTime()) / 60_000))
       : null;
     const collectionPaused = Boolean(catalogState?.lastError) && (catalogAgeMinutes == null || catalogAgeMinutes * 60_000 > benchmarkCatalogGraceMs);
+    const catalogSources = catalogSourceRows.map((source) => {
+      const ageMinutes = source.refreshedAt
+        ? Math.max(0, Math.round((now - new Date(source.refreshedAt).getTime()) / 60_000))
+        : null;
+      const stale = ageMinutes == null || ageMinutes * 60_000 > benchmarkCatalogGraceMs;
+      return {
+        source: source.source,
+        status: source.lastError ? stale ? "unavailable" : "stale" : "fresh",
+        refreshedAt: source.refreshedAt,
+        lastAttemptAt: source.lastAttemptAt,
+        ageMinutes,
+        error: source.lastError,
+      };
+    });
 
     if (!latest) {
       status = "initializing";
@@ -188,6 +219,7 @@ export async function GET() {
         ageMinutes: catalogAgeMinutes,
         collectionPaused,
         error: catalogState.lastError,
+        sources: catalogSources,
       } : null,
       warnings,
     }, {

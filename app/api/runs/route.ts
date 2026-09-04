@@ -5,6 +5,7 @@ import { benchmarkRuns, protocolQuotes } from "../../../db/schema";
 import { runSelectedBenchmark, type BenchmarkArchiveRecord } from "../../../lib/quotes/run";
 import { rawArchiveRetentionMs } from "../../../lib/quotes/retention";
 import type { ExecutionMode } from "../../../lib/quotes/types";
+import type { ThorDepthForecast } from "../../../lib/quotes/depth-forecast";
 import { publicCacheHeaders, readPublicCache, writePublicCache } from "../../../lib/http-cache";
 
 function executionMode(value: unknown): ExecutionMode {
@@ -24,6 +25,18 @@ type NavigationRow = NavigationTarget & { direction: "previous" | "next" };
 
 function serialized(value: unknown) {
   return value == null ? null : JSON.stringify(value, null, 2);
+}
+
+function parsedDepthForecast(value: string | null) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<ThorDepthForecast>;
+    return parsed.modelVersion === "thor-depth-v1" && (parsed.status === "available" || parsed.status === "unavailable")
+      ? parsed as ThorDepthForecast
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 async function archivedPayloads(run: StoredRun) {
@@ -146,8 +159,10 @@ export async function GET(request: Request) {
       availableNavigation(run),
     ]);
     const payloadByProtocol = new Map(payloads.results.map((payload) => [payload.protocol, payload]));
+    const { depthForecastJson, ...publicRun } = run;
     return writePublicCache(request, Response.json({
-      run,
+      run: publicRun,
+      depthForecast: parsedDepthForecast(depthForecastJson),
       rawDetailsAvailable: payloads.results.length > 0 || archived.available,
       navigation,
       quotes: quotes.map((quote) => {

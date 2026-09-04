@@ -1,6 +1,14 @@
 export type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
 
-type ThorPool = { asset: string; status: string; assetPriceUSD?: string; nativeDecimal?: string };
+type ThorPool = {
+  asset: string;
+  status: string;
+  assetPriceUSD?: string;
+  nativeDecimal?: string;
+  assetDepth?: string;
+  runeDepth?: string;
+  liquidityInUSD?: string;
+};
 type NearToken = { assetId: string; blockchain: string; symbol: string; contractAddress?: string | null; decimals: number };
 type ChainflipNetworkInfo = {
   assets: Array<{
@@ -27,6 +35,7 @@ export type CatalogAsset = {
   thorAsset: string;
   priceUsd: number | null;
   decimals: number;
+  thorPoolDepth?: { asset: string; assetDepth: string; runeDepth: string; liquidityUsd: number };
   support: Record<PartnerId, { source: boolean; destination: boolean; assetId?: string }>;
 };
 
@@ -150,6 +159,9 @@ function buildCatalog(thorPools: ThorPool[], near: NearToken[], chainflipNetwork
     const cfSource = cfSourceAssets.get(parsed.id);
     const cfDestination = cfDestinationAssets.get(parsed.id);
     const nearAsset = nearAssets.get(parsed.id);
+    const assetDepth = pool.assetDepth && /^\d+$/.test(pool.assetDepth) ? pool.assetDepth : null;
+    const runeDepth = pool.runeDepth && /^\d+$/.test(pool.runeDepth) ? pool.runeDepth : null;
+    const liquidityUsd = Number(pool.liquidityInUSD);
     return {
       id: parsed.id,
       label: `${parsed.symbol} · ${parsed.chain}`,
@@ -160,6 +172,9 @@ function buildCatalog(thorPools: ThorPool[], near: NearToken[], chainflipNetwork
       decimals: Number.isInteger(reportedDecimals) && reportedDecimals >= 0
         ? reportedDecimals
         : nativeDecimalFallbacks[pool.asset] ?? 8,
+      ...(assetDepth && runeDepth && Number.isFinite(liquidityUsd) && liquidityUsd > 0
+        ? { thorPoolDepth: { asset: pool.asset, assetDepth, runeDepth, liquidityUsd } }
+        : {}),
       support: {
         thorchain: { source: true, destination: true, assetId: pool.asset },
         chainflip: { source: Boolean(cfSource), destination: Boolean(cfDestination), assetId: cfSource ?? cfDestination },

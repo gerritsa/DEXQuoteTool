@@ -9,6 +9,7 @@ import { rawArchiveRetentionDays } from "../lib/quotes/retention";
 
 type Theme = "dark" | "light";
 type DashboardView = "leaderboard" | "analysis";
+type AnalysisPanel = "performance" | "depth";
 
 const pageRefreshIntervalMs = 15 * 60_000;
 const resumeRefreshThresholdMs = 60_000;
@@ -109,6 +110,26 @@ type RunResponse = {
     previous: { runId: number; initiatedAt: string } | null;
     next: { runId: number; initiatedAt: string } | null;
   };
+  depthForecast?: null | {
+    modelVersion: "thor-depth-v1";
+    status: "available" | "unavailable";
+    reason?: string;
+    capturedAt: string;
+    competitiveWithinBps: number;
+    bestProtocol?: PartnerId;
+    bestOutput?: number;
+    currentThorOutput?: number;
+    currentGapBps?: number;
+    streamingChunks?: number;
+    requiredDepthMultiplier?: number | null;
+    requiredAdditionalLiquidityUsd?: number | null;
+    depthAloneSufficient?: boolean;
+    priceRebalanceBps?: number | null;
+    bindingPool?: "source" | "destination" | "balanced" | null;
+    sourcePool?: DepthForecastPool;
+    destinationPool?: DepthForecastPool;
+    curve?: Array<{ multiplier: number; gapBps: number }>;
+  };
   run: null | {
     id: number;
     initiatedAt: string;
@@ -142,6 +163,16 @@ type RunResponse = {
     errorMessage?: string | null;
   }>;
   error?: string;
+};
+
+type DepthForecastPool = {
+  asset: string;
+  assetDepth: string;
+  runeDepth: string;
+  liquidityUsd: number;
+  role: "source" | "destination";
+  requiredMultiplierIfScaledAlone: number | null;
+  requiredAdditionalLiquidityUsd: number | null;
 };
 
 const partners: Array<{ id: PartnerId; name: string; cellName: string; color: string; logo: string; disabled?: boolean }> = [
@@ -251,6 +282,11 @@ function formatTokenAmount(value?: string | number | null) {
   const absolute = Math.abs(amount);
   const maximumFractionDigits = absolute >= 1_000 ? 2 : absolute >= 1 ? 4 : absolute >= 0.01 ? 6 : 8;
   return amount.toLocaleString([], { maximumFractionDigits });
+}
+
+function formatCompactUsd(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat([], { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
 function formatBaseUnits(value: string, decimals: number) {
@@ -433,6 +469,72 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
   </div>;
 }
 
+function DepthForecastChart({ forecast }: { forecast: NonNullable<RunResponse["depthForecast"]> }) {
+  const points = forecast.curve ?? [];
+  if (!points.length) return <div className="depth-forecast-empty"><b>Forecast curve unavailable</b><span>The next synchronized sweep will retry the simulation.</span></div>;
+  const width = 920;
+  const height = 280;
+  const padding = { top: 25, right: 22, bottom: 40, left: 62 };
+  const minimumMultiplier = Math.min(...points.map((point) => point.multiplier));
+  const maximumMultiplier = Math.max(...points.map((point) => point.multiplier));
+  const gaps = [...points.map((point) => point.gapBps), -forecast.competitiveWithinBps, 0];
+  const minimumGap = Math.min(...gaps);
+  const maximumGap = Math.max(...gaps);
+  const gapPadding = Math.max(5, (maximumGap - minimumGap) * 0.08);
+  const yMinimum = minimumGap - gapPadding;
+  const yMaximum = maximumGap + gapPadding;
+  const x = (value: number) => padding.left + (Math.log(value / minimumMultiplier) / Math.log(maximumMultiplier / minimumMultiplier)) * (width - padding.left - padding.right);
+  const y = (value: number) => padding.top + ((yMaximum - value) / Math.max(1, yMaximum - yMinimum)) * (height - padding.top - padding.bottom);
+  const required = forecast.requiredDepthMultiplier;
+  const xTicks = [...new Set([minimumMultiplier, 1, ...(required && required > 1 ? [required] : []), maximumMultiplier])].sort((left, right) => left - right);
+  const yTicks = [...new Set([Math.round(minimumGap), -forecast.competitiveWithinBps, 0, Math.round(maximumGap)])].sort((left, right) => right - left);
+  return <div className="depth-curve">
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Projected THORChain quote gap as both route pool depths increase">
+      <text className="axis-title" x={padding.left} y="11">THORCHAIN GAP VS BEST DEX</text>
+      {yTicks.map((value) => <g key={value}><line x1={padding.left} x2={width - padding.right} y1={y(value)} y2={y(value)} className={value === -forecast.competitiveWithinBps ? "target-line" : value === 0 ? "zero-line" : "grid-line"} /><text x={padding.left - 9} y={y(value) + 3} textAnchor="end">{value} bps</text></g>)}
+      <polyline points={points.map((point) => `${x(point.multiplier)},${y(point.gapBps)}`).join(" ")} fill="none" className="forecast-line" vectorEffect="non-scaling-stroke" />
+      {points.map((point) => <circle key={point.multiplier} cx={x(point.multiplier)} cy={y(point.gapBps)} r={Math.abs(point.multiplier - 1) < 1e-6 ? 5 : required && Math.abs(point.multiplier - required) < 1e-6 ? 5 : 3} className={Math.abs(point.multiplier - 1) < 1e-6 ? "current-point" : required && Math.abs(point.multiplier - required) < 1e-6 ? "target-point" : "curve-point"}><title>{point.multiplier.toFixed(2)}× depth · {formatBps(point.gapBps)} vs best DEX</title></circle>)}
+      {xTicks.map((value) => <text key={value} x={x(value)} y={height - 10} textAnchor={value === minimumMultiplier ? "start" : value === maximumMultiplier ? "end" : "middle"}>{value.toFixed(value < 10 ? 2 : 0)}×</text>)}
+    </svg>
+    <div className="depth-curve-legend"><span><i className="current" />Current depth</span><span><i className="target" />Within {forecast.competitiveWithinBps} bps</span></div>
+  </div>;
+}
+
+function DepthForecastCard({ route, runDetails, runLoading, selectedSize }: { route: Route; runDetails: RunResponse | null; runLoading: boolean; selectedSize: QuoteSize }) {
+  const forecast = runDetails?.depthForecast;
+  if (runLoading) return <section className="depth-forecast-card"><div className="depth-forecast-empty"><b>Loading depth forecast…</b><span>Reading the synchronized THORChain pool snapshot.</span></div></section>;
+  if (!forecast || forecast.status !== "available" || !forecast.sourcePool || !forecast.destinationPool) return <section className="depth-forecast-card"><div className="depth-forecast-empty"><b>Depth forecast unavailable</b><span>{forecast?.reason ?? "A forecast will appear after the next completed quote sweep captures pool depths."}</span></div></section>;
+  const bestPartner = partners.find((partner) => partner.id === forecast.bestProtocol);
+  const bindingLabel = forecast.bindingPool === "source" ? `${route.source.symbol} source pool` : forecast.bindingPool === "destination" ? `${route.destination.symbol} destination pool` : "Both route pools";
+  const competitiveNow = forecast.requiredDepthMultiplier === 1;
+  const headline = competitiveNow
+    ? "Competitive at current depth"
+    : forecast.depthAloneSufficient && forecast.requiredDepthMultiplier
+      ? `Needs ${forecast.requiredDepthMultiplier.toFixed(2)}× combined depth`
+      : "Depth alone cannot close the gap";
+  const poolRows = [
+    { pool: forecast.sourcePool, symbol: route.source.symbol },
+    { pool: forecast.destinationPool, symbol: route.destination.symbol },
+  ];
+  return <section className="depth-forecast-card" aria-labelledby="depth-forecast-title">
+    <header className="depth-forecast-header">
+      <div><p className="eyebrow">THORChain competitiveness · {selectedSize.label}</p><h3 id="depth-forecast-title">{headline}</h3><p>{forecast.depthAloneSufficient ? `${formatCompactUsd(forecast.requiredAdditionalLiquidityUsd)} estimated additional route liquidity to come within ${forecast.competitiveWithinBps} bps of ${bestPartner?.name ?? "the best competing DEX"}.` : `${formatBps(forecast.priceRebalanceBps)} of pool-price rebalancing is still required at effectively infinite depth.`}</p></div>
+      <span className={`forecast-status ${competitiveNow ? "competitive" : "modeled"}`}>{competitiveNow ? "Competitive now" : "Modeled threshold"}</span>
+    </header>
+    <div className="depth-summary-grid">
+      <article><small>Current gap</small><strong>{formatBps(forecast.currentGapBps)}</strong><span>vs {bestPartner?.name ?? "best DEX"}</span></article>
+      <article><small>Additional liquidity</small><strong>{formatCompactUsd(forecast.requiredAdditionalLiquidityUsd)}</strong><span>{forecast.requiredDepthMultiplier ? `${forecast.requiredDepthMultiplier.toFixed(2)}× both pools` : "Depth is not the only constraint"}</span></article>
+      <article><small>Binding liquidity</small><strong>{bindingLabel}</strong><span>{forecast.streamingChunks && forecast.streamingChunks > 1 ? `${forecast.streamingChunks} modeled streaming chunks` : "Single-swap model"}</span></article>
+    </div>
+    <DepthForecastChart forecast={forecast} />
+    <div className="depth-pool-table">
+      <div className="depth-pool-row heading"><span>Pool leg</span><span>Current liquidity</span><span>Required if scaled alone</span><span>Additional liquidity</span></div>
+      {poolRows.map(({ pool, symbol }) => <div className={`depth-pool-row ${forecast.bindingPool === pool.role ? "binding" : ""}`} key={pool.asset}><span><b>{symbol}</b><small>{pool.role} leg{forecast.bindingPool === pool.role ? " · binding" : ""}</small></span><strong>{formatCompactUsd(pool.liquidityUsd)}</strong><strong>{pool.requiredMultiplierIfScaledAlone == null ? "Not sufficient alone" : `${pool.requiredMultiplierIfScaledAlone.toFixed(2)}×`}</strong><strong>{formatCompactUsd(pool.requiredAdditionalLiquidityUsd)}</strong></div>)}
+    </div>
+    <div className="depth-model-note"><b>Counterfactual model</b><span>Scales pool asset and RUNE balances together, preserves current pool prices, applies the observed outbound fee and streaming quantity, and calibrates the curve to the synchronized THORChain quote. It estimates liquidity sensitivity—not future market prices.</span><small>Pool snapshot {formatTime(forecast.capturedAt)} · {forecast.modelVersion}</small></div>
+  </section>;
+}
+
 export default function SwapRankDashboard({
   view,
   initialRouteId,
@@ -446,6 +548,7 @@ export default function SwapRankDashboard({
   const [loading, setLoading] = useState(true);
   const [enabledProtocols, setEnabledProtocols] = useState<PartnerId[]>(initialQuery.protocols);
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>(initialQuery.assets);
+  const [analysisPanel, setAnalysisPanel] = useState<AnalysisPanel>("performance");
   const [executionMode, setExecutionMode] = useState<ExecutionMode>(initialQuery.mode);
   const [viewWindow, setViewWindow] = useState<ViewWindow>(initialQuery.window);
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
@@ -940,7 +1043,12 @@ export default function SwapRankDashboard({
         <div className="size-selectors" role="group" aria-label="Exact USD input for route analysis">{quoteSizes.map((size) => <button key={size.id} className={selectedSize.id === size.id ? "selected" : ""} onClick={() => changeAnalysisSize(size)} aria-pressed={selectedSize.id === size.id}><strong>{size.label}</strong></button>)}</div>
       </div>}
 
-      {selectedRoute && <section className="trend-card" aria-labelledby="trend-title">
+      {selectedRoute && <div className="analysis-view-tabs" role="tablist" aria-label="Route analysis view">
+        <button role="tab" aria-selected={analysisPanel === "performance"} className={analysisPanel === "performance" ? "selected" : ""} onClick={() => setAnalysisPanel("performance")}>Quote performance</button>
+        <button role="tab" aria-selected={analysisPanel === "depth"} className={analysisPanel === "depth" ? "selected" : ""} onClick={() => setAnalysisPanel("depth")}>Depth forecast</button>
+      </div>}
+
+      {selectedRoute && analysisPanel === "performance" && <section className="trend-card" aria-labelledby="trend-title">
         <header className="trend-header">
           <div><p className="eyebrow">Historical {executionLabel(executionMode)} deviation from THORChain oracle · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} won most quotes over {trendPeriodLabel(trendDays)}</> : <>Performance over {trendPeriodLabel(trendDays)}</>}</h3><p>{trend?.leader ? `${Math.round(trend.leader.winRate * 100)}% win share · ${formatBps(trend.leader.averageOracleGapBps)} average vs oracle · ${Math.round(trend.leader.availability * 100)}% quote availability · ${trend.comparableRuns} comparisons` : "A period leader appears after the first oracle-referenced quote batch."}</p></div>
           <div className="trend-controls">
@@ -950,6 +1058,8 @@ export default function SwapRankDashboard({
         {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} activePartners={activePartners} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
         <div className="trend-note"><b>0 bps is THORChain oracle parity</b><span>{trend?.pointMode === "comparison" ? "Every point compares the quoted output with the same synchronized CEX-derived oracle cross-rate. The highest point is the batch winner; points below zero return less than oracle parity and points above zero return more." : "Every point shows each DEX’s median signed deviation from the synchronized CEX-derived oracle within that time bucket. Winner share is still calculated from the highest quoted output in each batch."}</span></div>
       </section>}
+
+      {selectedRoute && analysisPanel === "depth" && <DepthForecastCard route={selectedRoute} runDetails={runDetails} runLoading={runLoading} selectedSize={selectedSize} />}
 
       {requestsOpen && <div className="request-drawer-backdrop">
         <button className="request-drawer-dismiss" onClick={closeRequestDrawer} aria-label="Close quote details" />

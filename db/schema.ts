@@ -15,6 +15,7 @@ export const benchmarkRuns = sqliteTable("benchmark_runs", {
   oracleReferenceOutput: real("oracle_reference_output"),
   oracleCapturedAt: text("oracle_captured_at"),
   requestJson: text("request_json"),
+  depthForecastJson: text("depth_forecast_json"),
   mode: text("mode", { enum: ["standard", "optimized"] }).notNull(),
   status: text("status", { enum: ["pending", "complete", "partial", "failed"] }).notNull().default("pending"),
   initiatedAt: text("initiated_at").notNull(),
@@ -28,6 +29,15 @@ export const benchmarkRuns = sqliteTable("benchmark_runs", {
   index("idx_benchmark_runs_pair_amount_created").on(table.pairId, table.amountId, table.createdAt),
   index("idx_benchmark_runs_initiated").on(table.initiatedAt),
   uniqueIndex("idx_benchmark_runs_sweep_job").on(table.sweepId, table.pairId, table.amountId, table.mode),
+]);
+
+export const poolDepthSnapshots = sqliteTable("pool_depth_snapshots", {
+  id: text("id").primaryKey(),
+  capturedAt: text("captured_at").notNull(),
+  poolsJson: text("pools_json").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_pool_depth_snapshots_captured").on(table.capturedAt),
 ]);
 
 export const protocolQuotes = sqliteTable("protocol_quotes", {

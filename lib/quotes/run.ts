@@ -8,6 +8,7 @@ import { getChainflipQuote } from "./adapters/chainflip";
 import { getNearIntentsQuote } from "./adapters/near-intents";
 import { getPoolProtocolQuote } from "./adapters/pool-protocol";
 import { strategyFor } from "./protocols";
+import { forecastThorDepth, poolDepthSnapshotFromAssets, type ThorDepthForecast, type ThorPoolDepthSnapshot } from "./depth-forecast";
 import { quoteSizes } from "./sizes";
 import type { BenchmarkRequest, ChainAsset, ExecutionMode, NormalizedQuote, ProtocolId } from "./types";
 
@@ -25,7 +26,7 @@ type BenchmarkRuntimeEnv = {
   BENCHMARK_DOGE_ADDRESS?: string;
 };
 
-export type BenchmarkRunOptions = { sweepId?: string; bundleIndex?: number };
+export type BenchmarkRunOptions = { sweepId?: string; bundleIndex?: number; poolDepthSnapshot?: ThorPoolDepthSnapshot };
 
 export type BenchmarkArchiveRecord = {
   runId: number;
@@ -36,6 +37,7 @@ export type BenchmarkArchiveRecord = {
   completedAt: string;
   maxRequestSkewMs: number;
   oracle: OracleReference | null;
+  depthForecast: ThorDepthForecast | null;
   request: BenchmarkRequest;
   quotes: NormalizedQuote[];
 };
@@ -186,6 +188,12 @@ async function loadStoredArchive(
         capturedAt: run.oracleCapturedAt,
       }
     : null;
+  let depthForecast: ThorDepthForecast | null = null;
+  try {
+    depthForecast = run.depthForecastJson ? JSON.parse(run.depthForecastJson) as ThorDepthForecast : null;
+  } catch {
+    depthForecast = null;
+  }
   return {
     runId,
     routeId,
@@ -195,6 +203,7 @@ async function loadStoredArchive(
     completedAt: run.completedAt,
     maxRequestSkewMs: run.maxRequestSkewMs ?? 0,
     oracle,
+    depthForecast,
     request: storedRequest ?? fallbackRequest,
     quotes,
   };
@@ -243,14 +252,15 @@ async function finalizeRun(
   completedAt: string,
   maxRequestSkewMs: number,
   quotes: NormalizedQuote[],
+  depthForecast: ThorDepthForecast,
 ) {
   const d1 = getD1();
   await d1.batch([
     d1.prepare(`
       UPDATE benchmark_runs
-      SET status = ?, completed_at = ?, max_request_skew_ms = ?
+      SET status = ?, completed_at = ?, max_request_skew_ms = ?, depth_forecast_json = ?
       WHERE id = ?
-    `).bind(status, completedAt, maxRequestSkewMs, runId),
+    `).bind(status, completedAt, maxRequestSkewMs, JSON.stringify(depthForecast), runId),
     ...latestPayloadStatements(d1, runId, routeId, amountId, mode, quotes, completedAt),
   ]);
 }
@@ -326,6 +336,7 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
       oracleReferenceOutput: oracle?.referenceOutput ?? null,
       oracleCapturedAt: oracle?.capturedAt ?? null,
       requestJson: JSON.stringify(request),
+      depthForecastJson: null,
       status: "pending",
       initiatedAt,
       completedAt: null,
@@ -345,6 +356,7 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
       oracleReferenceOutput: oracle?.referenceOutput,
       oracleCapturedAt: oracle?.capturedAt,
       requestJson: JSON.stringify(request),
+      depthForecastJson: null,
       mode,
       status: "pending",
       initiatedAt,
@@ -356,6 +368,9 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
 
   const rawQuotes = await Promise.all(allProtocols.map((protocol) => requestQuote(protocol, request, route.partners.includes(protocol), runtime.NEAR_INTENTS_API_KEY)));
   const quotes = rawQuotes.map((quote) => ({ ...quote, oracleGapBps: oracleGapBps(quote.expectedOutputFormatted, oracle) }));
+  const poolDepthSnapshot = options.poolDepthSnapshot
+    ?? poolDepthSnapshotFromAssets([route.source, route.destination], catalog.refreshedAt ?? initiatedAt);
+  const depthForecast = forecastThorDepth(request, quotes, poolDepthSnapshot);
   const startTimes = quotes.map((quote) => new Date(quote.requestStartedAt).getTime()).filter(Number.isFinite);
   const maxRequestSkewMs = startTimes.length ? Math.max(...startTimes) - Math.min(...startTimes) : 0;
   const completedAt = new Date().toISOString();
@@ -381,8 +396,8 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
     errorMessage: quote.errorMessage,
   })));
 
-  await finalizeRun(runId, routeId, amountId, mode, hasError ? "partial" : "complete", completedAt, maxRequestSkewMs, quotes);
+  await finalizeRun(runId, routeId, amountId, mode, hasError ? "partial" : "complete", completedAt, maxRequestSkewMs, quotes, depthForecast);
 
-  const archive: BenchmarkArchiveRecord = { runId, routeId, amountId, mode, initiatedAt, completedAt, maxRequestSkewMs, oracle, request, quotes };
+  const archive: BenchmarkArchiveRecord = { runId, routeId, amountId, mode, initiatedAt, completedAt, maxRequestSkewMs, oracle, depthForecast, request, quotes };
   return { runId, routeId, amountId, mode, quoteCount: quotes.length, completedAt, skipped: false, archive };
 }

@@ -1,5 +1,6 @@
 import { ensureBenchmarkSchema } from "../db";
 import { benchmarkCatalogGraceMs, fixedThorRouteCount, getCatalog, resolveFixedThorRoutes } from "./routes/catalog";
+import { poolDepthSnapshotFromAssets, type ThorPoolDepthSnapshot } from "./quotes/depth-forecast";
 import { quoteSizes } from "./quotes/sizes";
 import { runSelectedBenchmark, type BenchmarkArchiveRecord } from "./quotes/run";
 import type { ExecutionMode, NormalizedQuote, ProtocolId } from "./quotes/types";
@@ -16,7 +17,13 @@ const hourlyTrendRetentionDays = 8;
 const fourHourTrendRetentionDays = 32;
 
 export type CollectorJob = { routeId: string; amountId: string; mode: ExecutionMode };
-export type CollectorBundle = { sweepId: string; scheduledFor: string; bundleIndex: number; jobs: CollectorJob[] };
+export type CollectorBundle = {
+  sweepId: string;
+  scheduledFor: string;
+  bundleIndex: number;
+  jobs: CollectorJob[];
+  poolDepthSnapshot?: ThorPoolDepthSnapshot;
+};
 
 export type CollectorEnvironment = {
   DB: D1Database;
@@ -64,6 +71,7 @@ function normalizedRecord(record: BenchmarkArchiveRecord) {
     completedAt: record.completedAt,
     maxRequestSkewMs: record.maxRequestSkewMs,
     oracle: record.oracle,
+    depthForecast: record.depthForecast,
     request: {
       pairId: record.request.pairId,
       source: record.request.source,
@@ -140,10 +148,26 @@ export async function enqueueScheduledSweep(scheduledTime: number, environment: 
     console.warn("Benchmark collection paused because fresh catalog pricing is unavailable", { sweepId, reason });
     return { sweepId, scheduledFor, skipped: true, reason: `Collection paused: ${reason}` };
   }
-  const { routes, missingRouteIds } = resolveFixedThorRoutes(catalog.assets, fixedThorRouteCount);
-  const jobs = routes.flatMap((route) => quoteSizes.flatMap((size) => modes.map((mode) => ({ routeId: route.id, amountId: size.id, mode }))));
-  const bundles = chunks(jobs, jobsPerMessage).map((bundleJobs, bundleIndex): CollectorBundle => ({ sweepId, scheduledFor, bundleIndex, jobs: bundleJobs }));
   const now = new Date().toISOString();
+  const { routes, missingRouteIds } = resolveFixedThorRoutes(catalog.assets, fixedThorRouteCount);
+  const livePoolDepthSnapshot = poolDepthSnapshotFromAssets(catalog.assets, catalog.refreshedAt ?? now);
+  let poolDepthSnapshot = livePoolDepthSnapshot;
+  if (existing) {
+    const storedSnapshot = await d1.prepare(`
+      SELECT captured_at AS capturedAt, pools_json AS poolsJson
+      FROM pool_depth_snapshots WHERE id = ?
+    `).bind(sweepId).first<{ capturedAt: string; poolsJson: string }>();
+    if (storedSnapshot) {
+      try {
+        const pools = JSON.parse(storedSnapshot.poolsJson) as ThorPoolDepthSnapshot["pools"];
+        if (Array.isArray(pools)) poolDepthSnapshot = { capturedAt: storedSnapshot.capturedAt, pools };
+      } catch {
+        // A malformed snapshot is safely replaced with the current catalog snapshot below.
+      }
+    }
+  }
+  const jobs = routes.flatMap((route) => quoteSizes.flatMap((size) => modes.map((mode) => ({ routeId: route.id, amountId: size.id, mode }))));
+  const bundles = chunks(jobs, jobsPerMessage).map((bundleJobs, bundleIndex): CollectorBundle => ({ sweepId, scheduledFor, bundleIndex, jobs: bundleJobs, poolDepthSnapshot }));
 
   if (!existing) {
     await d1.prepare(`
@@ -166,6 +190,11 @@ export async function enqueueScheduledSweep(scheduledTime: number, environment: 
       VALUES (?, ?, ?, 'pending', ?)
     `).bind(`${sweepId}:${bundle.bundleIndex}`, sweepId, bundle.bundleIndex, bundle.jobs.length)));
   }
+  await d1.prepare(`
+    INSERT INTO pool_depth_snapshots (id, captured_at, pools_json)
+    VALUES (?, ?, ?)
+    ON CONFLICT(id) DO NOTHING
+  `).bind(sweepId, poolDepthSnapshot.capturedAt, JSON.stringify(poolDepthSnapshot.pools)).run();
   const storedBundles = existing
     ? await d1.prepare("SELECT bundle_index AS bundleIndex, status FROM collector_bundles WHERE sweep_id = ?").bind(sweepId).all<{ bundleIndex: number; status: string }>()
     : { results: [] as Array<{ bundleIndex: number; status: string }> };
@@ -299,7 +328,11 @@ export async function processCollectorBundle(bundle: CollectorBundle, environmen
     while (nextJob < bundle.jobs.length) {
       const job = bundle.jobs[nextJob++];
       try {
-        const result = await runSelectedBenchmark(job.routeId, job.amountId, job.mode, { sweepId: bundle.sweepId, bundleIndex: bundle.bundleIndex });
+        const result = await runSelectedBenchmark(job.routeId, job.amountId, job.mode, {
+          sweepId: bundle.sweepId,
+          bundleIndex: bundle.bundleIndex,
+          poolDepthSnapshot: bundle.poolDepthSnapshot,
+        });
         records.push(result.archive);
       } catch (error) {
         failures.push(`${job.routeId}/${job.amountId}/${job.mode}: ${error instanceof Error ? error.message : "Unknown collector failure"}`);
@@ -426,6 +459,7 @@ export async function runDailyMaintenance(scheduledTime: number, environment: Co
   await d1.prepare("DELETE FROM benchmark_runs WHERE initiated_at < ?").bind(detailCutoff).run();
   await d1.prepare("DELETE FROM collector_bundles WHERE sweep_id IN (SELECT id FROM collector_sweeps WHERE scheduled_for < ?)").bind(detailCutoff).run();
   await d1.prepare("DELETE FROM collector_sweeps WHERE scheduled_for < ?").bind(detailCutoff).run();
+  await d1.prepare("DELETE FROM pool_depth_snapshots WHERE captured_at < ?").bind(detailCutoff).run();
   await d1.prepare("DELETE FROM daily_comparison_metrics WHERE day < ?").bind(aggregateCutoff).run();
   await d1.prepare("DELETE FROM trend_buckets WHERE bucket_seconds = ? AND bucket_start < ?").bind(hourlyTrendBucketSeconds, hourlyTrendCutoff).run();
   await d1.prepare("DELETE FROM trend_buckets WHERE bucket_seconds = ? AND bucket_start < ?").bind(fourHourTrendBucketSeconds, fourHourTrendCutoff).run();

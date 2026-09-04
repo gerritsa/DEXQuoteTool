@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { canonicalPublicCacheUrl } from "../lib/http-cache.ts";
 import { oracleGapBps, referenceForAmount } from "../lib/oracle.ts";
+import { forecastThorDepth, simulateThorOutput } from "../lib/quotes/depth-forecast.ts";
 
 async function render(path = "/", environment = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -229,8 +230,75 @@ test("public cache keys ignore cache-busting and irrelevant parameters", () => {
   );
   assert.equal(
     canonicalPublicCacheUrl(new Request("https://swaprank.test/api/runs?runId=42&routeId=ignored&junk=anything")),
-    "https://swaprank.test/api/runs?schema=2&runId=42",
+    "https://swaprank.test/api/runs?schema=3&runId=42",
   );
+});
+
+test("THORChain depth forecast finds the liquidity threshold and identifies price imbalance", () => {
+  const sourcePool = { asset: "BTC.BTC", assetDepth: "10000000000", runeDepth: "10000000000000", liquidityUsd: 10_000_000 };
+  const destinationPool = { asset: "ETH.ETH", assetDepth: "400000000000", runeDepth: "10000000000000", liquidityUsd: 8_000_000 };
+  const request = {
+    pairId: "btc_eth",
+    source: { canonicalId: "btc", chain: "bitcoin", symbol: "BTC", decimals: 8, protocolIds: { thorchain: "BTC.BTC" } },
+    destination: { canonicalId: "eth", chain: "ethereum", symbol: "ETH", decimals: 18, protocolIds: { thorchain: "ETH.ETH" } },
+    sourceAmountBaseUnits: "100000000",
+    sourceAmountUsd: 80_000,
+    sourcePriceUsd: 80_000,
+    mode: "standard",
+    recipient: "0xrecipient",
+    refundAddress: "bc1refund",
+    slippageToleranceBps: 100,
+  };
+  const thorQuote = {
+    protocol: "thorchain",
+    strategy: "single",
+    status: "quoted",
+    expectedOutputFormatted: "38.4",
+    requestStartedAt: "2026-09-04T00:00:00.000Z",
+    rawResponse: { max_streaming_quantity: 1, fees: { outbound: "0" } },
+  };
+  const competitor = (output) => ({
+    protocol: "chainflip",
+    strategy: "regular",
+    status: "quoted",
+    expectedOutputFormatted: String(output),
+    requestStartedAt: "2026-09-04T00:00:00.000Z",
+    rawResponse: {},
+  });
+  const snapshot = { capturedAt: "2026-09-04T00:00:00.000Z", pools: [sourcePool, destinationPool] };
+
+  const current = simulateThorOutput(100_000_000, sourcePool, destinationPool, 1, 1, 1);
+  const deeper = simulateThorOutput(100_000_000, sourcePool, destinationPool, 2, 2, 1);
+  assert.ok(current && deeper && deeper > current);
+
+  const reachable = forecastThorDepth(request, [thorQuote, competitor(39.2)], snapshot);
+  assert.equal(reachable.status, "available");
+  assert.equal(reachable.depthAloneSufficient, true);
+  assert.ok(reachable.requiredDepthMultiplier > 1 && reachable.requiredDepthMultiplier < 3);
+  assert.ok(reachable.requiredAdditionalLiquidityUsd > 0);
+  assert.ok(Math.abs(reachable.curve.find((point) => point.multiplier === 1).gapBps - reachable.currentGapBps) < 1e-8);
+
+  const priceLimited = forecastThorDepth(request, [thorQuote, competitor(45)], snapshot);
+  assert.equal(priceLimited.status, "available");
+  assert.equal(priceLimited.depthAloneSufficient, false);
+  assert.equal(priceLimited.requiredDepthMultiplier, null);
+  assert.ok(priceLimited.priceRebalanceBps > 0);
+});
+
+test("depth forecasting is precomputed once per quote run and exposed in route analysis", async () => {
+  const collector = await readFile(new URL("../lib/collector.ts", import.meta.url), "utf8");
+  const run = await readFile(new URL("../lib/quotes/run.ts", import.meta.url), "utf8");
+  const api = await readFile(new URL("../app/api/runs/route.ts", import.meta.url), "utf8");
+  const page = await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8");
+  const migration = await readFile(new URL("../drizzle/0005_productive_gertrude_yorkes.sql", import.meta.url), "utf8");
+  assert.match(collector, /poolDepthSnapshotFromAssets/);
+  assert.match(collector, /INSERT INTO pool_depth_snapshots/);
+  assert.match(run, /forecastThorDepth\(request, quotes, poolDepthSnapshot\)/);
+  assert.match(api, /depthForecast: parsedDepthForecast/);
+  assert.match(page, /Quote performance/);
+  assert.match(page, /Depth forecast/);
+  assert.match(page, /Counterfactual model/);
+  assert.match(migration, /ADD `depth_forecast_json` text/);
 });
 
 test("route analysis keeps the latest synchronized DEX outputs visible", async () => {

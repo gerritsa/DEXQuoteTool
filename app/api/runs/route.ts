@@ -30,8 +30,8 @@ function serialized(value: unknown) {
 function parsedDepthForecast(value: string | null) {
   if (!value) return null;
   try {
-    const parsed = JSON.parse(value) as Partial<ThorDepthForecast>;
-    return parsed.modelVersion === "thor-depth-v1" && (parsed.status === "available" || parsed.status === "unavailable")
+    const parsed = JSON.parse(value) as { modelVersion?: string; status?: string };
+    return (parsed.modelVersion === "thor-depth-v1" || parsed.modelVersion === "thor-depth-v2") && (parsed.status === "available" || parsed.status === "unavailable")
       ? parsed as ThorDepthForecast
       : null;
   } catch {

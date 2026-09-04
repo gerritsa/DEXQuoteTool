@@ -8,11 +8,13 @@ execution modes: Standard Swap and Streaming/DCA. Scheduled Cloudflare Workers
 enqueue a complete sweep every 30 minutes. D1 stores queryable quote history
 and R2 stores compressed archives.
 
-Route analysis also includes a THORChain depth forecast. Each sweep reuses its
-Midgard pool snapshot to simulate how the synchronized THORChain quote changes
-when route-pool liquidity is scaled at constant pool prices. The forecast shows
-the depth required to come within 5 bps of the best competing quote, or flags
-when pool-price rebalancing—not depth—is the remaining constraint.
+Route analysis also includes a THORChain depth-and-price forecast. Each sweep
+reuses its Midgard pool snapshot to calculate the pool-implied exchange rate
+and simulate how the synchronized THORChain quote changes when route-pool
+liquidity is scaled at constant pool prices. The forecast separates the
+depth-recoverable quote gap from the remaining pool-rate gap, shows the depth
+required to come within 5 bps of the best competing quote, and flags when
+arbitrage-driven pool-price rebalancing is also needed.
 
 ## Local development
 

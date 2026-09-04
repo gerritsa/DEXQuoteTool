@@ -1,6 +1,6 @@
 import type { BenchmarkRequest, NormalizedQuote } from "./types";
 
-export const depthForecastModelVersion = "thor-depth-v1";
+export const depthForecastModelVersion = "thor-depth-v2";
 export const competitivenessToleranceBps = 5;
 
 export type ThorPoolDepth = {
@@ -41,6 +41,16 @@ export type ThorDepthForecast = {
   bestOutput?: number;
   currentThorOutput?: number;
   currentGapBps?: number;
+  sourceAmountFormatted?: number;
+  poolImpliedRate?: number;
+  oracleRate?: number | null;
+  bestQuoteRate?: number;
+  poolRateGapVsOracleBps?: number | null;
+  poolRateGapVsBestBps?: number;
+  executionDragBps?: number;
+  asymptoticGapBps?: number | null;
+  depthRecoverableBps?: number | null;
+  outboundFeeBps?: number;
   streamingChunks?: number;
   requiredDepthMultiplier?: number | null;
   requiredAdditionalLiquidityUsd?: number | null;
@@ -158,6 +168,7 @@ export function forecastThorDepth(
 
   const inputAmount = Number(request.sourceAmountBaseUnits) / (10 ** request.source.decimals) * 1e8;
   if (!Number.isFinite(inputAmount) || inputAmount <= 0) return unavailable("The source amount cannot be normalized to THORChain units");
+  const sourceAmountFormatted = inputAmount / 1e8;
   const rawResponse = thorResponse(thorQuote?.rawResponse);
   const requestedChunks = positiveNumber(rawResponse?.max_streaming_quantity);
   const chunks = request.mode === "optimized"
@@ -185,6 +196,28 @@ export function forecastThorDepth(
     ? "balanced" as const
     : sourceSensitivity > destinationSensitivity ? "source" as const : "destination" as const;
   const asymptoticOutput = outputAt(1_000_000, 1_000_000);
+  const sourceAssetDepth = positiveNumber(sourcePool.assetDepth);
+  const sourceRuneDepth = positiveNumber(sourcePool.runeDepth);
+  const destinationAssetDepth = positiveNumber(destinationPool.assetDepth);
+  const destinationRuneDepth = positiveNumber(destinationPool.runeDepth);
+  const poolImpliedRate = sourceAssetDepth && sourceRuneDepth && destinationAssetDepth && destinationRuneDepth
+    ? sourceRuneDepth / sourceAssetDepth * destinationAssetDepth / destinationRuneDepth
+    : null;
+  if (poolImpliedRate == null) return unavailable("The THORChain pool exchange rate cannot be calculated");
+  const poolImpliedOutput = sourceAmountFormatted * poolImpliedRate;
+  const bestQuoteRate = best.output / sourceAmountFormatted;
+  const oracleGap = thorQuote?.oracleGapBps;
+  const oracleReferenceOutput = typeof oracleGap === "number" && Number.isFinite(oracleGap) && 1 + oracleGap / 10_000 > 0
+    ? currentThorOutput / (1 + oracleGap / 10_000)
+    : null;
+  const oracleRate = oracleReferenceOutput == null ? null : oracleReferenceOutput / sourceAmountFormatted;
+  const poolRateGapVsBestBps = (poolImpliedOutput / best.output - 1) * 10_000;
+  const poolRateGapVsOracleBps = oracleReferenceOutput == null ? null : (poolImpliedOutput / oracleReferenceOutput - 1) * 10_000;
+  const currentGapBps = (currentThorOutput / best.output - 1) * 10_000;
+  const asymptoticGapBps = asymptoticOutput == null ? null : (asymptoticOutput / best.output - 1) * 10_000;
+  const depthRecoverableBps = asymptoticGapBps == null ? null : asymptoticGapBps - currentGapBps;
+  const executionDragBps = currentGapBps - poolRateGapVsBestBps;
+  const outboundFeeBps = outboundFee / 1e8 / best.output * 10_000;
   const depthAloneSufficient = requiredDepthMultiplier != null;
   const priceRebalanceBps = !depthAloneSufficient && asymptoticOutput
     ? Math.max(0, (target / asymptoticOutput - 1) * 10_000)
@@ -208,7 +241,17 @@ export function forecastThorDepth(
     bestProtocol: best.protocol,
     bestOutput: best.output,
     currentThorOutput,
-    currentGapBps: (currentThorOutput / best.output - 1) * 10_000,
+    currentGapBps,
+    sourceAmountFormatted,
+    poolImpliedRate,
+    oracleRate,
+    bestQuoteRate,
+    poolRateGapVsOracleBps,
+    poolRateGapVsBestBps,
+    executionDragBps,
+    asymptoticGapBps,
+    depthRecoverableBps,
+    outboundFeeBps,
     streamingChunks: chunks,
     requiredDepthMultiplier,
     requiredAdditionalLiquidityUsd,

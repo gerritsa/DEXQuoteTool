@@ -230,7 +230,7 @@ test("public cache keys ignore cache-busting and irrelevant parameters", () => {
   );
   assert.equal(
     canonicalPublicCacheUrl(new Request("https://swaprank.test/api/runs?runId=42&routeId=ignored&junk=anything")),
-    "https://swaprank.test/api/runs?schema=3&runId=42",
+    "https://swaprank.test/api/runs?schema=4&runId=42",
   );
 });
 
@@ -254,6 +254,7 @@ test("THORChain depth forecast finds the liquidity threshold and identifies pric
     strategy: "single",
     status: "quoted",
     expectedOutputFormatted: "38.4",
+    oracleGapBps: -100,
     requestStartedAt: "2026-09-04T00:00:00.000Z",
     rawResponse: { max_streaming_quantity: 1, fees: { outbound: "0" } },
   };
@@ -276,6 +277,13 @@ test("THORChain depth forecast finds the liquidity threshold and identifies pric
   assert.equal(reachable.depthAloneSufficient, true);
   assert.ok(reachable.requiredDepthMultiplier > 1 && reachable.requiredDepthMultiplier < 3);
   assert.ok(reachable.requiredAdditionalLiquidityUsd > 0);
+  assert.equal(reachable.modelVersion, "thor-depth-v2");
+  assert.ok(reachable.poolImpliedRate > 0);
+  assert.ok(reachable.bestQuoteRate > 0);
+  assert.ok(Number.isFinite(reachable.poolRateGapVsBestBps));
+  assert.ok(Number.isFinite(reachable.poolRateGapVsOracleBps));
+  assert.ok(reachable.depthRecoverableBps > 0);
+  assert.ok(Number.isFinite(reachable.executionDragBps));
   assert.ok(Math.abs(reachable.curve.find((point) => point.multiplier === 1).gapBps - reachable.currentGapBps) < 1e-8);
 
   const priceLimited = forecastThorDepth(request, [thorQuote, competitor(45)], snapshot);
@@ -296,7 +304,9 @@ test("depth forecasting is precomputed once per quote run and exposed in route a
   assert.match(run, /forecastThorDepth\(request, quotes, poolDepthSnapshot\)/);
   assert.match(api, /depthForecast: parsedDepthForecast/);
   assert.match(page, /Quote performance/);
-  assert.match(page, /Depth forecast/);
+  assert.match(page, /Depth \+ price/);
+  assert.match(page, /Pool-implied exchange rate/);
+  assert.match(page, /What liquidity can—and cannot—fix/);
   assert.match(page, /Counterfactual model/);
   assert.match(migration, /ADD `depth_forecast_json` text/);
 });

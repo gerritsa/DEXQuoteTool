@@ -111,7 +111,7 @@ type RunResponse = {
     next: { runId: number; initiatedAt: string } | null;
   };
   depthForecast?: null | {
-    modelVersion: "thor-depth-v1";
+    modelVersion: "thor-depth-v1" | "thor-depth-v2";
     status: "available" | "unavailable";
     reason?: string;
     capturedAt: string;
@@ -120,6 +120,16 @@ type RunResponse = {
     bestOutput?: number;
     currentThorOutput?: number;
     currentGapBps?: number;
+    sourceAmountFormatted?: number;
+    poolImpliedRate?: number;
+    oracleRate?: number | null;
+    bestQuoteRate?: number;
+    poolRateGapVsOracleBps?: number | null;
+    poolRateGapVsBestBps?: number;
+    executionDragBps?: number;
+    asymptoticGapBps?: number | null;
+    depthRecoverableBps?: number | null;
+    outboundFeeBps?: number;
     streamingChunks?: number;
     requiredDepthMultiplier?: number | null;
     requiredAdditionalLiquidityUsd?: number | null;
@@ -287,6 +297,11 @@ function formatTokenAmount(value?: string | number | null) {
 function formatCompactUsd(value?: number | null) {
   if (value == null || !Number.isFinite(value)) return "—";
   return new Intl.NumberFormat([], { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
+
+function formatExchangeRate(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat([], { maximumSignificantDigits: 8 }).format(value);
 }
 
 function formatBaseUnits(value: string, decimals: number) {
@@ -507,7 +522,15 @@ function DepthForecastCard({ route, runDetails, runLoading, selectedSize }: { ro
   const bestPartner = partners.find((partner) => partner.id === forecast.bestProtocol);
   const bindingLabel = forecast.bindingPool === "source" ? `${route.source.symbol} source pool` : forecast.bindingPool === "destination" ? `${route.destination.symbol} destination pool` : "Both route pools";
   const competitiveNow = forecast.requiredDepthMultiplier === 1;
-  const statusLabel = competitiveNow ? "Competitive now" : forecast.depthAloneSufficient ? "Modeled threshold" : "Price constrained";
+  const depthRecoverableBps = forecast.depthRecoverableBps == null ? null : Math.max(0, forecast.depthRecoverableBps);
+  const statusLabel = competitiveNow
+    ? "Competitive now"
+    : forecast.depthAloneSufficient
+      ? "Depth constrained"
+      : depthRecoverableBps != null && depthRecoverableBps >= forecast.competitiveWithinBps
+        ? "Depth + price constrained"
+        : "Price constrained";
+  const hasRateDecomposition = forecast.poolImpliedRate != null && forecast.bestQuoteRate != null && forecast.poolRateGapVsBestBps != null;
   const headline = competitiveNow
     ? "Competitive at current depth"
     : forecast.depthAloneSufficient && forecast.requiredDepthMultiplier
@@ -519,14 +542,35 @@ function DepthForecastCard({ route, runDetails, runLoading, selectedSize }: { ro
   ];
   return <section className="depth-forecast-card" aria-labelledby="depth-forecast-title">
     <header className="depth-forecast-header">
-      <div><p className="eyebrow">THORChain competitiveness · {selectedSize.label}</p><h3 id="depth-forecast-title">{headline}</h3><p>{forecast.depthAloneSufficient ? `${formatCompactUsd(forecast.requiredAdditionalLiquidityUsd)} estimated additional route liquidity to come within ${forecast.competitiveWithinBps} bps of ${bestPartner?.name ?? "the best competing DEX"}.` : `${formatBps(forecast.priceRebalanceBps)} of pool-price rebalancing is still required at effectively infinite depth.`}</p></div>
+      <div><p className="eyebrow">THORChain depth + pool price · {selectedSize.label}</p><h3 id="depth-forecast-title">{headline}</h3><p>{forecast.depthAloneSufficient ? `${formatCompactUsd(forecast.requiredAdditionalLiquidityUsd)} estimated additional route liquidity to come within ${forecast.competitiveWithinBps} bps of ${bestPartner?.name ?? "the best competing DEX"}.` : `${formatBps(forecast.priceRebalanceBps)} of pool-rate improvement is still required after proportional depth has removed the modeled price impact.`}</p></div>
       <span className={`forecast-status ${competitiveNow ? "competitive" : "modeled"}`}>{statusLabel}</span>
     </header>
     <div className="depth-summary-grid">
-      <article><small>Current gap</small><strong>{formatBps(forecast.currentGapBps)}</strong><span>vs {bestPartner?.name ?? "best DEX"}</span></article>
-      <article><small>Additional liquidity</small><strong>{formatCompactUsd(forecast.requiredAdditionalLiquidityUsd)}</strong><span>{forecast.requiredDepthMultiplier ? `${forecast.requiredDepthMultiplier.toFixed(2)}× both pools` : "Depth is not the only constraint"}</span></article>
-      <article><small>Binding liquidity</small><strong>{bindingLabel}</strong><span>{forecast.streamingChunks && forecast.streamingChunks > 1 ? `${forecast.streamingChunks} modeled streaming chunks` : "Single-swap model"}</span></article>
+      <article><small>Current quote gap</small><strong>{formatBps(forecast.currentGapBps)}</strong><span>Observed vs {bestPartner?.name ?? "best DEX"}</span></article>
+      <article><small>Pool-rate gap</small><strong>{formatBps(forecast.poolRateGapVsBestBps)}</strong><span>No-impact rate vs {bestPartner?.name ?? "best DEX"}</span></article>
+      <article><small>Recoverable by depth</small><strong>{depthRecoverableBps == null ? "—" : formatBps(depthRecoverableBps)}</strong><span>{bindingLabel} · {forecast.streamingChunks && forecast.streamingChunks > 1 ? `${forecast.streamingChunks} streaming chunks` : "single swap"}</span></article>
     </div>
+    {hasRateDecomposition && <section className="rate-decomposition" aria-labelledby="rate-decomposition-title">
+      <header><div><p className="eyebrow">Gap decomposition</p><h4 id="rate-decomposition-title">What liquidity can—and cannot—fix</h4></div><span>Target ≥ −{forecast.competitiveWithinBps} bps</span></header>
+      <div className="decomposition-steps">
+        <article><small>Observed THOR quote</small><strong>{formatBps(forecast.currentGapBps)}</strong><span>Actual synchronized output</span></article>
+        <i aria-hidden="true">+</i>
+        <article className="positive"><small>Recoverable by depth</small><strong>{formatBps(depthRecoverableBps)}</strong><span>Modeled proportional scaling</span></article>
+        <i aria-hidden="true">→</i>
+        <article><small>Deep-liquidity limit</small><strong>{formatBps(forecast.asymptoticGapBps)}</strong><span>Current pool rate and fixed costs</span></article>
+        <i aria-hidden="true">+</i>
+        <article className={forecast.priceRebalanceBps ? "warning" : "positive"}><small>Pool-rate improvement needed</small><strong>{forecast.priceRebalanceBps ? formatBps(forecast.priceRebalanceBps) : "None"}</strong><span>To enter the 5 bps target</span></article>
+      </div>
+    </section>}
+    {hasRateDecomposition && <section className="pool-rate-panel" aria-labelledby="pool-rate-title">
+      <header><div><p className="eyebrow">Pool-implied exchange rate</p><h4 id="pool-rate-title">1 {route.source.symbol} priced in {route.destination.symbol}</h4></div><span>{formatBps(forecast.poolRateGapVsOracleBps)} vs oracle</span></header>
+      <div className="pool-rate-grid">
+        <article><small>THORChain pools</small><strong>{formatExchangeRate(forecast.poolImpliedRate)} {route.destination.symbol}</strong><span>{route.source.symbol}/RUNE × RUNE/{route.destination.symbol} pool ratios</span></article>
+        <article><small>Oracle market rate</small><strong>{formatExchangeRate(forecast.oracleRate)} {route.destination.symbol}</strong><span>CEX-derived reference rate</span></article>
+        <article><small>{bestPartner?.name ?? "Best DEX"} effective rate</small><strong>{formatExchangeRate(forecast.bestQuoteRate)} {route.destination.symbol}</strong><span>Includes its execution costs</span></article>
+      </div>
+      <p><b>Trade impact + fees:</b> {formatBps(forecast.executionDragBps)} from the pool-implied rate to the observed THORChain quote. The outbound fee contributes approximately {formatBps(-(forecast.outboundFeeBps ?? 0))}; the remainder includes liquidity slip and quote-model residuals.</p>
+    </section>}
     <DepthForecastChart forecast={forecast} />
     <div className="depth-pool-table">
       <div className="depth-pool-row heading"><span>Pool leg</span><span>Current liquidity</span><span>Required if scaled alone</span><span>Additional liquidity</span></div>
@@ -1046,7 +1090,7 @@ export default function SwapRankDashboard({
 
       {selectedRoute && <div className="analysis-view-tabs" role="tablist" aria-label="Route analysis view">
         <button role="tab" aria-selected={analysisPanel === "performance"} className={analysisPanel === "performance" ? "selected" : ""} onClick={() => setAnalysisPanel("performance")}>Quote performance</button>
-        <button role="tab" aria-selected={analysisPanel === "depth"} className={analysisPanel === "depth" ? "selected" : ""} onClick={() => setAnalysisPanel("depth")}>Depth forecast</button>
+        <button role="tab" aria-selected={analysisPanel === "depth"} className={analysisPanel === "depth" ? "selected" : ""} onClick={() => setAnalysisPanel("depth")}>Depth + price</button>
       </div>}
 
       {selectedRoute && analysisPanel === "performance" && <section className="trend-card" aria-labelledby="trend-title">

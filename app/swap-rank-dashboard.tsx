@@ -540,6 +540,11 @@ function DepthForecastCard({ route, runDetails, runLoading, selectedSize }: { ro
     { pool: forecast.sourcePool, symbol: route.source.symbol },
     { pool: forecast.destinationPool, symbol: route.destination.symbol },
   ];
+  const effectiveQuoteRates = (runDetails?.quotes ?? []).flatMap((quote) => {
+    const output = Number(quote.expectedOutputFormatted);
+    if (quote.status !== "quoted" || !Number.isFinite(output) || output <= 0 || !forecast.sourceAmountFormatted) return [];
+    return [{ ...quote, rate: output / forecast.sourceAmountFormatted }];
+  });
   return <section className="depth-forecast-card" aria-labelledby="depth-forecast-title">
     <header className="depth-forecast-header">
       <div><p className="eyebrow">THORChain depth + pool price · {selectedSize.label}</p><h3 id="depth-forecast-title">{headline}</h3><p>{forecast.depthAloneSufficient ? `${formatCompactUsd(forecast.requiredAdditionalLiquidityUsd)} estimated additional route liquidity to come within ${forecast.competitiveWithinBps} bps of ${bestPartner?.name ?? "the best competing DEX"}.` : `${formatBps(forecast.priceRebalanceBps)} of pool-rate improvement is still required after proportional depth has removed the modeled price impact.`}</p></div>
@@ -564,11 +569,18 @@ function DepthForecastCard({ route, runDetails, runLoading, selectedSize }: { ro
     </section>}
     {hasRateDecomposition && <section className="pool-rate-panel" aria-labelledby="pool-rate-title">
       <header><div><p className="eyebrow">Pool-implied exchange rate</p><h4 id="pool-rate-title">1 {route.source.symbol} priced in {route.destination.symbol}</h4></div><span>{formatBps(forecast.poolRateGapVsOracleBps)} vs oracle</span></header>
-      <div className="pool-rate-grid">
-        <article><small>THORChain pools</small><strong>{formatExchangeRate(forecast.poolImpliedRate)} {route.destination.symbol}</strong><span>{route.source.symbol}/RUNE × RUNE/{route.destination.symbol} pool ratios</span></article>
-        <article><small>Oracle market rate</small><strong>{formatExchangeRate(forecast.oracleRate)} {route.destination.symbol}</strong><span>CEX-derived reference rate</span></article>
-        <article><small>{bestPartner?.name ?? "Best DEX"} effective rate</small><strong>{formatExchangeRate(forecast.bestQuoteRate)} {route.destination.symbol}</strong><span>Includes its execution costs</span></article>
-      </div>
+      <div className="effective-rate-wrap"><table className="effective-rate-table">
+        <thead><tr><th>Rate source</th><th>Rate type</th><th>1 {route.source.symbol} equals</th><th>Deviation from oracle</th></tr></thead>
+        <tbody>
+          <tr className="reference"><th><span className="rate-source"><i className="oracle-rate-mark" />Oracle</span></th><td>CEX-derived reference</td><td><strong>{formatExchangeRate(forecast.oracleRate)} {route.destination.symbol}</strong></td><td><b>0 bps</b></td></tr>
+          <tr className="pool-rate"><th><span className="rate-source"><PartnerMark id="thorchain" />THORCHAIN</span></th><td>Pool-implied · no impact</td><td><strong>{formatExchangeRate(forecast.poolImpliedRate)} {route.destination.symbol}</strong></td><td><b>{formatBps(forecast.poolRateGapVsOracleBps)}</b></td></tr>
+          {effectiveQuoteRates.map((quote) => {
+            const partner = partners.find((candidate) => candidate.id === quote.protocol);
+            const isBest = quote.protocol === forecast.bestProtocol;
+            return <tr key={quote.protocol} className={isBest ? "best" : ""}><th><span className="rate-source"><PartnerMark id={quote.protocol} />{partner?.name ?? quote.protocol}</span></th><td>Executable {quote.strategy} quote{isBest ? <em>Best</em> : null}</td><td><strong>{formatExchangeRate(quote.rate)} {route.destination.symbol}</strong></td><td><b>{formatBps(quote.oracleGapBps)}</b></td></tr>;
+          })}
+        </tbody>
+      </table></div>
       <p><b>Trade impact + fees:</b> {formatBps(forecast.executionDragBps)} from the pool-implied rate to the observed THORChain quote. The outbound fee contributes approximately {formatBps(-(forecast.outboundFeeBps ?? 0))}; the remainder includes liquidity slip and quote-model residuals.</p>
     </section>}
     <DepthForecastChart forecast={forecast} />

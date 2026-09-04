@@ -307,6 +307,9 @@ test("depth forecasting is precomputed once per quote run and exposed in route a
   assert.match(page, /Depth \+ price/);
   assert.match(page, /Pool-implied exchange rate/);
   assert.match(page, /What liquidity can—and cannot—fix/);
+  assert.match(page, /Deviation from oracle/);
+  assert.match(page, /Pool-implied · no impact/);
+  assert.match(page, /Executable \{quote\.strategy\} quote/);
   assert.match(page, /Counterfactual model/);
   assert.match(migration, /ADD `depth_forecast_json` text/);
 });

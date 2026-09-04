@@ -354,16 +354,26 @@ html{scroll-padding-top:82px}
 .decomposition-steps article{min-width:0;padding:13px;border:1px solid var(--line);border-radius:3px;background:var(--soft);display:grid;gap:6px}
 .decomposition-steps article.positive{border-color:color-mix(in srgb,var(--acid) 48%,var(--line));background:color-mix(in srgb,var(--acid) 8%,var(--soft))}
 .decomposition-steps article.warning{border-color:#8c6734;background:color-mix(in srgb,#d99a3d 8%,var(--soft))}
-.decomposition-steps small,.pool-rate-grid small{color:var(--muted);font:900 7px var(--font-geist-mono);letter-spacing:.05em;text-transform:uppercase}
+.decomposition-steps small{color:var(--muted);font:900 7px var(--font-geist-mono);letter-spacing:.05em;text-transform:uppercase}
 .decomposition-steps strong{font:900 16px var(--font-geist-mono)}
-.decomposition-steps span,.pool-rate-grid span{color:var(--muted);font:8px/1.35 var(--font-geist-mono)}
+.decomposition-steps span{color:var(--muted);font:8px/1.35 var(--font-geist-mono)}
 .pool-rate-panel{background:var(--chrome);color:var(--on-chrome)}
 .pool-rate-panel>header>span{border-color:#475048;color:var(--chrome-muted)}
-.pool-rate-grid{display:grid;grid-template-columns:repeat(3,1fr);margin:0 20px;border:1px solid #384039}
-.pool-rate-grid article{min-width:0;padding:14px 15px;display:grid;gap:7px;border-right:1px solid #384039}
-.pool-rate-grid article:last-child{border-right:0}
-.pool-rate-grid small,.pool-rate-grid span{color:var(--chrome-muted)}
-.pool-rate-grid strong{overflow-wrap:anywhere;color:var(--on-chrome);font:900 14px/1.2 var(--font-geist-mono)}
+.effective-rate-wrap{margin:0 20px;overflow-x:auto;border:1px solid #384039}
+.effective-rate-table{width:100%;min-width:680px;border-collapse:collapse;font-family:var(--font-geist-mono);font-size:9px;text-align:left}
+.effective-rate-table th,.effective-rate-table td{padding:11px 13px;border-right:1px solid #384039;border-bottom:1px solid #384039}
+.effective-rate-table th:last-child,.effective-rate-table td:last-child{border-right:0}
+.effective-rate-table tbody tr:last-child>*{border-bottom:0}
+.effective-rate-table thead th{padding-top:8px;padding-bottom:8px;color:var(--chrome-muted);font-size:7px;letter-spacing:.06em;text-transform:uppercase}
+.effective-rate-table tbody th{font-weight:900}
+.effective-rate-table tbody td{color:var(--chrome-muted)}
+.effective-rate-table strong,.effective-rate-table b{color:var(--on-chrome);font-size:10px}
+.effective-rate-table tr.pool-rate{background:color-mix(in srgb,var(--acid) 7%,transparent)}
+.effective-rate-table tr.best{background:color-mix(in srgb,var(--acid) 11%,transparent)}
+.effective-rate-table em{margin-left:7px;padding:3px 5px;border-radius:2px;background:var(--acid);color:var(--acid-ink);font-size:7px;font-style:normal;font-weight:900;text-transform:uppercase}
+.rate-source{display:flex;align-items:center;gap:7px;white-space:nowrap}
+.rate-source .partner-mark{width:18px;height:18px;margin:0;border-width:1px}
+.oracle-rate-mark{width:8px;height:8px;margin:5px;display:inline-block;border-radius:50%;background:var(--on-chrome);box-shadow:0 0 0 3px color-mix(in srgb,var(--on-chrome) 12%,transparent)}
 .pool-rate-panel>p{margin:0;padding:13px 20px 17px;color:var(--chrome-muted);font:8px/1.55 var(--font-geist-mono)}
 .pool-rate-panel>p b{color:var(--on-chrome);text-transform:uppercase;letter-spacing:.04em}
 .depth-curve{padding:22px 28px 16px;border-bottom:1px solid var(--line)}
@@ -403,10 +413,11 @@ html{scroll-padding-top:82px}
 :root[data-theme="light"] .analysis-view-tabs{background:var(--card-raised)}
 :root[data-theme="light"] .analysis-view-tabs button:hover,:root[data-theme="light"] .analysis-view-tabs button:focus-visible{color:var(--ink)}
 :root[data-theme="light"] .pool-rate-panel{background:var(--card-raised);color:var(--ink)}
-:root[data-theme="light"] .pool-rate-panel>header>span,:root[data-theme="light"] .pool-rate-grid{border-color:var(--line)}
-:root[data-theme="light"] .pool-rate-grid article{border-color:var(--line)}
-:root[data-theme="light"] .pool-rate-grid strong,:root[data-theme="light"] .pool-rate-panel>p b{color:var(--ink)}
-:root[data-theme="light"] .pool-rate-grid small,:root[data-theme="light"] .pool-rate-grid span,:root[data-theme="light"] .pool-rate-panel>p{color:var(--muted)}
+:root[data-theme="light"] .pool-rate-panel>header>span,:root[data-theme="light"] .effective-rate-wrap{border-color:var(--line)}
+:root[data-theme="light"] .effective-rate-table th,:root[data-theme="light"] .effective-rate-table td{border-color:var(--line)}
+:root[data-theme="light"] .effective-rate-table strong,:root[data-theme="light"] .effective-rate-table b,:root[data-theme="light"] .pool-rate-panel>p b{color:var(--ink)}
+:root[data-theme="light"] .effective-rate-table thead th,:root[data-theme="light"] .effective-rate-table tbody td,:root[data-theme="light"] .pool-rate-panel>p{color:var(--muted)}
+:root[data-theme="light"] .oracle-rate-mark{background:var(--ink);box-shadow:0 0 0 3px color-mix(in srgb,var(--ink) 12%,transparent)}
 
 @media(max-width:760px){
   .analysis-view-tabs{width:100%;margin-top:11px}
@@ -421,9 +432,7 @@ html{scroll-padding-top:82px}
   .rate-decomposition>header>span,.pool-rate-panel>header>span{width:max-content;margin-top:12px;display:block}
   .decomposition-steps{grid-template-columns:1fr;padding-left:18px;padding-right:18px}
   .decomposition-steps>i{display:none}
-  .pool-rate-grid{grid-template-columns:1fr;margin-left:18px;margin-right:18px}
-  .pool-rate-grid article{border-right:0;border-bottom:1px solid #384039}
-  .pool-rate-grid article:last-child{border-bottom:0}
+  .effective-rate-wrap{margin-left:18px;margin-right:18px}
   .depth-curve{padding:20px 14px 14px;overflow-x:auto}
   .depth-curve svg{min-width:650px}
   .depth-curve-legend{justify-content:flex-start}

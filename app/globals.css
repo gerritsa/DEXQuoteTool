@@ -68,7 +68,7 @@ footer{margin-top:115px;padding:42px clamp(22px,5vw,76px);border-top:1px solid v
 .request-drawer>header{background:var(--topbar)}
 .request-drawer{box-shadow:-20px 0 60px rgba(0,0,0,.38)}
 footer{margin-top:100px;padding:24px clamp(22px,5vw,76px);background:var(--footer)}
-.footer-brand{display:flex;align-items:center;gap:9px}.footer-brand .brand-symbol{width:20px;height:20px;transform:scale(.78) skew(-10deg);transform-origin:left center}.footer-brand b{font-size:14px}
+.footer-brand{display:flex;align-items:center;gap:9px}.footer-brand .brand-symbol{width:20px;height:20px;transform:scale(.78) skew(-10deg);transform-origin:left center}.footer-brand b{font-size:14px}.footer-links{display:flex;align-items:center;gap:22px}.footer-github{display:inline-flex;align-items:center;gap:6px}.footer-github svg{width:16px;height:16px;display:block}.footer-github:hover,.footer-github:focus-visible{color:var(--brand-accent);outline:0}
 
 @media(max-width:1180px){.leaderboard-tools{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.leaderboard-tools fieldset:last-child{justify-self:start}}
 @media(max-width:1080px){.route-section,.route-detail{margin-left:22px;margin-right:22px}.trend-header{align-items:start}.trend-controls{flex-direction:column}}

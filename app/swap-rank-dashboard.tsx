@@ -507,6 +507,7 @@ function DepthForecastCard({ route, runDetails, runLoading, selectedSize }: { ro
   const bestPartner = partners.find((partner) => partner.id === forecast.bestProtocol);
   const bindingLabel = forecast.bindingPool === "source" ? `${route.source.symbol} source pool` : forecast.bindingPool === "destination" ? `${route.destination.symbol} destination pool` : "Both route pools";
   const competitiveNow = forecast.requiredDepthMultiplier === 1;
+  const statusLabel = competitiveNow ? "Competitive now" : forecast.depthAloneSufficient ? "Modeled threshold" : "Price constrained";
   const headline = competitiveNow
     ? "Competitive at current depth"
     : forecast.depthAloneSufficient && forecast.requiredDepthMultiplier
@@ -519,7 +520,7 @@ function DepthForecastCard({ route, runDetails, runLoading, selectedSize }: { ro
   return <section className="depth-forecast-card" aria-labelledby="depth-forecast-title">
     <header className="depth-forecast-header">
       <div><p className="eyebrow">THORChain competitiveness · {selectedSize.label}</p><h3 id="depth-forecast-title">{headline}</h3><p>{forecast.depthAloneSufficient ? `${formatCompactUsd(forecast.requiredAdditionalLiquidityUsd)} estimated additional route liquidity to come within ${forecast.competitiveWithinBps} bps of ${bestPartner?.name ?? "the best competing DEX"}.` : `${formatBps(forecast.priceRebalanceBps)} of pool-price rebalancing is still required at effectively infinite depth.`}</p></div>
-      <span className={`forecast-status ${competitiveNow ? "competitive" : "modeled"}`}>{competitiveNow ? "Competitive now" : "Modeled threshold"}</span>
+      <span className={`forecast-status ${competitiveNow ? "competitive" : "modeled"}`}>{statusLabel}</span>
     </header>
     <div className="depth-summary-grid">
       <article><small>Current gap</small><strong>{formatBps(forecast.currentGapBps)}</strong><span>vs {bestPartner?.name ?? "best DEX"}</span></article>

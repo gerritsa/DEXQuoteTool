@@ -10,8 +10,10 @@ and R2 stores compressed archives.
 
 Route analysis also includes a THORChain depth-and-price forecast. Each sweep
 reuses its Midgard pool snapshot to calculate the pool-implied exchange rate
-and explain how pool price, THOR-reported price impact, liquidity fees, and the
-outbound fee produce the synchronized executable quote. An experimental,
+and explain against the THORChain enshrined oracle how pool price,
+THOR-reported price impact, liquidity fees, and the outbound fee produce the
+synchronized executable quote. Competition against the best executable DEX
+quote is shown separately. An experimental,
 low-confidence scenario then scales route-pool liquidity at constant pool
 prices. It uses effective-depth calibration anchored to the observed quote and
 estimates the depth required to come within 5 bps of the best competing quote.

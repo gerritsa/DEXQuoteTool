@@ -230,7 +230,7 @@ test("public cache keys ignore cache-busting and irrelevant parameters", () => {
   );
   assert.equal(
     canonicalPublicCacheUrl(new Request("https://swaprank.test/api/runs?runId=42&routeId=ignored&junk=anything")),
-    "https://swaprank.test/api/runs?schema=5&runId=42",
+    "https://swaprank.test/api/runs?schema=6&runId=42",
   );
 });
 
@@ -277,11 +277,19 @@ test("THORChain depth forecast finds the liquidity threshold and identifies pric
   assert.equal(reachable.depthAloneSufficient, true);
   assert.ok(reachable.requiredDepthMultiplier > 1 && reachable.requiredDepthMultiplier < 3);
   assert.ok(reachable.requiredAdditionalLiquidityUsd > 0);
-  assert.equal(reachable.modelVersion, "thor-depth-v3");
+  assert.equal(reachable.modelVersion, "thor-depth-v4");
   assert.ok(reachable.poolImpliedRate > 0);
   assert.ok(reachable.bestQuoteRate > 0);
   assert.ok(Number.isFinite(reachable.poolRateGapVsBestBps));
   assert.ok(Number.isFinite(reachable.poolRateGapVsOracleBps));
+  assert.ok(Number.isFinite(reachable.currentOracleGapBps));
+  assert.ok(Number.isFinite(reachable.executionCostVsOracleBps));
+  assert.ok(Math.abs(reachable.poolRateGapVsOracleBps + reachable.executionDragVsOracleBps - reachable.currentOracleGapBps) < 1e-8);
+  assert.ok(Number.isFinite(reachable.reportedSlippageVsOracleBps));
+  assert.ok(Number.isFinite(reachable.liquidityFeeVsOracleBps));
+  assert.ok(Number.isFinite(reachable.outboundFeeVsOracleBps));
+  assert.ok(Number.isFinite(reachable.unexplainedExecutionCostVsOracleBps));
+  assert.ok(Math.abs(reachable.poolRateGapVsOracleBps - reachable.executionCostVsOracleBps - reachable.currentOracleGapBps) < 1e-8);
   assert.ok(reachable.depthRecoverableBps > 0);
   assert.ok(Number.isFinite(reachable.executionDragBps));
   assert.equal(reachable.reportedSlippageBps, 10);
@@ -312,7 +320,10 @@ test("depth forecasting is precomputed once per quote run and exposed in route a
   assert.match(page, /Depth \+ price/);
   assert.match(page, /Pool-implied exchange rate/);
   assert.match(page, /Pool rate − execution costs = final quote/);
-  assert.match(page, /Experimental liquidity scenario/);
+  assert.match(page, /All values vs oracle/);
+  assert.match(page, /Separate competitive comparison/);
+  assert.match(page, /Experimental symmetric scenario/);
+  assert.match(page, /This is not the cheapest allocation/);
   assert.match(page, /Low confidence/);
   assert.match(page, /Deviation from oracle/);
   assert.match(page, /Pool rate before trade impact/);

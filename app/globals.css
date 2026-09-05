@@ -370,6 +370,11 @@ html{scroll-padding-top:82px}
 .execution-cost-breakdown>span{min-width:0;padding:10px 12px;display:grid;gap:5px;border-right:1px solid var(--line)}
 .execution-cost-breakdown>span:last-child{border-right:0}
 .execution-cost-breakdown strong{font:900 11px var(--font-geist-mono)}
+.competitive-result{margin:0 20px 20px;padding:11px 13px;display:flex;align-items:center;justify-content:space-between;gap:20px;border:1px solid var(--line);border-radius:3px;background:var(--card);font-family:var(--font-geist-mono)}
+.competitive-result>span{display:grid;gap:4px}
+.competitive-result small{color:var(--muted);font:900 7px var(--font-geist-mono);letter-spacing:.05em;text-transform:uppercase}
+.competitive-result b{font-size:9px}
+.competitive-result>strong{font:900 15px var(--font-geist-mono)}
 .pool-rate-panel{background:var(--chrome);color:var(--on-chrome)}
 .pool-rate-panel>header>span{border-color:#475048;color:var(--chrome-muted)}
 .effective-rate-wrap{margin:0 20px;overflow-x:auto;border:1px solid #384039}
@@ -430,6 +435,7 @@ html{scroll-padding-top:82px}
 .scenario-explainer{padding:14px 20px;display:grid;grid-template-columns:auto 1fr;gap:14px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--soft);font:8px/1.5 var(--font-geist-mono)}
 .scenario-explainer b{text-transform:uppercase;letter-spacing:.04em}
 .scenario-explainer span{color:var(--muted)}
+.scenario-explainer span strong{color:var(--ink)}
 .depth-model-note{padding:15px 20px;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:16px;align-items:start;border-top:1px solid var(--line);background:var(--soft);font:8px/1.5 var(--font-geist-mono)}
 .depth-model-note b{white-space:nowrap;text-transform:uppercase;letter-spacing:.05em}
 .depth-model-note span,.depth-model-note small{color:var(--muted)}
@@ -464,6 +470,7 @@ html{scroll-padding-top:82px}
   .execution-cost-breakdown{grid-template-columns:1fr 1fr;margin-left:18px;margin-right:18px}
   .execution-cost-breakdown>span:nth-child(2){border-right:0}
   .execution-cost-breakdown>span:nth-child(-n+2){border-bottom:1px solid var(--line)}
+  .competitive-result{margin-left:18px;margin-right:18px}
   .effective-rate-wrap{margin-left:18px;margin-right:18px}
   .depth-curve{padding:20px 14px 14px;overflow-x:auto}
   .depth-curve svg{min-width:650px}

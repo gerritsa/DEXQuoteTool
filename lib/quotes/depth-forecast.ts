@@ -1,6 +1,6 @@
 import type { BenchmarkRequest, NormalizedQuote } from "./types";
 
-export const depthForecastModelVersion = "thor-depth-v3";
+export const depthForecastModelVersion = "thor-depth-v4";
 export const competitivenessToleranceBps = 5;
 
 export type ThorPoolDepth = {
@@ -46,6 +46,13 @@ export type ThorDepthForecast = {
   oracleRate?: number | null;
   bestQuoteRate?: number;
   poolRateGapVsOracleBps?: number | null;
+  currentOracleGapBps?: number | null;
+  executionDragVsOracleBps?: number | null;
+  executionCostVsOracleBps?: number | null;
+  reportedSlippageVsOracleBps?: number | null;
+  liquidityFeeVsOracleBps?: number | null;
+  outboundFeeVsOracleBps?: number | null;
+  unexplainedExecutionCostVsOracleBps?: number | null;
   poolRateGapVsBestBps?: number;
   executionDragBps?: number;
   executionCostBps?: number;
@@ -257,6 +264,26 @@ export function forecastThorDepth(
   const unexplainedExecutionCostBps = reportedSlippageBps == null || liquidityFeeBps == null
     ? null
     : executionCostBps - reportedSlippageBps - liquidityFeeBps - outboundFeeBps;
+  const currentOracleGapBps = oracleReferenceOutput == null ? null : (currentThorOutput / oracleReferenceOutput - 1) * 10_000;
+  const executionDragVsOracleBps = currentOracleGapBps == null || poolRateGapVsOracleBps == null
+    ? null
+    : currentOracleGapBps - poolRateGapVsOracleBps;
+  const executionCostVsOracleBps = executionDragVsOracleBps == null ? null : Math.max(0, -executionDragVsOracleBps);
+  const reportedSlippageVsOracleBps = reportedSlippageBps == null || oracleReferenceOutput == null
+    ? null
+    : reportedSlippageBps * poolImpliedOutput / oracleReferenceOutput;
+  const liquidityFeeVsOracleBps = liquidityFee == null || oracleReferenceOutput == null
+    ? null
+    : liquidityFee / 1e8 / oracleReferenceOutput * 10_000;
+  const outboundFeeVsOracleBps = oracleReferenceOutput == null
+    ? null
+    : outboundFee / 1e8 / oracleReferenceOutput * 10_000;
+  const unexplainedExecutionCostVsOracleBps = executionCostVsOracleBps == null
+    || reportedSlippageVsOracleBps == null
+    || liquidityFeeVsOracleBps == null
+    || outboundFeeVsOracleBps == null
+    ? null
+    : executionCostVsOracleBps - reportedSlippageVsOracleBps - liquidityFeeVsOracleBps - outboundFeeVsOracleBps;
   const depthAloneSufficient = requiredDepthMultiplier != null;
   const priceRebalanceBps = !depthAloneSufficient && asymptoticOutput
     ? Math.max(0, (target / asymptoticOutput - 1) * 10_000)
@@ -286,6 +313,13 @@ export function forecastThorDepth(
     oracleRate,
     bestQuoteRate,
     poolRateGapVsOracleBps,
+    currentOracleGapBps,
+    executionDragVsOracleBps,
+    executionCostVsOracleBps,
+    reportedSlippageVsOracleBps,
+    liquidityFeeVsOracleBps,
+    outboundFeeVsOracleBps,
+    unexplainedExecutionCostVsOracleBps,
     poolRateGapVsBestBps,
     executionDragBps,
     executionCostBps,

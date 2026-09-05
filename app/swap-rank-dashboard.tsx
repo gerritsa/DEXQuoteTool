@@ -111,7 +111,7 @@ type RunResponse = {
     next: { runId: number; initiatedAt: string } | null;
   };
   depthForecast?: null | {
-    modelVersion: "thor-depth-v1" | "thor-depth-v2";
+    modelVersion: "thor-depth-v1" | "thor-depth-v2" | "thor-depth-v3";
     status: "available" | "unavailable";
     reason?: string;
     capturedAt: string;
@@ -127,9 +127,16 @@ type RunResponse = {
     poolRateGapVsOracleBps?: number | null;
     poolRateGapVsBestBps?: number;
     executionDragBps?: number;
+    executionCostBps?: number;
+    reportedSlippageBps?: number | null;
+    liquidityFeeBps?: number | null;
+    unexplainedExecutionCostBps?: number | null;
     asymptoticGapBps?: number | null;
     depthRecoverableBps?: number | null;
     outboundFeeBps?: number;
+    effectiveDepthMultiplier?: number;
+    estimateConfidence?: "low";
+    estimateConfidenceReason?: string;
     streamingChunks?: number;
     requiredDepthMultiplier?: number | null;
     requiredAdditionalLiquidityUsd?: number | null;
@@ -505,7 +512,7 @@ function DepthForecastChart({ forecast }: { forecast: NonNullable<RunResponse["d
   const yTicks = [...new Set([Math.round(minimumGap), -forecast.competitiveWithinBps, 0, Math.round(maximumGap)])].sort((left, right) => right - left);
   return <div className="depth-curve">
     <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Projected THORChain quote gap as both route pool depths increase">
-      <text className="axis-title" x={padding.left} y="11">THORCHAIN GAP VS BEST DEX</text>
+      <text className="axis-title" x={padding.left} y="11">MODELED THORCHAIN GAP VS BEST DEX</text>
       {yTicks.map((value) => <g key={value}><line x1={padding.left} x2={width - padding.right} y1={y(value)} y2={y(value)} className={value === -forecast.competitiveWithinBps ? "target-line" : value === 0 ? "zero-line" : "grid-line"} /><text x={padding.left - 9} y={y(value) + 3} textAnchor="end">{value} bps</text></g>)}
       <polyline points={points.map((point) => `${x(point.multiplier)},${y(point.gapBps)}`).join(" ")} fill="none" className="forecast-line" vectorEffect="non-scaling-stroke" />
       {points.map((point) => <circle key={point.multiplier} cx={x(point.multiplier)} cy={y(point.gapBps)} r={Math.abs(point.multiplier - 1) < 1e-6 ? 5 : required && Math.abs(point.multiplier - required) < 1e-6 ? 5 : 3} className={Math.abs(point.multiplier - 1) < 1e-6 ? "current-point" : required && Math.abs(point.multiplier - required) < 1e-6 ? "target-point" : "curve-point"}><title>{point.multiplier.toFixed(2)}× depth · {formatBps(point.gapBps)} vs best DEX</title></circle>)}
@@ -521,21 +528,25 @@ function DepthForecastCard({ route, runDetails, runLoading, selectedSize }: { ro
   if (!forecast || forecast.status !== "available" || !forecast.sourcePool || !forecast.destinationPool) return <section className="depth-forecast-card"><div className="depth-forecast-empty"><b>Depth forecast unavailable</b><span>{forecast?.reason ?? "A forecast will appear after the next completed quote sweep captures pool depths."}</span></div></section>;
   const bestPartner = partners.find((partner) => partner.id === forecast.bestProtocol);
   const bindingLabel = forecast.bindingPool === "source" ? `${route.source.symbol} source pool` : forecast.bindingPool === "destination" ? `${route.destination.symbol} destination pool` : "Both route pools";
-  const competitiveNow = forecast.requiredDepthMultiplier === 1;
-  const depthRecoverableBps = forecast.depthRecoverableBps == null ? null : Math.max(0, forecast.depthRecoverableBps);
+  const competitiveNow = (forecast.currentGapBps ?? -Infinity) >= -forecast.competitiveWithinBps;
+  const poolRateCompetitive = (forecast.poolRateGapVsBestBps ?? -Infinity) >= -forecast.competitiveWithinBps;
   const statusLabel = competitiveNow
     ? "Competitive now"
-    : forecast.depthAloneSufficient
-      ? "Depth constrained"
-      : depthRecoverableBps != null && depthRecoverableBps >= forecast.competitiveWithinBps
-        ? "Depth + price constrained"
-        : "Price constrained";
+    : poolRateCompetitive
+      ? "Execution constrained"
+      : "Pool price + execution constrained";
   const hasRateDecomposition = forecast.poolImpliedRate != null && forecast.bestQuoteRate != null && forecast.poolRateGapVsBestBps != null;
+  const quoteGap = forecast.currentGapBps ?? 0;
   const headline = competitiveNow
-    ? "Competitive at current depth"
-    : forecast.depthAloneSufficient && forecast.requiredDepthMultiplier
-      ? `Needs ${forecast.requiredDepthMultiplier.toFixed(2)}× combined depth`
-      : "Depth alone cannot close the gap";
+    ? `THOR is within ${forecast.competitiveWithinBps} bps of ${bestPartner?.name ?? "the best DEX"}`
+    : `THOR is ${Math.abs(Math.round(quoteGap))} bps behind ${bestPartner?.name ?? "the best DEX"}`;
+  const poolRateDirection = (forecast.poolRateGapVsBestBps ?? 0) >= 0 ? "better" : "worse";
+  const executionEffect = (forecast.poolRateGapVsBestBps ?? 0) >= 0
+    ? competitiveNow ? "remain in the final quote" : "erase that advantage"
+    : "add to that disadvantage";
+  const conclusion = hasRateDecomposition
+    ? `Before trade impact, THOR's pool rate is ${Math.abs(Math.round(forecast.poolRateGapVsBestBps ?? 0))} bps ${poolRateDirection}. About ${Math.round(forecast.executionCostBps ?? Math.max(0, -(forecast.executionDragBps ?? 0)))} bps of execution impact and fees ${executionEffect}.`
+    : "This compares the synchronized executable quotes returned by each protocol.";
   const poolRows = [
     { pool: forecast.sourcePool, symbol: route.source.symbol },
     { pool: forecast.destinationPool, symbol: route.destination.symbol },
@@ -547,24 +558,23 @@ function DepthForecastCard({ route, runDetails, runLoading, selectedSize }: { ro
   });
   return <section className="depth-forecast-card" aria-labelledby="depth-forecast-title">
     <header className="depth-forecast-header">
-      <div><p className="eyebrow">THORChain depth + pool price · {selectedSize.label}</p><h3 id="depth-forecast-title">{headline}</h3><p>{forecast.depthAloneSufficient ? `${formatCompactUsd(forecast.requiredAdditionalLiquidityUsd)} estimated additional route liquidity to come within ${forecast.competitiveWithinBps} bps of ${bestPartner?.name ?? "the best competing DEX"}.` : `${formatBps(forecast.priceRebalanceBps)} of pool-rate improvement is still required after proportional depth has removed the modeled price impact.`}</p></div>
+      <div><p className="eyebrow">Observed result · {selectedSize.label}</p><h3 id="depth-forecast-title">{headline}</h3><p>{conclusion}</p></div>
       <span className={`forecast-status ${competitiveNow ? "competitive" : "modeled"}`}>{statusLabel}</span>
     </header>
-    <div className="depth-summary-grid">
-      <article><small>Current quote gap</small><strong>{formatBps(forecast.currentGapBps)}</strong><span>Observed vs {bestPartner?.name ?? "best DEX"}</span></article>
-      <article><small>Pool-rate gap</small><strong>{formatBps(forecast.poolRateGapVsBestBps)}</strong><span>No-impact rate vs {bestPartner?.name ?? "best DEX"}</span></article>
-      <article><small>Recoverable by depth</small><strong>{depthRecoverableBps == null ? "—" : formatBps(depthRecoverableBps)}</strong><span>{bindingLabel} · {forecast.streamingChunks && forecast.streamingChunks > 1 ? `${forecast.streamingChunks} streaming chunks` : "single swap"}</span></article>
-    </div>
     {hasRateDecomposition && <section className="rate-decomposition" aria-labelledby="rate-decomposition-title">
-      <header><div><p className="eyebrow">Gap decomposition</p><h4 id="rate-decomposition-title">What liquidity can—and cannot—fix</h4></div><span>Target ≥ −{forecast.competitiveWithinBps} bps</span></header>
-      <div className="decomposition-steps">
-        <article><small>Observed THOR quote</small><strong>{formatBps(forecast.currentGapBps)}</strong><span>Actual synchronized output</span></article>
+      <header><div><p className="eyebrow">Why the quote lands here</p><h4 id="rate-decomposition-title">Pool rate − execution costs = final quote</h4></div><span>All values vs {bestPartner?.name ?? "best DEX"}</span></header>
+      <div className="quote-explanation-flow">
+        <article className="positive"><small>Pool rate before the trade</small><strong>{formatBps(forecast.poolRateGapVsBestBps)}</strong><span><b>Calculated</b> from current pool balances</span></article>
         <i aria-hidden="true">+</i>
-        <article className="positive"><small>Recoverable by depth</small><strong>{formatBps(depthRecoverableBps)}</strong><span>Modeled proportional scaling</span></article>
-        <i aria-hidden="true">→</i>
-        <article><small>Deep-liquidity limit</small><strong>{formatBps(forecast.asymptoticGapBps)}</strong><span>Current pool rate and fixed costs</span></article>
-        <i aria-hidden="true">+</i>
-        <article className={forecast.priceRebalanceBps ? "warning" : "positive"}><small>Pool-rate improvement needed</small><strong>{forecast.priceRebalanceBps ? formatBps(forecast.priceRebalanceBps) : "None"}</strong><span>To enter the 5 bps target</span></article>
+        <article className="cost"><small>Trade impact + fees</small><strong>{formatBps(-(forecast.executionCostBps ?? Math.max(0, -(forecast.executionDragBps ?? 0))))}</strong><span><b>Observed difference</b> from pool rate to quote</span></article>
+        <i aria-hidden="true">=</i>
+        <article><small>Executable THOR quote</small><strong>{formatBps(forecast.currentGapBps)}</strong><span><b>Observed</b> in the synchronized comparison</span></article>
+      </div>
+      <div className="execution-cost-breakdown">
+        <span><small>THOR-reported price impact</small><strong>{forecast.reportedSlippageBps == null ? "Not reported" : formatBps(-forecast.reportedSlippageBps)}</strong></span>
+        <span><small>THOR-reported liquidity fee</small><strong>{forecast.liquidityFeeBps == null ? "Not reported" : formatBps(-forecast.liquidityFeeBps)}</strong></span>
+        <span><small>Outbound network fee</small><strong>{formatBps(-(forecast.outboundFeeBps ?? 0))}</strong></span>
+        <span><small>Unexplained / rounding</small><strong>{forecast.unexplainedExecutionCostBps == null ? "—" : formatBps(-forecast.unexplainedExecutionCostBps)}</strong></span>
       </div>
     </section>}
     {hasRateDecomposition && <section className="pool-rate-panel" aria-labelledby="pool-rate-title">
@@ -572,8 +582,8 @@ function DepthForecastCard({ route, runDetails, runLoading, selectedSize }: { ro
       <div className="effective-rate-wrap"><table className="effective-rate-table">
         <thead><tr><th>Rate source</th><th>Rate type</th><th>1 {route.source.symbol} equals</th><th>Deviation from oracle</th></tr></thead>
         <tbody>
-          <tr className="reference"><th><span className="rate-source"><i className="oracle-rate-mark" />Oracle</span></th><td>CEX-derived reference</td><td><strong>{formatExchangeRate(forecast.oracleRate)} {route.destination.symbol}</strong></td><td><b>0 bps</b></td></tr>
-          <tr className="pool-rate"><th><span className="rate-source"><PartnerMark id="thorchain" />THORCHAIN</span></th><td>Pool-implied · no impact</td><td><strong>{formatExchangeRate(forecast.poolImpliedRate)} {route.destination.symbol}</strong></td><td><b>{formatBps(forecast.poolRateGapVsOracleBps)}</b></td></tr>
+          <tr className="reference"><th><span className="rate-source"><i className="oracle-rate-mark" />Oracle</span></th><td>THORChain enshrined CEX reference</td><td><strong>{formatExchangeRate(forecast.oracleRate)} {route.destination.symbol}</strong></td><td><b>0 bps</b></td></tr>
+          <tr className="pool-rate"><th><span className="rate-source"><PartnerMark id="thorchain" />THORCHAIN</span></th><td>Pool rate before trade impact</td><td><strong>{formatExchangeRate(forecast.poolImpliedRate)} {route.destination.symbol}</strong></td><td><b>{formatBps(forecast.poolRateGapVsOracleBps)}</b></td></tr>
           {effectiveQuoteRates.map((quote) => {
             const partner = partners.find((candidate) => candidate.id === quote.protocol);
             const isBest = quote.protocol === forecast.bestProtocol;
@@ -581,14 +591,21 @@ function DepthForecastCard({ route, runDetails, runLoading, selectedSize }: { ro
           })}
         </tbody>
       </table></div>
-      <p><b>Trade impact + fees:</b> {formatBps(forecast.executionDragBps)} from the pool-implied rate to the observed THORChain quote. The outbound fee contributes approximately {formatBps(-(forecast.outboundFeeBps ?? 0))}; the remainder includes liquidity slip and quote-model residuals.</p>
+      <p><b>How to read this:</b> The pool row is THORChain&apos;s starting exchange rate before this trade changes the pools. The executable rows are what each venue actually offered for this exact amount. A favorable pool rate can still produce a losing quote when price impact and fees are larger.</p>
     </section>}
-    <DepthForecastChart forecast={forecast} />
-    <div className="depth-pool-table">
-      <div className="depth-pool-row heading"><span>Pool leg</span><span>Current liquidity</span><span>Required if scaled alone</span><span>Additional liquidity</span></div>
-      {poolRows.map(({ pool, symbol }) => <div className={`depth-pool-row ${forecast.bindingPool === pool.role ? "binding" : ""}`} key={pool.asset}><span><b>{symbol}</b><small>{pool.role} leg{forecast.bindingPool === pool.role ? " · binding" : ""}</small></span><strong>{formatCompactUsd(pool.liquidityUsd)}</strong><strong>{pool.requiredMultiplierIfScaledAlone == null ? "Not sufficient alone" : `${pool.requiredMultiplierIfScaledAlone.toFixed(2)}×`}</strong><strong>{formatCompactUsd(pool.requiredAdditionalLiquidityUsd)}</strong></div>)}
-    </div>
-    <div className="depth-model-note"><b>Counterfactual model</b><span>Scales pool asset and RUNE balances together, preserves current pool prices, applies the observed outbound fee and streaming quantity, and calibrates the curve to the synchronized THORChain quote. It estimates liquidity sensitivity—not future market prices.</span><small>Pool snapshot {formatTime(forecast.capturedAt)} · {forecast.modelVersion}</small></div>
+    <details className="liquidity-scenario">
+      <summary>
+        <span><small>Experimental liquidity scenario</small><strong>{competitiveNow ? "Already within target" : forecast.depthAloneSufficient && forecast.requiredDepthMultiplier ? `About ${forecast.requiredDepthMultiplier.toFixed(1)}× combined depth` : "Depth alone is not enough"}</strong></span>
+        <span><b>Low confidence</b><small>{forecast.depthAloneSufficient ? `${formatCompactUsd(forecast.requiredAdditionalLiquidityUsd)} modeled additional liquidity to reach the ${forecast.competitiveWithinBps} bps target` : `${formatBps(forecast.priceRebalanceBps)} pool-rate improvement still needed`}</small></span>
+      </summary>
+      <div className="scenario-explainer"><b>This is a sensitivity estimate, not a prediction or capital recommendation.</b><span>It asks what would happen if both THORChain pools became deeper while their exchange rates stayed unchanged. The curve is anchored to this quote using an effective-depth calibration; price changes, arbitrage, fees, and routing behavior can change the real result.</span></div>
+      <DepthForecastChart forecast={forecast} />
+      <div className="depth-pool-table">
+        <div className="depth-pool-row heading"><span>Pool leg</span><span>Current liquidity</span><span>Required if scaled alone</span><span>Additional liquidity</span></div>
+        {poolRows.map(({ pool, symbol }) => <div className={`depth-pool-row ${forecast.bindingPool === pool.role ? "binding" : ""}`} key={pool.asset}><span><b>{symbol}</b><small>{pool.role} leg{forecast.bindingPool === pool.role ? " · most sensitive" : ""}</small></span><strong>{formatCompactUsd(pool.liquidityUsd)}</strong><strong>{pool.requiredMultiplierIfScaledAlone == null ? "Not sufficient alone" : `~${pool.requiredMultiplierIfScaledAlone.toFixed(1)}×`}</strong><strong>{formatCompactUsd(pool.requiredAdditionalLiquidityUsd)}</strong></div>)}
+      </div>
+      <div className="depth-model-note"><b>Low-confidence model</b><span>{forecast.estimateConfidenceReason ?? "Single-snapshot counterfactual; not historically backtested."} {bindingLabel} is most sensitive in this scenario. The model preserves current pool prices and uses the observed outbound fee and streaming quantity.</span><small>Pool snapshot {formatTime(forecast.capturedAt)} · {forecast.modelVersion}</small></div>
+    </details>
   </section>;
 }
 

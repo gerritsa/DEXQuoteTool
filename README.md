@@ -10,11 +10,13 @@ and R2 stores compressed archives.
 
 Route analysis also includes a THORChain depth-and-price forecast. Each sweep
 reuses its Midgard pool snapshot to calculate the pool-implied exchange rate
-and simulate how the synchronized THORChain quote changes when route-pool
-liquidity is scaled at constant pool prices. The forecast separates the
-depth-recoverable quote gap from the remaining pool-rate gap, shows the depth
-required to come within 5 bps of the best competing quote, and flags when
-arbitrage-driven pool-price rebalancing is also needed.
+and explain how pool price, THOR-reported price impact, liquidity fees, and the
+outbound fee produce the synchronized executable quote. An experimental,
+low-confidence scenario then scales route-pool liquidity at constant pool
+prices. It uses effective-depth calibration anchored to the observed quote and
+estimates the depth required to come within 5 bps of the best competing quote.
+It is a single-snapshot sensitivity estimate, not a prediction or capital
+recommendation.
 
 ## Local development
 

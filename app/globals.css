@@ -357,6 +357,19 @@ html{scroll-padding-top:82px}
 .decomposition-steps small{color:var(--muted);font:900 7px var(--font-geist-mono);letter-spacing:.05em;text-transform:uppercase}
 .decomposition-steps strong{font:900 16px var(--font-geist-mono)}
 .decomposition-steps span{color:var(--muted);font:8px/1.35 var(--font-geist-mono)}
+.quote-explanation-flow{padding:0 20px 12px;display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:stretch;gap:10px}
+.quote-explanation-flow>i{align-self:center;color:var(--muted);font:900 16px var(--font-geist-mono);font-style:normal}
+.quote-explanation-flow article{min-width:0;padding:15px;border:1px solid var(--line);border-radius:3px;background:var(--soft);display:grid;gap:7px}
+.quote-explanation-flow article.positive{border-color:color-mix(in srgb,var(--acid) 48%,var(--line));background:color-mix(in srgb,var(--acid) 8%,var(--soft))}
+.quote-explanation-flow article.cost{border-color:#765937;background:color-mix(in srgb,#d99a3d 7%,var(--soft))}
+.quote-explanation-flow small,.execution-cost-breakdown small{color:var(--muted);font:900 7px/1.35 var(--font-geist-mono);letter-spacing:.05em;text-transform:uppercase}
+.quote-explanation-flow strong{font:900 18px var(--font-geist-mono)}
+.quote-explanation-flow span{color:var(--muted);font:8px/1.4 var(--font-geist-mono)}
+.quote-explanation-flow span b{color:var(--ink);font-size:7px;letter-spacing:.04em;text-transform:uppercase}
+.execution-cost-breakdown{margin:0 20px 20px;display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.execution-cost-breakdown>span{min-width:0;padding:10px 12px;display:grid;gap:5px;border-right:1px solid var(--line)}
+.execution-cost-breakdown>span:last-child{border-right:0}
+.execution-cost-breakdown strong{font:900 11px var(--font-geist-mono)}
 .pool-rate-panel{background:var(--chrome);color:var(--on-chrome)}
 .pool-rate-panel>header>span{border-color:#475048;color:var(--chrome-muted)}
 .effective-rate-wrap{margin:0 20px;overflow-x:auto;border:1px solid #384039}
@@ -403,6 +416,20 @@ html{scroll-padding-top:82px}
 .depth-pool-row:not(.heading)>span small{color:var(--muted);font-size:8px;text-transform:uppercase}
 .depth-pool-row:not(.heading)>strong{font-size:10px}
 .depth-pool-row.binding{background:color-mix(in srgb,var(--acid) 7%,var(--card))}
+.liquidity-scenario{border-bottom:0;background:var(--card)}
+.liquidity-scenario>summary{padding:17px 20px;display:flex;align-items:center;justify-content:space-between;gap:24px;cursor:pointer;list-style:none;font-family:var(--font-geist-mono)}
+.liquidity-scenario>summary::-webkit-details-marker{display:none}
+.liquidity-scenario>summary:after{content:"+";flex:0 0 auto;color:var(--muted);font:900 20px var(--font-geist-mono)}
+.liquidity-scenario[open]>summary:after{content:"−"}
+.liquidity-scenario>summary>span{display:grid;gap:5px}
+.liquidity-scenario>summary>span:nth-child(2){margin-left:auto;text-align:right}
+.liquidity-scenario>summary small{color:var(--muted);font:8px/1.4 var(--font-geist-mono)}
+.liquidity-scenario>summary>span:first-child small{text-transform:uppercase;letter-spacing:.06em;font-weight:900}
+.liquidity-scenario>summary strong{font:900 16px/1.15 var(--font-geist-mono)}
+.liquidity-scenario>summary b{width:max-content;margin-left:auto;padding:4px 6px;border:1px solid #765937;border-radius:2px;color:#c8914c;font:900 7px var(--font-geist-mono);letter-spacing:.05em;text-transform:uppercase}
+.scenario-explainer{padding:14px 20px;display:grid;grid-template-columns:auto 1fr;gap:14px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--soft);font:8px/1.5 var(--font-geist-mono)}
+.scenario-explainer b{text-transform:uppercase;letter-spacing:.04em}
+.scenario-explainer span{color:var(--muted)}
 .depth-model-note{padding:15px 20px;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:16px;align-items:start;border-top:1px solid var(--line);background:var(--soft);font:8px/1.5 var(--font-geist-mono)}
 .depth-model-note b{white-space:nowrap;text-transform:uppercase;letter-spacing:.05em}
 .depth-model-note span,.depth-model-note small{color:var(--muted)}
@@ -432,12 +459,20 @@ html{scroll-padding-top:82px}
   .rate-decomposition>header>span,.pool-rate-panel>header>span{width:max-content;margin-top:12px;display:block}
   .decomposition-steps{grid-template-columns:1fr;padding-left:18px;padding-right:18px}
   .decomposition-steps>i{display:none}
+  .quote-explanation-flow{grid-template-columns:1fr;padding-left:18px;padding-right:18px}
+  .quote-explanation-flow>i{display:none}
+  .execution-cost-breakdown{grid-template-columns:1fr 1fr;margin-left:18px;margin-right:18px}
+  .execution-cost-breakdown>span:nth-child(2){border-right:0}
+  .execution-cost-breakdown>span:nth-child(-n+2){border-bottom:1px solid var(--line)}
   .effective-rate-wrap{margin-left:18px;margin-right:18px}
   .depth-curve{padding:20px 14px 14px;overflow-x:auto}
   .depth-curve svg{min-width:650px}
   .depth-curve-legend{justify-content:flex-start}
   .depth-pool-table{overflow-x:auto}
   .depth-pool-row{min-width:680px}
+  .liquidity-scenario>summary{align-items:flex-start;gap:12px}
+  .liquidity-scenario>summary>span:nth-child(2){display:none}
+  .scenario-explainer{grid-template-columns:1fr;gap:6px}
   .depth-model-note{grid-template-columns:1fr;gap:6px}
   .depth-model-note small{white-space:normal}
 }

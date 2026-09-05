@@ -230,7 +230,7 @@ test("public cache keys ignore cache-busting and irrelevant parameters", () => {
   );
   assert.equal(
     canonicalPublicCacheUrl(new Request("https://swaprank.test/api/runs?runId=42&routeId=ignored&junk=anything")),
-    "https://swaprank.test/api/runs?schema=4&runId=42",
+    "https://swaprank.test/api/runs?schema=5&runId=42",
   );
 });
 
@@ -256,7 +256,7 @@ test("THORChain depth forecast finds the liquidity threshold and identifies pric
     expectedOutputFormatted: "38.4",
     oracleGapBps: -100,
     requestStartedAt: "2026-09-04T00:00:00.000Z",
-    rawResponse: { max_streaming_quantity: 1, fees: { outbound: "0" } },
+    rawResponse: { max_streaming_quantity: 1, fees: { outbound: "0", liquidity: "1000000", slippage_bps: 10 } },
   };
   const competitor = (output) => ({
     protocol: "chainflip",
@@ -277,13 +277,18 @@ test("THORChain depth forecast finds the liquidity threshold and identifies pric
   assert.equal(reachable.depthAloneSufficient, true);
   assert.ok(reachable.requiredDepthMultiplier > 1 && reachable.requiredDepthMultiplier < 3);
   assert.ok(reachable.requiredAdditionalLiquidityUsd > 0);
-  assert.equal(reachable.modelVersion, "thor-depth-v2");
+  assert.equal(reachable.modelVersion, "thor-depth-v3");
   assert.ok(reachable.poolImpliedRate > 0);
   assert.ok(reachable.bestQuoteRate > 0);
   assert.ok(Number.isFinite(reachable.poolRateGapVsBestBps));
   assert.ok(Number.isFinite(reachable.poolRateGapVsOracleBps));
   assert.ok(reachable.depthRecoverableBps > 0);
   assert.ok(Number.isFinite(reachable.executionDragBps));
+  assert.equal(reachable.reportedSlippageBps, 10);
+  assert.ok(reachable.liquidityFeeBps > 0);
+  assert.ok(Number.isFinite(reachable.unexplainedExecutionCostBps));
+  assert.equal(reachable.estimateConfidence, "low");
+  assert.ok(Math.abs(reachable.asymptoticGapBps - (reachable.poolRateGapVsBestBps - reachable.outboundFeeBps)) < 0.1);
   assert.ok(Math.abs(reachable.curve.find((point) => point.multiplier === 1).gapBps - reachable.currentGapBps) < 1e-8);
 
   const priceLimited = forecastThorDepth(request, [thorQuote, competitor(45)], snapshot);
@@ -306,11 +311,14 @@ test("depth forecasting is precomputed once per quote run and exposed in route a
   assert.match(page, /Quote performance/);
   assert.match(page, /Depth \+ price/);
   assert.match(page, /Pool-implied exchange rate/);
-  assert.match(page, /What liquidity can—and cannot—fix/);
+  assert.match(page, /Pool rate − execution costs = final quote/);
+  assert.match(page, /Experimental liquidity scenario/);
+  assert.match(page, /Low confidence/);
   assert.match(page, /Deviation from oracle/);
-  assert.match(page, /Pool-implied · no impact/);
+  assert.match(page, /Pool rate before trade impact/);
+  assert.match(page, /THORChain enshrined CEX reference/);
   assert.match(page, /Executable \{quote\.strategy\} quote/);
-  assert.match(page, /Counterfactual model/);
+  assert.match(page, /Low-confidence model/);
   assert.match(migration, /ADD `depth_forecast_json` text/);
 });
 

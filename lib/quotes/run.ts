@@ -8,7 +8,7 @@ import { getChainflipQuote } from "./adapters/chainflip";
 import { getNearIntentsQuote } from "./adapters/near-intents";
 import { getPoolProtocolQuote } from "./adapters/pool-protocol";
 import { strategyFor } from "./protocols";
-import { forecastThorDepth, poolDepthSnapshotFromAssets, type ThorDepthForecast, type ThorPoolDepthSnapshot } from "./depth-forecast";
+import { analyzeThorQuote, poolDepthSnapshotFromAssets, type ThorPoolDepthSnapshot, type ThorQuoteAnalysis } from "./depth-forecast";
 import { quoteSizes } from "./sizes";
 import type { BenchmarkRequest, ChainAsset, ExecutionMode, NormalizedQuote, ProtocolId } from "./types";
 
@@ -37,7 +37,7 @@ export type BenchmarkArchiveRecord = {
   completedAt: string;
   maxRequestSkewMs: number;
   oracle: OracleReference | null;
-  depthForecast: ThorDepthForecast | null;
+  depthForecast: ThorQuoteAnalysis | null;
   request: BenchmarkRequest;
   quotes: NormalizedQuote[];
 };
@@ -188,9 +188,9 @@ async function loadStoredArchive(
         capturedAt: run.oracleCapturedAt,
       }
     : null;
-  let depthForecast: ThorDepthForecast | null = null;
+  let depthForecast: ThorQuoteAnalysis | null = null;
   try {
-    depthForecast = run.depthForecastJson ? JSON.parse(run.depthForecastJson) as ThorDepthForecast : null;
+    depthForecast = run.depthForecastJson ? JSON.parse(run.depthForecastJson) as ThorQuoteAnalysis : null;
   } catch {
     depthForecast = null;
   }
@@ -252,7 +252,7 @@ async function finalizeRun(
   completedAt: string,
   maxRequestSkewMs: number,
   quotes: NormalizedQuote[],
-  depthForecast: ThorDepthForecast,
+  depthForecast: ThorQuoteAnalysis,
 ) {
   const d1 = getD1();
   await d1.batch([
@@ -370,7 +370,7 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
   const quotes = rawQuotes.map((quote) => ({ ...quote, oracleGapBps: oracleGapBps(quote.expectedOutputFormatted, oracle) }));
   const poolDepthSnapshot = options.poolDepthSnapshot
     ?? poolDepthSnapshotFromAssets([route.source, route.destination], catalog.refreshedAt ?? initiatedAt);
-  const depthForecast = forecastThorDepth(request, quotes, poolDepthSnapshot);
+  const depthForecast = analyzeThorQuote(request, quotes, poolDepthSnapshot);
   const startTimes = quotes.map((quote) => new Date(quote.requestStartedAt).getTime()).filter(Number.isFinite);
   const maxRequestSkewMs = startTimes.length ? Math.max(...startTimes) - Math.min(...startTimes) : 0;
   const completedAt = new Date().toISOString();

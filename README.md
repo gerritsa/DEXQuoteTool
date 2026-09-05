@@ -8,17 +8,13 @@ execution modes: Standard Swap and Streaming/DCA. Scheduled Cloudflare Workers
 enqueue a complete sweep every 30 minutes. D1 stores queryable quote history
 and R2 stores compressed archives.
 
-Route analysis also includes a THORChain depth-and-price forecast. Each sweep
+Route analysis also includes a THORChain pool-and-execution analysis. Each sweep
 reuses its Midgard pool snapshot to calculate the pool-implied exchange rate
 and explain against the THORChain enshrined oracle how pool price,
-THOR-reported price impact, liquidity fees, and the outbound fee produce the
+THORChain-reported price impact, liquidity fees, and the outbound fee produce the
 synchronized executable quote. Competition against the best executable DEX
-quote is shown separately. An experimental,
-low-confidence scenario then scales route-pool liquidity at constant pool
-prices. It uses effective-depth calibration anchored to the observed quote and
-estimates the depth required to come within 5 bps of the best competing quote.
-It is a single-snapshot sensitivity estimate, not a prediction or capital
-recommendation.
+quote is shown separately. No counterfactual liquidity or future-price model is
+included.
 
 ## Local development
 

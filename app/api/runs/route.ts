@@ -5,7 +5,7 @@ import { benchmarkRuns, protocolQuotes } from "../../../db/schema";
 import { runSelectedBenchmark, type BenchmarkArchiveRecord } from "../../../lib/quotes/run";
 import { rawArchiveRetentionMs } from "../../../lib/quotes/retention";
 import type { ExecutionMode } from "../../../lib/quotes/types";
-import type { ThorDepthForecast } from "../../../lib/quotes/depth-forecast";
+import type { ThorQuoteAnalysis } from "../../../lib/quotes/depth-forecast";
 import { publicCacheHeaders, readPublicCache, writePublicCache } from "../../../lib/http-cache";
 
 function executionMode(value: unknown): ExecutionMode {
@@ -31,8 +31,8 @@ function parsedDepthForecast(value: string | null) {
   if (!value) return null;
   try {
     const parsed = JSON.parse(value) as { modelVersion?: string; status?: string };
-    return (parsed.modelVersion === "thor-depth-v1" || parsed.modelVersion === "thor-depth-v2" || parsed.modelVersion === "thor-depth-v3" || parsed.modelVersion === "thor-depth-v4") && (parsed.status === "available" || parsed.status === "unavailable")
-      ? parsed as ThorDepthForecast
+    return (["thor-depth-v1", "thor-depth-v2", "thor-depth-v3", "thor-depth-v4", "thor-analysis-v1"].includes(parsed.modelVersion ?? "")) && (parsed.status === "available" || parsed.status === "unavailable")
+      ? parsed as ThorQuoteAnalysis
       : null;
   } catch {
     return null;

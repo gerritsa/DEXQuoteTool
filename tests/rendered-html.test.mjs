@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { canonicalPublicCacheUrl } from "../lib/http-cache.ts";
 import { oracleGapBps, referenceForAmount } from "../lib/oracle.ts";
-import { forecastThorDepth, simulateThorOutput } from "../lib/quotes/depth-forecast.ts";
+import { analyzeThorQuote } from "../lib/quotes/depth-forecast.ts";
 
 async function render(path = "/", environment = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -43,7 +43,7 @@ test("server-renders the SwapRank dashboard", async () => {
   assert.match(html, /\/partners\/thorchain\.png/);
   assert.match(html, /\/partners\/maya\.svg/);
   assert.match(html, /MAYA PROTOCOL/);
-  assert.match(html, /THORCHAIN[\s\S]*MAYA PROTOCOL[\s\S]*CHAINFLIP[\s\S]*NEAR/);
+  assert.match(html, /THORChain[\s\S]*MAYA PROTOCOL[\s\S]*CHAINFLIP[\s\S]*NEAR/);
   assert.doesNotMatch(html, /Route analysis/);
   assert.doesNotMatch(html, />Exact input</);
   assert.doesNotMatch(html, /Run \$.*test/);
@@ -230,11 +230,11 @@ test("public cache keys ignore cache-busting and irrelevant parameters", () => {
   );
   assert.equal(
     canonicalPublicCacheUrl(new Request("https://swaprank.test/api/runs?runId=42&routeId=ignored&junk=anything")),
-    "https://swaprank.test/api/runs?schema=6&runId=42",
+    "https://swaprank.test/api/runs?schema=7&runId=42",
   );
 });
 
-test("THORChain depth forecast finds the liquidity threshold and identifies price imbalance", () => {
+test("THORChain analysis decomposes the executable quote against the oracle", () => {
   const sourcePool = { asset: "BTC.BTC", assetDepth: "10000000000", runeDepth: "10000000000000", liquidityUsd: 10_000_000 };
   const destinationPool = { asset: "ETH.ETH", assetDepth: "400000000000", runeDepth: "10000000000000", liquidityUsd: 8_000_000 };
   const request = {
@@ -268,45 +268,24 @@ test("THORChain depth forecast finds the liquidity threshold and identifies pric
   });
   const snapshot = { capturedAt: "2026-09-04T00:00:00.000Z", pools: [sourcePool, destinationPool] };
 
-  const current = simulateThorOutput(100_000_000, sourcePool, destinationPool, 1, 1, 1);
-  const deeper = simulateThorOutput(100_000_000, sourcePool, destinationPool, 2, 2, 1);
-  assert.ok(current && deeper && deeper > current);
-
-  const reachable = forecastThorDepth(request, [thorQuote, competitor(39.2)], snapshot);
-  assert.equal(reachable.status, "available");
-  assert.equal(reachable.depthAloneSufficient, true);
-  assert.ok(reachable.requiredDepthMultiplier > 1 && reachable.requiredDepthMultiplier < 3);
-  assert.ok(reachable.requiredAdditionalLiquidityUsd > 0);
-  assert.equal(reachable.modelVersion, "thor-depth-v4");
-  assert.ok(reachable.poolImpliedRate > 0);
-  assert.ok(reachable.bestQuoteRate > 0);
-  assert.ok(Number.isFinite(reachable.poolRateGapVsBestBps));
-  assert.ok(Number.isFinite(reachable.poolRateGapVsOracleBps));
-  assert.ok(Number.isFinite(reachable.currentOracleGapBps));
-  assert.ok(Number.isFinite(reachable.executionCostVsOracleBps));
-  assert.ok(Math.abs(reachable.poolRateGapVsOracleBps + reachable.executionDragVsOracleBps - reachable.currentOracleGapBps) < 1e-8);
-  assert.ok(Number.isFinite(reachable.reportedSlippageVsOracleBps));
-  assert.ok(Number.isFinite(reachable.liquidityFeeVsOracleBps));
-  assert.ok(Number.isFinite(reachable.outboundFeeVsOracleBps));
-  assert.ok(Number.isFinite(reachable.unexplainedExecutionCostVsOracleBps));
-  assert.ok(Math.abs(reachable.poolRateGapVsOracleBps - reachable.executionCostVsOracleBps - reachable.currentOracleGapBps) < 1e-8);
-  assert.ok(reachable.depthRecoverableBps > 0);
-  assert.ok(Number.isFinite(reachable.executionDragBps));
-  assert.equal(reachable.reportedSlippageBps, 10);
-  assert.ok(reachable.liquidityFeeBps > 0);
-  assert.ok(Number.isFinite(reachable.unexplainedExecutionCostBps));
-  assert.equal(reachable.estimateConfidence, "low");
-  assert.ok(Math.abs(reachable.asymptoticGapBps - (reachable.poolRateGapVsBestBps - reachable.outboundFeeBps)) < 0.1);
-  assert.ok(Math.abs(reachable.curve.find((point) => point.multiplier === 1).gapBps - reachable.currentGapBps) < 1e-8);
-
-  const priceLimited = forecastThorDepth(request, [thorQuote, competitor(45)], snapshot);
-  assert.equal(priceLimited.status, "available");
-  assert.equal(priceLimited.depthAloneSufficient, false);
-  assert.equal(priceLimited.requiredDepthMultiplier, null);
-  assert.ok(priceLimited.priceRebalanceBps > 0);
+  const analysis = analyzeThorQuote(request, [thorQuote, competitor(39.2)], snapshot);
+  assert.equal(analysis.status, "available");
+  assert.equal(analysis.modelVersion, "thor-analysis-v1");
+  assert.ok(analysis.poolImpliedRate > 0);
+  assert.ok(analysis.bestQuoteRate > 0);
+  assert.ok(Number.isFinite(analysis.poolRateGapVsOracleBps));
+  assert.ok(Number.isFinite(analysis.currentOracleGapBps));
+  assert.ok(Number.isFinite(analysis.executionCostVsOracleBps));
+  assert.ok(Math.abs(analysis.poolRateGapVsOracleBps + analysis.executionDragVsOracleBps - analysis.currentOracleGapBps) < 1e-8);
+  assert.ok(Number.isFinite(analysis.reportedSlippageVsOracleBps));
+  assert.ok(Number.isFinite(analysis.liquidityFeeVsOracleBps));
+  assert.ok(Number.isFinite(analysis.outboundFeeVsOracleBps));
+  assert.ok(Number.isFinite(analysis.unexplainedExecutionCostVsOracleBps));
+  assert.equal("curve" in analysis, false);
+  assert.equal("requiredDepthMultiplier" in analysis, false);
 });
 
-test("depth forecasting is precomputed once per quote run and exposed in route analysis", async () => {
+test("THORChain pool and execution analysis is precomputed once per quote run", async () => {
   const collector = await readFile(new URL("../lib/collector.ts", import.meta.url), "utf8");
   const run = await readFile(new URL("../lib/quotes/run.ts", import.meta.url), "utf8");
   const api = await readFile(new URL("../app/api/runs/route.ts", import.meta.url), "utf8");
@@ -314,22 +293,20 @@ test("depth forecasting is precomputed once per quote run and exposed in route a
   const migration = await readFile(new URL("../drizzle/0005_productive_gertrude_yorkes.sql", import.meta.url), "utf8");
   assert.match(collector, /poolDepthSnapshotFromAssets/);
   assert.match(collector, /INSERT INTO pool_depth_snapshots/);
-  assert.match(run, /forecastThorDepth\(request, quotes, poolDepthSnapshot\)/);
+  assert.match(run, /analyzeThorQuote\(request, quotes, poolDepthSnapshot\)/);
   assert.match(api, /depthForecast: parsedDepthForecast/);
   assert.match(page, /Quote performance/);
-  assert.match(page, /Depth \+ price/);
+  assert.match(page, /Pool \+ execution/);
   assert.match(page, /Pool-implied exchange rate/);
   assert.match(page, /Pool rate − execution costs = final quote/);
   assert.match(page, /All values vs oracle/);
   assert.match(page, /Separate competitive comparison/);
-  assert.match(page, /Experimental symmetric scenario/);
-  assert.match(page, /This is not the cheapest allocation/);
-  assert.match(page, /Low confidence/);
+  assert.doesNotMatch(page, /Experimental symmetric scenario/);
+  assert.doesNotMatch(page, /MODELED THORChain GAP VS BEST DEX/);
   assert.match(page, /Deviation from oracle/);
   assert.match(page, /Pool rate before trade impact/);
   assert.match(page, /THORChain enshrined CEX reference/);
   assert.match(page, /Executable \{quote\.strategy\} quote/);
-  assert.match(page, /Low-confidence model/);
   assert.match(migration, /ADD `depth_forecast_json` text/);
 });
 

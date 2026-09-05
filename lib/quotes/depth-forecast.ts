@@ -1,6 +1,6 @@
 import type { BenchmarkRequest, NormalizedQuote } from "./types";
 
-export const depthForecastModelVersion = "thor-depth-v4";
+export const thorQuoteAnalysisModelVersion = "thor-analysis-v1";
 export const competitivenessToleranceBps = 5;
 
 export type ThorPoolDepth = {
@@ -25,14 +25,8 @@ export function poolDepthSnapshotFromAssets(
   };
 }
 
-export type DepthForecastPool = ThorPoolDepth & {
-  role: "source" | "destination";
-  requiredMultiplierIfScaledAlone: number | null;
-  requiredAdditionalLiquidityUsd: number | null;
-};
-
-export type ThorDepthForecast = {
-  modelVersion: typeof depthForecastModelVersion;
+export type ThorQuoteAnalysis = {
+  modelVersion: typeof thorQuoteAnalysisModelVersion;
   status: "available" | "unavailable";
   reason?: string;
   capturedAt: string;
@@ -53,31 +47,9 @@ export type ThorDepthForecast = {
   liquidityFeeVsOracleBps?: number | null;
   outboundFeeVsOracleBps?: number | null;
   unexplainedExecutionCostVsOracleBps?: number | null;
-  poolRateGapVsBestBps?: number;
-  executionDragBps?: number;
-  executionCostBps?: number;
-  reportedSlippageBps?: number | null;
-  liquidityFeeBps?: number | null;
-  unexplainedExecutionCostBps?: number | null;
-  asymptoticGapBps?: number | null;
-  depthRecoverableBps?: number | null;
-  outboundFeeBps?: number;
-  effectiveDepthMultiplier?: number;
-  estimateConfidence?: "low";
-  estimateConfidenceReason?: string;
-  streamingChunks?: number;
-  requiredDepthMultiplier?: number | null;
-  requiredAdditionalLiquidityUsd?: number | null;
-  depthAloneSufficient?: boolean;
-  priceRebalanceBps?: number | null;
-  bindingPool?: "source" | "destination" | "balanced" | null;
-  sourcePool?: DepthForecastPool;
-  destinationPool?: DepthForecastPool;
-  curve?: Array<{ multiplier: number; gapBps: number }>;
 };
 
 type ThorQuoteResponse = {
-  max_streaming_quantity?: number;
   fees?: {
     outbound?: string;
     liquidity?: string;
@@ -103,86 +75,13 @@ function thorResponse(value: unknown): ThorQuoteResponse | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as ThorQuoteResponse : null;
 }
 
-function swapOutput(input: number, inputDepth: number, outputDepth: number) {
-  const denominator = input + inputDepth;
-  return input * inputDepth * outputDepth / (denominator * denominator);
-}
-
-export function simulateThorOutput(
-  inputAmount: number,
-  sourcePool: ThorPoolDepth,
-  destinationPool: ThorPoolDepth,
-  sourceMultiplier: number,
-  destinationMultiplier: number,
-  chunks: number,
-) {
-  const sourceAssetDepth = Number(sourcePool.assetDepth) * sourceMultiplier;
-  const sourceRuneDepth = Number(sourcePool.runeDepth) * sourceMultiplier;
-  const destinationRuneDepth = Number(destinationPool.runeDepth) * destinationMultiplier;
-  const destinationAssetDepth = Number(destinationPool.assetDepth) * destinationMultiplier;
-  if (![inputAmount, sourceAssetDepth, sourceRuneDepth, destinationRuneDepth, destinationAssetDepth].every((value) => Number.isFinite(value) && value > 0)) return null;
-  const chunkCount = Math.max(1, Math.floor(chunks));
-  const chunkInput = inputAmount / chunkCount;
-  const runeOutput = swapOutput(chunkInput, sourceAssetDepth, sourceRuneDepth);
-  const assetOutput = swapOutput(runeOutput, destinationRuneDepth, destinationAssetDepth);
-  const output = assetOutput * chunkCount;
-  return Number.isFinite(output) && output > 0 ? output : null;
-}
-
-function findRequiredMultiplier(target: number, outputAt: (multiplier: number) => number | null) {
-  const current = outputAt(1);
-  if (current != null && current >= target) return 1;
-  const maximum = 1_000;
-  const maximumOutput = outputAt(maximum);
-  if (maximumOutput == null || maximumOutput < target) return null;
-  let low = 1;
-  let high = maximum;
-  for (let index = 0; index < 48; index += 1) {
-    const middle = (low + high) / 2;
-    const output = outputAt(middle);
-    if (output != null && output >= target) high = middle;
-    else low = middle;
-  }
-  return high;
-}
-
-function findEffectiveDepthMultiplier(target: number, outputAt: (multiplier: number) => number | null) {
-  let low = 0.001;
-  let high = 1_000;
-  const lowOutput = outputAt(low);
-  const highOutput = outputAt(high);
-  if (lowOutput == null || highOutput == null || target < lowOutput || target > highOutput) return null;
-  for (let index = 0; index < 56; index += 1) {
-    const middle = (low + high) / 2;
-    const output = outputAt(middle);
-    if (output != null && output >= target) high = middle;
-    else low = middle;
-  }
-  return high;
-}
-
-function poolForecast(
-  pool: ThorPoolDepth,
-  role: DepthForecastPool["role"],
-  requiredMultiplierIfScaledAlone: number | null,
-): DepthForecastPool {
-  return {
-    ...pool,
-    role,
-    requiredMultiplierIfScaledAlone,
-    requiredAdditionalLiquidityUsd: requiredMultiplierIfScaledAlone == null
-      ? null
-      : Math.max(0, pool.liquidityUsd * (requiredMultiplierIfScaledAlone - 1)),
-  };
-}
-
-export function forecastThorDepth(
+export function analyzeThorQuote(
   request: BenchmarkRequest,
   quotes: NormalizedQuote[],
   snapshot: ThorPoolDepthSnapshot,
-): ThorDepthForecast {
-  const unavailable = (reason: string): ThorDepthForecast => ({
-    modelVersion: depthForecastModelVersion,
+): ThorQuoteAnalysis {
+  const unavailable = (reason: string): ThorQuoteAnalysis => ({
+    modelVersion: thorQuoteAnalysisModelVersion,
     status: "unavailable",
     reason,
     capturedAt: snapshot.capturedAt,
@@ -198,43 +97,12 @@ export function forecastThorDepth(
   }).sort((left, right) => right.output - left.output);
   const best = competitors[0];
   if (!best) return unavailable("No competing DEX returned a usable quote");
-  const sourceAsset = request.source.protocolIds.thorchain;
-  const destinationAsset = request.destination.protocolIds.thorchain;
-  const sourcePool = snapshot.pools.find((pool) => pool.asset === sourceAsset);
-  const destinationPool = snapshot.pools.find((pool) => pool.asset === destinationAsset);
+  const sourcePool = snapshot.pools.find((pool) => pool.asset === request.source.protocolIds.thorchain);
+  const destinationPool = snapshot.pools.find((pool) => pool.asset === request.destination.protocolIds.thorchain);
   if (!sourcePool || !destinationPool) return unavailable("The synchronized THORChain pool snapshot is incomplete");
 
-  const inputAmount = Number(request.sourceAmountBaseUnits) / (10 ** request.source.decimals) * 1e8;
-  if (!Number.isFinite(inputAmount) || inputAmount <= 0) return unavailable("The source amount cannot be normalized to THORChain units");
-  const sourceAmountFormatted = inputAmount / 1e8;
-  const rawResponse = thorResponse(thorQuote?.rawResponse);
-  const requestedChunks = positiveNumber(rawResponse?.max_streaming_quantity);
-  const chunks = request.mode === "optimized"
-    ? Math.max(1, Math.floor(requestedChunks ?? 1))
-    : 1;
-  const outboundFee = positiveNumber(rawResponse?.fees?.outbound) ?? 0;
-  const currentThorInternal = currentThorOutput * 1e8;
-  const rawOutputAt = (sourceMultiplier: number, destinationMultiplier: number) => {
-    const modeled = simulateThorOutput(inputAmount, sourcePool, destinationPool, sourceMultiplier, destinationMultiplier, chunks);
-    return modeled == null ? null : Math.max(0, modeled - outboundFee);
-  };
-  const effectiveDepthMultiplier = findEffectiveDepthMultiplier(currentThorInternal, (multiplier) => rawOutputAt(multiplier, multiplier));
-  if (effectiveDepthMultiplier == null) return unavailable("The current THORChain quote cannot be calibrated to the captured pool depths");
-  const outputAt = (sourceMultiplier: number, destinationMultiplier: number) => {
-    const modeled = rawOutputAt(sourceMultiplier * effectiveDepthMultiplier, destinationMultiplier * effectiveDepthMultiplier);
-    return modeled == null ? null : modeled / 1e8;
-  };
-  const target = best.output * (1 - competitivenessToleranceBps / 10_000);
-  const requiredDepthMultiplier = findRequiredMultiplier(target, (multiplier) => outputAt(multiplier, multiplier));
-  const sourceOnlyMultiplier = findRequiredMultiplier(target, (multiplier) => outputAt(multiplier, 1));
-  const destinationOnlyMultiplier = findRequiredMultiplier(target, (multiplier) => outputAt(1, multiplier));
-  const sourceSensitivity = (outputAt(1.01, 1) ?? currentThorOutput) - currentThorOutput;
-  const destinationSensitivity = (outputAt(1, 1.01) ?? currentThorOutput) - currentThorOutput;
-  const sensitivityDifference = Math.abs(sourceSensitivity - destinationSensitivity);
-  const bindingPool = sensitivityDifference <= Math.max(sourceSensitivity, destinationSensitivity) * 0.05
-    ? "balanced" as const
-    : sourceSensitivity > destinationSensitivity ? "source" as const : "destination" as const;
-  const asymptoticOutput = outputAt(1_000_000, 1_000_000);
+  const sourceAmountFormatted = Number(request.sourceAmountBaseUnits) / (10 ** request.source.decimals);
+  if (!Number.isFinite(sourceAmountFormatted) || sourceAmountFormatted <= 0) return unavailable("The source amount cannot be normalized");
   const sourceAssetDepth = positiveNumber(sourcePool.assetDepth);
   const sourceRuneDepth = positiveNumber(sourcePool.runeDepth);
   const destinationAssetDepth = positiveNumber(destinationPool.assetDepth);
@@ -243,6 +111,7 @@ export function forecastThorDepth(
     ? sourceRuneDepth / sourceAssetDepth * destinationAssetDepth / destinationRuneDepth
     : null;
   if (poolImpliedRate == null) return unavailable("The THORChain pool exchange rate cannot be calculated");
+
   const poolImpliedOutput = sourceAmountFormatted * poolImpliedRate;
   const bestQuoteRate = best.output / sourceAmountFormatted;
   const oracleGap = thorQuote?.oracleGapBps;
@@ -250,32 +119,25 @@ export function forecastThorDepth(
     ? currentThorOutput / (1 + oracleGap / 10_000)
     : null;
   const oracleRate = oracleReferenceOutput == null ? null : oracleReferenceOutput / sourceAmountFormatted;
-  const poolRateGapVsBestBps = (poolImpliedOutput / best.output - 1) * 10_000;
   const poolRateGapVsOracleBps = oracleReferenceOutput == null ? null : (poolImpliedOutput / oracleReferenceOutput - 1) * 10_000;
-  const currentGapBps = (currentThorOutput / best.output - 1) * 10_000;
-  const asymptoticGapBps = asymptoticOutput == null ? null : (asymptoticOutput / best.output - 1) * 10_000;
-  const depthRecoverableBps = asymptoticGapBps == null ? null : asymptoticGapBps - currentGapBps;
-  const executionDragBps = currentGapBps - poolRateGapVsBestBps;
-  const outboundFeeBps = outboundFee / 1e8 / best.output * 10_000;
-  const executionCostBps = Math.max(0, -executionDragBps);
-  const reportedSlippageBps = nonNegativeNumber(rawResponse?.fees?.slippage_bps);
-  const liquidityFee = nonNegativeNumber(rawResponse?.fees?.liquidity);
-  const liquidityFeeBps = liquidityFee == null ? null : liquidityFee / 1e8 / best.output * 10_000;
-  const unexplainedExecutionCostBps = reportedSlippageBps == null || liquidityFeeBps == null
-    ? null
-    : executionCostBps - reportedSlippageBps - liquidityFeeBps - outboundFeeBps;
   const currentOracleGapBps = oracleReferenceOutput == null ? null : (currentThorOutput / oracleReferenceOutput - 1) * 10_000;
   const executionDragVsOracleBps = currentOracleGapBps == null || poolRateGapVsOracleBps == null
     ? null
     : currentOracleGapBps - poolRateGapVsOracleBps;
   const executionCostVsOracleBps = executionDragVsOracleBps == null ? null : Math.max(0, -executionDragVsOracleBps);
+  const currentGapBps = (currentThorOutput / best.output - 1) * 10_000;
+
+  const rawResponse = thorResponse(thorQuote?.rawResponse);
+  const outboundFee = nonNegativeNumber(rawResponse?.fees?.outbound);
+  const liquidityFee = nonNegativeNumber(rawResponse?.fees?.liquidity);
+  const reportedSlippageBps = nonNegativeNumber(rawResponse?.fees?.slippage_bps);
   const reportedSlippageVsOracleBps = reportedSlippageBps == null || oracleReferenceOutput == null
     ? null
     : reportedSlippageBps * poolImpliedOutput / oracleReferenceOutput;
   const liquidityFeeVsOracleBps = liquidityFee == null || oracleReferenceOutput == null
     ? null
     : liquidityFee / 1e8 / oracleReferenceOutput * 10_000;
-  const outboundFeeVsOracleBps = oracleReferenceOutput == null
+  const outboundFeeVsOracleBps = outboundFee == null || oracleReferenceOutput == null
     ? null
     : outboundFee / 1e8 / oracleReferenceOutput * 10_000;
   const unexplainedExecutionCostVsOracleBps = executionCostVsOracleBps == null
@@ -284,23 +146,9 @@ export function forecastThorDepth(
     || outboundFeeVsOracleBps == null
     ? null
     : executionCostVsOracleBps - reportedSlippageVsOracleBps - liquidityFeeVsOracleBps - outboundFeeVsOracleBps;
-  const depthAloneSufficient = requiredDepthMultiplier != null;
-  const priceRebalanceBps = !depthAloneSufficient && asymptoticOutput
-    ? Math.max(0, (target / asymptoticOutput - 1) * 10_000)
-    : null;
-  const requiredAdditionalLiquidityUsd = requiredDepthMultiplier == null
-    ? null
-    : Math.max(0, (sourcePool.liquidityUsd + destinationPool.liquidityUsd) * (requiredDepthMultiplier - 1));
-
-  const multipliers = new Set([0.5, 0.75, 1, 1.25, 1.5, 2, 3, 5, 10]);
-  if (requiredDepthMultiplier != null) multipliers.add(requiredDepthMultiplier);
-  const curve = [...multipliers].sort((left, right) => left - right).flatMap((multiplier) => {
-    const output = outputAt(multiplier, multiplier);
-    return output == null ? [] : [{ multiplier, gapBps: (output / best.output - 1) * 10_000 }];
-  });
 
   return {
-    modelVersion: depthForecastModelVersion,
+    modelVersion: thorQuoteAnalysisModelVersion,
     status: "available",
     capturedAt: snapshot.capturedAt,
     competitiveWithinBps: competitivenessToleranceBps,
@@ -320,26 +168,5 @@ export function forecastThorDepth(
     liquidityFeeVsOracleBps,
     outboundFeeVsOracleBps,
     unexplainedExecutionCostVsOracleBps,
-    poolRateGapVsBestBps,
-    executionDragBps,
-    executionCostBps,
-    reportedSlippageBps,
-    liquidityFeeBps,
-    unexplainedExecutionCostBps,
-    asymptoticGapBps,
-    depthRecoverableBps,
-    outboundFeeBps,
-    effectiveDepthMultiplier,
-    estimateConfidence: "low",
-    estimateConfidenceReason: "Single-snapshot counterfactual calibrated to the current quote; not historically backtested.",
-    streamingChunks: chunks,
-    requiredDepthMultiplier,
-    requiredAdditionalLiquidityUsd,
-    depthAloneSufficient,
-    priceRebalanceBps,
-    bindingPool,
-    sourcePool: poolForecast(sourcePool, "source", sourceOnlyMultiplier),
-    destinationPool: poolForecast(destinationPool, "destination", destinationOnlyMultiplier),
-    curve,
   };
 }

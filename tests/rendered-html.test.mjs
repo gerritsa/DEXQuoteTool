@@ -120,11 +120,12 @@ test("quote adapters separate expected unavailability from operational errors", 
   assert.match(near, /INSUFFICIENT_LIQUIDITY/);
 });
 
-test("comparison inputs remain durable and latest results do not depend on raw payload retention", async () => {
+test("latest comparisons use the bounded latest-payload lookup while inputs remain durable", async () => {
   const comparison = await readFile(new URL("../app/api/comparison/route.ts", import.meta.url), "utf8");
   const run = await readFile(new URL("../lib/quotes/run.ts", import.meta.url), "utf8");
   const schema = await readFile(new URL("../db/schema.ts", import.meta.url), "utf8");
-  assert.match(comparison, /WITH ranked_runs AS/);
+  assert.match(comparison, /FROM latest_quote_payloads/);
+  assert.doesNotMatch(comparison, /WITH ranked_runs AS/);
   assert.match(comparison, /completed_at IS NOT NULL/);
   assert.match(run, /requestJson: JSON\.stringify\(request\)/);
   assert.match(run, /async function finalizeRun/);

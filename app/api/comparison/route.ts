@@ -20,20 +20,14 @@ function groupByCell<T extends { pairId: string; amountId: string }>(rows: T[]) 
 
 async function latestComparison(mode: ExecutionMode, selectedProtocols: PartnerId[]) {
   const protocolPlaceholders = selectedProtocols.map(() => "?").join(", ");
+  // This table is already updated atomically when a run completes and stays
+  // bounded to one row per route, amount, mode, and protocol.
   const result = await getD1().prepare(`
-    WITH ranked_runs AS (
-      SELECT id AS run_id, pair_id, amount_id,
-        ROW_NUMBER() OVER (
-          PARTITION BY pair_id, amount_id
-          ORDER BY initiated_at DESC, id DESC
-        ) AS recency_rank
-      FROM benchmark_runs
-      WHERE mode = ? AND oracle_captured_at IS NOT NULL
-        AND completed_at IS NOT NULL AND status IN ('complete', 'partial')
-    ), latest AS (
-      SELECT run_id, pair_id, amount_id
-      FROM ranked_runs
-      WHERE recency_rank = 1
+    WITH latest AS (
+      SELECT pair_id, amount_id, MAX(run_id) AS run_id
+      FROM latest_quote_payloads
+      WHERE mode = ?
+      GROUP BY pair_id, amount_id
     )
     SELECT r.pair_id AS pairId, r.amount_id AS amountId, r.initiated_at AS initiatedAt,
       q.protocol AS protocol, q.status AS status, CAST(q.expected_output_formatted AS REAL) AS output,
@@ -41,7 +35,9 @@ async function latestComparison(mode: ExecutionMode, selectedProtocols: PartnerI
     FROM latest l
     JOIN benchmark_runs r ON r.id = l.run_id
     JOIN protocol_quotes q ON q.run_id = r.id
-    WHERE q.protocol IN (${protocolPlaceholders})
+    WHERE r.oracle_captured_at IS NOT NULL
+      AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
+      AND q.protocol IN (${protocolPlaceholders})
     ORDER BY r.pair_id, r.amount_id, q.protocol
   `).bind(mode, ...selectedProtocols).all<NowRow>();
 

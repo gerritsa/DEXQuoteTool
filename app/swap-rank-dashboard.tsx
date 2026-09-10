@@ -14,6 +14,8 @@ type AnalysisPanel = "performance" | "depth";
 const pageRefreshIntervalMs = 15 * 60_000;
 const resumeRefreshThresholdMs = 60_000;
 const manualRefreshCooldownMs = 60_000;
+const leaderboardSkeletonRows = [0, 1, 2, 3, 4, 5];
+const mobileSkeletonCards = [0, 1, 2];
 
 type Route = {
   id: string;
@@ -317,13 +319,37 @@ function ComparisonResult({ cell, window, now }: { cell?: ComparisonCell; window
   return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "ONLY QUOTE" : cell.tie ? "Exact tie" : formatBps(cell.marginBps)}{cell.marginBps != null && cell.runnerUp && !cell.tie && <span className="margin-context">vs <PartnerMark id={cell.runnerUp} /></span>}</strong><small>{formatBps(cell.oracleGapBps)} vs oracle · {quoteCount} {quoteCount === 1 ? "quote" : "quotes"} · {formatAgeLabel(cell.capturedAt, now)}</small></span>;
 }
 
-function MobileRouteCard({ route, selectedSize, cells, viewWindow, now, enabledProtocols, onInspect }: {
+function ComparisonCellSkeleton() {
+  return <span className="comparison-cell-skeleton" aria-hidden="true">
+    <i className="skeleton-block skeleton-logo" />
+    <span><i className="skeleton-block skeleton-label" /><i className="skeleton-block skeleton-value" /><i className="skeleton-block skeleton-meta" /></span>
+  </span>;
+}
+
+function LeaderboardSkeletonRows() {
+  return <>{leaderboardSkeletonRows.map((row) => <tr className="leaderboard-skeleton-row" key={row} aria-hidden="true">
+    <th><span className="route-skeleton"><i className="skeleton-block skeleton-route-logo" /><span><i className="skeleton-block skeleton-route-name" /><i className="skeleton-block skeleton-route-code" /></span></span></th>
+    {quoteSizes.map((size) => <td key={size.id}><ComparisonCellSkeleton /></td>)}
+  </tr>)}</>;
+}
+
+function MobileLeaderboardSkeleton() {
+  return <div className="mobile-leaderboard-skeleton" aria-hidden="true">
+    {mobileSkeletonCards.map((card) => <article className="mobile-route-card skeleton-card" key={card}>
+      <div className="mobile-skeleton-route"><i className="skeleton-block skeleton-route-logo" /><span><i className="skeleton-block skeleton-route-name" /><i className="skeleton-block skeleton-route-code" /></span></div>
+      <ComparisonCellSkeleton />
+    </article>)}
+  </div>;
+}
+
+function MobileRouteCard({ route, selectedSize, cells, viewWindow, now, enabledProtocols, comparisonPending, onInspect }: {
   route: Route;
   selectedSize: QuoteSize;
   cells: Map<string, ComparisonCell>;
   viewWindow: ViewWindow;
   now: number;
   enabledProtocols: PartnerId[];
+  comparisonPending: boolean;
   onInspect: (route: Route, size: QuoteSize) => void;
 }) {
   const selectedCell = cells.get(`${route.id}::${selectedSize.id}`);
@@ -336,7 +362,7 @@ function MobileRouteCard({ route, selectedSize, cells, viewWindow, now, enabledP
     <div className="mobile-route-card-summary">
       <div className="mobile-route-card-label"><span>Top quote at {selectedSize.label}</span><b>Open details ↓</b></div>
       <button className="mobile-result-button" onClick={() => onInspect(route, selectedSize)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol} at ${selectedSize.label}`}>
-        <ComparisonResult cell={selectedCell} window={viewWindow} now={now} />
+        {comparisonPending ? <ComparisonCellSkeleton /> : <ComparisonResult cell={selectedCell} window={viewWindow} now={now} />}
       </button>
       <div className="mobile-route-coverage"><span>{activeRoutePartnerCount} protocols compared</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!route.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</div></div>
     </div>
@@ -966,6 +992,9 @@ export default function SwapRankDashboard({
 
   const pageRefreshing = loading || comparisonLoading || runLoading || trendLoading;
   const refreshCoolingDown = manualRefreshAvailableAt > now;
+  const initialRoutesLoading = loading && catalog === null;
+  const initialComparisonLoading = comparisonLoading && comparison === null;
+  const initialLeaderboardLoading = initialRoutesLoading || initialComparisonLoading;
 
   return <main className="app-shell" id="top">
     <header className="topbar">
@@ -1014,18 +1043,18 @@ export default function SwapRankDashboard({
         <strong>{health?.catalog?.collectionPaused ? "NEW CHECKS PAUSED" : "LIVE REFRESH DEGRADED"}</strong>
       </div>}
 
-      {catalog?.error ? <div className="error-state"><b>Route catalog unavailable</b><span>{catalog.error}</span></div> : <div className={`leaderboard-wrap ${loading || comparisonLoading ? "loading" : ""}`}>
+      {catalog?.error ? <div className="error-state"><b>Route catalog unavailable</b><span>{catalog.error}</span></div> : <div className={`leaderboard-wrap ${loading || comparisonLoading ? "loading" : ""} ${initialLeaderboardLoading ? "initial-loading" : ""}`} aria-busy={initialLeaderboardLoading}>
+        {initialLeaderboardLoading && <span className="loading-announcement" role="status">Loading ranked routes…</span>}
         <table className="leaderboard-table">
           <thead><tr><th>Route / asset pair</th>{quoteSizes.map((size) => <th key={size.id}>{size.label}</th>)}</tr></thead>
-          <tbody>{filteredRoutes.map((route) => <tr key={route.id}>
+          <tbody>{initialRoutesLoading ? <LeaderboardSkeletonRows /> : filteredRoutes.map((route) => <tr key={route.id}>
             <th><button className="route-cell" onClick={() => inspect(route, selectedSize)}><LeaderboardRoutePath route={route} /><span className="coverage-dots">{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!route.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</span></button></th>
-            {quoteSizes.map((size) => <td key={size.id}><button className="result-button" onClick={() => inspect(route, size)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol} at ${size.label}`}><ComparisonResult cell={cells.get(`${route.id}::${size.id}`)} window={viewWindow} now={now} /></button></td>)}
+            {quoteSizes.map((size) => <td key={size.id}><button className="result-button" onClick={() => inspect(route, size)} aria-label={`Inspect ${route.source.symbol} to ${route.destination.symbol} at ${size.label}`}>{initialComparisonLoading ? <ComparisonCellSkeleton /> : <ComparisonResult cell={cells.get(`${route.id}::${size.id}`)} window={viewWindow} now={now} />}</button></td>)}
           </tr>)}</tbody>
         </table>
         <div className="mobile-route-list" id="leaderboard-results" aria-label="Mobile route leaderboard">
           <header className="mobile-leaderboard-header"><div><b>Ranked routes</b><small>Choose a trade size</small></div><div className="mobile-leaderboard-sizes" role="group" aria-label="Trade size for mobile leaderboard">{quoteSizes.map((size) => <button key={size.id} className={selectedSize.id === size.id ? "selected" : ""} onClick={() => setSelectedSize(size)} aria-pressed={selectedSize.id === size.id}>{size.label}</button>)}</div></header>
-          {loading && <div className="mobile-route-loading" role="status">Loading ranked routes…</div>}
-          {filteredRoutes.map((route) => <MobileRouteCard key={route.id} route={route} selectedSize={selectedSize} cells={cells} viewWindow={viewWindow} now={now} enabledProtocols={enabledProtocols} onInspect={inspect} />)}
+          {initialRoutesLoading ? <MobileLeaderboardSkeleton /> : filteredRoutes.map((route) => <MobileRouteCard key={route.id} route={route} selectedSize={selectedSize} cells={cells} viewWindow={viewWindow} now={now} enabledProtocols={enabledProtocols} comparisonPending={initialComparisonLoading} onInspect={inspect} />)}
         </div>
         {!loading && catalog?.routes.length === 0 && <div className="empty-table">No fixed routes are available.</div>}
         {!loading && Boolean(catalog?.routes.length) && filteredRoutes.length === 0 && <div className="empty-table">No routes match the selected assets and protocols.</div>}

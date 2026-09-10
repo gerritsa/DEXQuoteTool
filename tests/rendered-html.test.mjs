@@ -33,6 +33,9 @@ test("server-renders the SwapRank dashboard", async () => {
   assert.match(html, /30 days/);
   assert.match(html, /Latest check/);
   assert.match(html, /Refresh page data/);
+  assert.match(html, /Loading ranked routes/);
+  assert.match(html, /leaderboard-skeleton-row/);
+  assert.match(html, /aria-busy="true"/);
   assert.match(html, /Execution mode/);
   assert.match(html, /Compare protocols/);
   assert.match(html, /Standard swap/);

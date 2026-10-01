@@ -28,6 +28,7 @@ export const benchmarkRuns = sqliteTable("benchmark_runs", {
   index("idx_benchmark_runs_pair_created").on(table.pairId, table.createdAt),
   index("idx_benchmark_runs_pair_amount_created").on(table.pairId, table.amountId, table.createdAt),
   index("idx_benchmark_runs_initiated").on(table.initiatedAt),
+  index("idx_benchmark_runs_mode_initiated").on(table.mode, table.initiatedAt),
   uniqueIndex("idx_benchmark_runs_sweep_job").on(table.sweepId, table.pairId, table.amountId, table.mode),
 ]);
 
@@ -122,20 +123,12 @@ export const dailyComparisonMetrics = sqliteTable("daily_comparison_metrics", {
   pairId: text("pair_id").notNull(),
   amountId: text("amount_id").notNull(),
   mode: text("mode", { enum: ["standard", "optimized"] }).notNull(),
-  protocolMask: text("protocol_mask").notNull(),
-  protocol: text("protocol", { enum: ["thorchain", "chainflip", "near-intents", "maya"] }).notNull(),
-  attempts: integer("attempts").notNull(),
-  successes: integer("successes").notNull(),
-  comparableSamples: integer("comparable_samples").notNull(),
-  edgeSumBps: real("edge_sum_bps").notNull().default(0),
-  oracleSamples: integer("oracle_samples").notNull().default(0),
-  oracleGapSumBps: real("oracle_gap_sum_bps").notNull().default(0),
-  wins: real("wins").notNull(),
+  metricsJson: text("metrics_json").notNull(),
   latestAt: text("latest_at").notNull(),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
   index("idx_daily_metrics_lookup").on(table.pairId, table.amountId, table.mode, table.day),
-  index("idx_daily_metrics_day_mask").on(table.day, table.protocolMask),
+  index("idx_daily_metrics_window").on(table.mode, table.day),
 ]);
 
 export const trendBuckets = sqliteTable("trend_buckets", {

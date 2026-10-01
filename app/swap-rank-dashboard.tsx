@@ -179,8 +179,9 @@ function PartnerMark({ id, muted = false }: { id: PartnerId; muted?: boolean }) 
 
 function AssetMark({ asset }: { asset: Route["source"] }) {
   const symbol = asset.symbol.toLowerCase();
-  const extension = ["bch", "bnb", "doge", "ltc", "sol", "xrp"].includes(symbol) ? "svg" : "png";
-  return <span className="asset-mark" role="img" aria-label={`${asset.symbol} asset`}><img src={`/assets/${symbol}.${extension}`} alt="" /></span>;
+  const fileSymbol = symbol === "wbtc" ? "btc" : symbol;
+  const extension = ["bch", "bnb", "doge", "ltc", "sol", "xrp", "zec"].includes(fileSymbol) ? "svg" : "png";
+  return <span className="asset-mark" role="img" aria-label={`${asset.symbol} asset`}><img src={`/assets/${fileSymbol}.${extension}`} alt="" /></span>;
 }
 
 function RoutePair({ route }: { route: Route }) {

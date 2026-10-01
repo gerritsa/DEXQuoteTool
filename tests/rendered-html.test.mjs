@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { canonicalPublicCacheUrl } from "../lib/http-cache.ts";
 import { oracleGapBps, referenceForAmount } from "../lib/oracle.ts";
@@ -95,6 +96,21 @@ test("SOL routes keep working across the paused THORChain rollout", async () => 
   assert.match(catalog, /\["BTC\.BTC", "SOL\.SOL"\]/);
   assert.match(run, /BENCHMARK_SOL_ADDRESS/);
   assert.match(pool, /trading \(\?:is \)\?\(\?:halted\|paused\)/);
+});
+
+test("ZEC routes collect through Maya and NEAR before the THORChain pool launches", async () => {
+  const catalog = await readFile(new URL("../lib/routes/catalog.ts", import.meta.url), "utf8");
+  const run = await readFile(new URL("../lib/quotes/run.ts", import.meta.url), "utf8");
+  const env = await readFile(new URL("../.env.example", import.meta.url), "utf8");
+  assert.match(catalog, /ZEC: "zcash"/);
+  assert.match(catalog, /thorchain: \{ source: Boolean\(pool\), destination: Boolean\(pool\), assetId: pool\?\.asset \}/);
+  assert.match(catalog, /\["ZEC\.ZEC", "BTC\.BTC"\]/);
+  assert.match(catalog, /\["ZEC\.ZEC", "ETH\.ETH"\]/);
+  assert.match(catalog, /\["ZEC\.ZEC", "ETH\.USDC-/);
+  assert.match(catalog, /thorAsset: "ZEC\.ZEC", chain: "zcash", symbol: "ZEC", decimals: 8, mayaAssetId: "ZEC\.ZEC"/);
+  assert.match(run, /BENCHMARK_ZEC_ADDRESS/);
+  assert.match(run, /chain === "zcash"/);
+  assert.match(env, /BENCHMARK_ZEC_ADDRESS=/);
 });
 
 test("quote adapters separate expected unavailability from operational errors", async () => {
@@ -219,6 +235,57 @@ test("leaderboard and graph use fifteen-minute shared caching", async () => {
   assert.match(trends, /days <= 7 \? "comparison" : "bucket_median"/);
   assert.match(trends, /publicCacheHeaders\(900\)/);
   assert.match(await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8"), /Every point compares the quoted output/);
+});
+
+test("historical leaderboard queries use window indexes without unused median work", async () => {
+  const comparison = await readFile(new URL("../app/api/comparison/route.ts", import.meta.url), "utf8");
+  const collector = await readFile(new URL("../lib/collector.ts", import.meta.url), "utf8");
+  const indexMigration = await readFile(new URL("../drizzle/0006_yielding_rhodey.sql", import.meta.url), "utf8");
+  const compactMigration = await readFile(new URL("../drizzle/0007_flippant_ben_parker.sql", import.meta.url), "utf8");
+  assert.doesNotMatch(comparison, /median_output|ROW_NUMBER\(\) OVER \(PARTITION BY run_id ORDER BY output\)/);
+  assert.doesNotMatch(collector, /median_output|ROW_NUMBER\(\) OVER \(PARTITION BY run_id ORDER BY output\)/);
+  assert.match(collector, /masks\.sort\(\(left, right\) => right\.length - left\.length\)/);
+  assert.match(indexMigration, /idx_benchmark_runs_mode_initiated/);
+  assert.match(compactMigration, /CREATE INDEX `idx_daily_metrics_window` ON `daily_comparison_metrics` \(`mode`,`day`\)/);
+  assert.match(compactMigration, /json_object\('p', json\(p\.`protocols_json`\), 'w'/);
+  assert.match(compactMigration, /WHERE `mode` = 'optimized'/);
+  assert.match(comparison, /json_extract\(d\.metrics_json/);
+});
+
+test("daily metric migration compacts filters without retaining standard-mode aggregates", async () => {
+  const migration = await readFile(new URL("../drizzle/0007_flippant_ben_parker.sql", import.meta.url), "utf8");
+  const database = new DatabaseSync(":memory:");
+  database.exec(`
+    CREATE TABLE pool_depth_snapshots (id text PRIMARY KEY, captured_at text NOT NULL, pools_json text NOT NULL, created_at text NOT NULL);
+    INSERT INTO pool_depth_snapshots VALUES ('old', '2026-09-30T00:00:00Z', '{}', '2026-09-30T00:00:00Z');
+    CREATE TABLE daily_comparison_metrics (
+      id text PRIMARY KEY NOT NULL, day text NOT NULL, pair_id text NOT NULL, amount_id text NOT NULL,
+      mode text NOT NULL, protocol_mask text NOT NULL, protocol text NOT NULL, attempts integer NOT NULL,
+      successes integer NOT NULL, comparable_samples integer NOT NULL, edge_sum_bps real NOT NULL,
+      oracle_samples integer NOT NULL, oracle_gap_sum_bps real NOT NULL, wins real NOT NULL,
+      latest_at text NOT NULL, created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL
+    );
+    CREATE INDEX idx_daily_metrics_lookup ON daily_comparison_metrics (pair_id, amount_id, mode, day);
+    CREATE INDEX idx_daily_metrics_day_mask ON daily_comparison_metrics (day, protocol_mask);
+    CREATE INDEX idx_daily_metrics_window ON daily_comparison_metrics (protocol_mask, mode, day, protocol);
+    INSERT INTO daily_comparison_metrics
+      (id, day, pair_id, amount_id, mode, protocol_mask, protocol, attempts, successes,
+       comparable_samples, edge_sum_bps, oracle_samples, oracle_gap_sum_bps, wins, latest_at)
+    VALUES
+      ('a', '2026-09-30', 'BTC-ETH', 'usd-1000', 'optimized', 'thorchain,near-intents', 'thorchain', 48, 47, 47, 0, 47, -1000, 30, '2026-09-30T23:30:00Z'),
+      ('b', '2026-09-30', 'BTC-ETH', 'usd-1000', 'optimized', 'thorchain,near-intents', 'near-intents', 48, 46, 46, 0, 46, -900, 18, '2026-09-30T23:30:00Z'),
+      ('c', '2026-09-30', 'BTC-ETH', 'usd-1000', 'standard', 'thorchain,near-intents', 'thorchain', 48, 48, 48, 0, 48, -800, 31, '2026-09-30T23:30:00Z');
+  `);
+  database.exec(migration);
+  const rows = database.prepare("SELECT mode, metrics_json AS metricsJson FROM daily_comparison_metrics").all();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].mode, "optimized");
+  const metrics = JSON.parse(rows[0].metricsJson);
+  assert.deepEqual(metrics.p.thorchain.slice(0, 4), [48, 47, 47, 47]);
+  assert.equal(metrics.w["thorchain,near-intents"].thorchain, 30);
+  assert.equal(metrics.w["thorchain,near-intents"]["near-intents"], 18);
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM pool_depth_snapshots").get().count, 0);
+  database.close();
 });
 
 test("trend lines preserve missing quote slots without changing best-available winner scoring", async () => {
@@ -365,13 +432,13 @@ test("expanded route filters require two supported protocols and render every as
   const page = await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8");
   const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
   const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
-  assert.match(readme, /30 fixed directed routes/);
-  assert.match(layout, /across 30 fixed routes/);
+  assert.match(readme, /50 fixed directed routes/);
+  assert.match(layout, /across 50 fixed routes/);
   assert.match(page, /function routeMatchesProtocols/);
   assert.match(page, /routeMatchesAssets\(route, selectedAssets\) && routeMatchesProtocols\(route, selectedProtocols\)/);
   assert.match(page, /activeRoutePartnerCount/);
-  assert.match(page, /\["bch", "bnb", "doge", "ltc", "sol", "xrp"\]/);
-  for (const symbol of ["bch", "bnb", "doge", "ltc", "sol", "xrp"]) {
+  assert.match(page, /\["bch", "bnb", "doge", "ltc", "sol", "xrp", "zec"\]/);
+  for (const symbol of ["bch", "bnb", "doge", "ltc", "sol", "xrp", "zec"]) {
     const logo = await readFile(new URL(`../public/assets/${symbol}.svg`, import.meta.url), "utf8");
     assert.match(logo, /<svg role="img"/);
     assert.match(logo, /<title>/);
@@ -388,7 +455,15 @@ test("collector archives fixed-length gzip bodies and preserves finalization err
   const collector = await readFile(new URL("../lib/collector.ts", import.meta.url), "utf8");
   const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
   const backfill = await readFile(new URL("../scripts/backfill-trends.sql", import.meta.url), "utf8");
+  const lifecycle = JSON.parse(await readFile(new URL("../infra/r2-lifecycle.json", import.meta.url), "utf8"));
   assert.match(collector, /new Response\(compressed\)\.arrayBuffer\(\)/);
+  assert.match(collector, /const detailRetentionDays = 8/);
+  assert.match(collector, /const aggregateRetentionDays = 2_000/);
+  assert.match(collector, /json_object\('p', json\(p\.protocols_json\), 'w', json\(COALESCE\(w\.wins_json, '\{\}'\)\)\)/);
+  assert.match(collector, /const deleteBatchSize = 1_000/);
+  assert.match(collector, /r\.mode = 'standard' OR r\.initiated_at < \?/);
+  assert.match(collector, /pruneTrendHistory/);
+  assert.equal(lifecycle.rules.find((rule) => rule.prefix === "normalized/")?.expiration.days, 2000);
   assert.match(collector, /Archive upload failed:/);
   assert.match(collector, /status IN \('partial', 'failed'\)/);
   assert.match(worker, /console\.error\("Collector bundle failed"/);

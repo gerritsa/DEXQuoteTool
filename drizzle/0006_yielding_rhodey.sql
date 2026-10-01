@@ -1,0 +1,2 @@
+CREATE INDEX `idx_benchmark_runs_mode_initiated` ON `benchmark_runs` (`mode`,`initiated_at`);--> statement-breakpoint
+CREATE INDEX `idx_daily_metrics_window` ON `daily_comparison_metrics` (`protocol_mask`,`mode`,`day`,`protocol`);

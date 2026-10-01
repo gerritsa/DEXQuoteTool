@@ -97,6 +97,7 @@ const chainAliases: Record<string, string> = {
   AVAX: "avalanche", avax: "avalanche",
   SOL: "sol", Solana: "sol", sol: "sol",
   TRON: "tron", Tron: "tron", tron: "tron",
+  ZEC: "zcash", Zcash: "zcash", zec: "zcash", zcash: "zcash",
 };
 
 const nativeDecimalFallbacks: Record<string, number> = {
@@ -153,33 +154,37 @@ function buildCatalog(thorPools: ThorPool[], mayaPools: MayaPool[], near: NearTo
     return status?.egressEnabled ? [[canonicalAsset(asset.chain, asset.symbol, asset.contractAddress), `${asset.chain}:${asset.symbol}`] as const] : [];
   }));
 
-  const availableThorPools = thorPools.filter((pool) => pool.status.toLowerCase() === "available" && fixedThorAssets.has(pool.asset));
+  const availableThorPools = new Map(thorPools
+    .filter((pool) => pool.status.toLowerCase() === "available")
+    .map((pool) => [parsePoolAsset(pool.asset).id, pool] as const));
 
-  const assets: CatalogAsset[] = availableThorPools.map((pool) => {
-    const parsed = parsePoolAsset(pool.asset);
-    const reportedDecimals = Number(pool.nativeDecimal ?? NaN);
+  const assets: CatalogAsset[] = fixedAssetDefinitions.map((definition) => {
+    const parsed = parsePoolAsset(definition.thorAsset);
+    const pool = availableThorPools.get(parsed.id);
+    const reportedDecimals = Number(pool?.nativeDecimal ?? NaN);
     const cfSource = cfSourceAssets.get(parsed.id);
     const cfDestination = cfDestinationAssets.get(parsed.id);
     const nearAsset = nearAssets.get(parsed.id);
     const mayaAsset = mayaAssets.get(parsed.id);
     return {
       id: parsed.id,
-      label: `${parsed.symbol} · ${parsed.chain}`,
-      chain: parsed.chain,
-      symbol: parsed.symbol,
-      thorAsset: pool.asset,
-      priceUsd: pool.assetPriceUSD ? Number(pool.assetPriceUSD) : null,
+      label: `${definition.symbol} · ${definition.chain}`,
+      chain: definition.chain,
+      symbol: definition.symbol,
+      thorAsset: definition.thorAsset,
+      priceUsd: pool?.assetPriceUSD ? Number(pool.assetPriceUSD) : null,
       decimals: Number.isInteger(reportedDecimals) && reportedDecimals >= 0
         ? reportedDecimals
-        : nativeDecimalFallbacks[pool.asset] ?? 8,
+        : nativeDecimalFallbacks[definition.thorAsset] ?? definition.decimals,
       support: {
-        thorchain: { source: true, destination: true, assetId: pool.asset },
+        thorchain: { source: Boolean(pool), destination: Boolean(pool), assetId: pool?.asset },
         chainflip: { source: Boolean(cfSource), destination: Boolean(cfDestination), assetId: cfSource ?? cfDestination },
         "near-intents": { source: Boolean(nearAsset), destination: Boolean(nearAsset), assetId: nearAsset },
         maya: { source: Boolean(mayaAsset), destination: Boolean(mayaAsset), assetId: mayaAsset },
       },
     };
-  }).sort((a, b) => a.label.localeCompare(b.label));
+  }).filter((asset) => Object.values(asset.support).some((support) => support.source || support.destination))
+    .sort((a, b) => a.label.localeCompare(b.label));
 
   return assets;
 }
@@ -411,7 +416,7 @@ export async function getCatalog(options: CatalogOptions = {}): Promise<CatalogR
   return value;
 }
 
-const fixedThorAssetPairs: Array<[string, string]> = [
+const fixedAssetPairs: Array<[string, string]> = [
   ["BTC.BTC", "ETH.ETH"],
   ["ETH.ETH", "BTC.BTC"],
   ["BTC.BTC", "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48"],
@@ -442,11 +447,30 @@ const fixedThorAssetPairs: Array<[string, string]> = [
   ["TRON.TRX", "BTC.BTC"],
   ["ETH.ETH", "LTC.LTC"],
   ["LTC.LTC", "ETH.ETH"],
+  ["BCH.BCH", "ETH.ETH"],
+  ["ETH.ETH", "BCH.BCH"],
+  ["BTC.BTC", "ETH.WBTC-0X2260FAC5E5542A773AA44FBCFEDF7C193BC2C599"],
+  ["ETH.WBTC-0X2260FAC5E5542A773AA44FBCFEDF7C193BC2C599", "BTC.BTC"],
+  ["XRP.XRP", "ETH.ETH"],
+  ["ETH.ETH", "XRP.XRP"],
+  ["XRP.XRP", "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48"],
+  ["ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", "XRP.XRP"],
+  ["SOL.SOL", "ETH.ETH"],
+  ["ETH.ETH", "SOL.SOL"],
+  ["SOL.SOL", "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48"],
+  ["ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", "SOL.SOL"],
+  ["BSC.BNB", "ETH.ETH"],
+  ["ETH.ETH", "BSC.BNB"],
+  ["ZEC.ZEC", "BTC.BTC"],
+  ["BTC.BTC", "ZEC.ZEC"],
+  ["ZEC.ZEC", "ETH.ETH"],
+  ["ETH.ETH", "ZEC.ZEC"],
+  ["ZEC.ZEC", "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48"],
+  ["ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", "ZEC.ZEC"],
 ];
-const fixedThorAssets = new Set(fixedThorAssetPairs.flat());
-export const fixedThorRouteCount = fixedThorAssetPairs.length;
+export const fixedRouteCount = fixedAssetPairs.length;
 
-const staticAssetDefinitions: Array<{
+const fixedAssetDefinitions: Array<{
   thorAsset: string;
   chain: string;
   symbol: string;
@@ -466,10 +490,12 @@ const staticAssetDefinitions: Array<{
   { thorAsset: "DOGE.DOGE", chain: "doge", symbol: "DOGE", decimals: 8 },
   { thorAsset: "SOL.SOL", chain: "sol", symbol: "SOL", decimals: 9, chainflipAssetId: "Solana:SOL" },
   { thorAsset: "TRON.TRX", chain: "tron", symbol: "TRX", decimals: 6, chainflipAssetId: "Tron:TRX" },
+  { thorAsset: "ETH.WBTC-0X2260FAC5E5542A773AA44FBCFEDF7C193BC2C599", chain: "ethereum", symbol: "WBTC", decimals: 8 },
+  { thorAsset: "ZEC.ZEC", chain: "zcash", symbol: "ZEC", decimals: 8, mayaAssetId: "ZEC.ZEC" },
 ];
 
 function staticCatalogAssets(): CatalogAsset[] {
-  return staticAssetDefinitions.map((asset) => {
+  return fixedAssetDefinitions.map((asset) => {
     const parsed = parsePoolAsset(asset.thorAsset);
     return {
       id: parsed.id,
@@ -489,8 +515,8 @@ function staticCatalogAssets(): CatalogAsset[] {
   }).sort((a, b) => a.label.localeCompare(b.label));
 }
 
-export function resolveFixedThorRoutes(assets: CatalogAsset[], limit = fixedThorRouteCount) {
-  const requestedPairs = fixedThorAssetPairs.slice(0, limit);
+export function resolveFixedRoutes(assets: CatalogAsset[], limit = fixedRouteCount) {
+  const requestedPairs = fixedAssetPairs.slice(0, limit);
   const missingRouteIds: string[] = [];
   const assetsByThorId = new Map(assets.map((asset) => [asset.thorAsset, asset]));
   const routes = requestedPairs.flatMap(([sourceId, destinationId]) => {
@@ -512,6 +538,6 @@ export function resolveFixedThorRoutes(assets: CatalogAsset[], limit = fixedThor
   return { routes, missingRouteIds };
 }
 
-export function topThorRoutes(assets: CatalogAsset[], limit = fixedThorRouteCount) {
-  return resolveFixedThorRoutes(assets, limit).routes;
+export function fixedRoutes(assets: CatalogAsset[], limit = fixedRouteCount) {
+  return resolveFixedRoutes(assets, limit).routes;
 }

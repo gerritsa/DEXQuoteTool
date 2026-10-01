@@ -85,15 +85,21 @@ async function loadAvailability(
   const today = new Date().toISOString().slice(0, 10);
   const protocolMask = metricProtocolOrder.filter((protocol) => selectedProtocols.includes(protocol)).join(",");
   const protocolPlaceholders = selectedProtocols.map(() => "?").join(", ");
+  const selectedProtocolRows = selectedProtocols.map(() => "SELECT ? AS protocol").join(" UNION ALL ");
   const result = await getD1().prepare(`
-    WITH aggregate_metrics AS (
-      SELECT protocol, SUM(attempts) AS attempts, SUM(successes) AS successes
-      FROM daily_comparison_metrics
-      WHERE pair_id = ? AND amount_id = ? AND mode = ?
-        AND day > ? AND day < ? AND protocol_mask = ?
-        AND oracle_samples > 0
-        AND protocol IN (${protocolPlaceholders})
-      GROUP BY protocol
+    WITH selected_protocols AS (
+      ${selectedProtocolRows}
+    ), aggregate_metrics AS (
+      SELECT p.protocol,
+        SUM(COALESCE(CAST(json_extract(d.metrics_json, '$.p."' || p.protocol || '"[0]') AS INTEGER), 0)) AS attempts,
+        SUM(COALESCE(CAST(json_extract(d.metrics_json, '$.p."' || p.protocol || '"[1]') AS INTEGER), 0)) AS successes
+      FROM daily_comparison_metrics d
+      CROSS JOIN selected_protocols p
+      WHERE d.pair_id = ? AND d.amount_id = ? AND d.mode = ?
+        AND d.day > ? AND d.day < ?
+        AND json_type(d.metrics_json, '$.w."' || ? || '"') IS NOT NULL
+      GROUP BY p.protocol
+      HAVING SUM(COALESCE(CAST(json_extract(d.metrics_json, '$.p."' || p.protocol || '"[3]') AS INTEGER), 0)) > 0
     ), raw_metrics AS (
       SELECT q.protocol AS protocol, COUNT(*) AS attempts,
         SUM(CASE WHEN q.status = 'quoted' THEN 1 ELSE 0 END) AS successes
@@ -110,7 +116,8 @@ async function loadAvailability(
           OR NOT EXISTS (
             SELECT 1 FROM daily_comparison_metrics d
             WHERE d.day = substr(r.initiated_at, 1, 10)
-              AND d.mode = r.mode AND d.protocol_mask = ?
+              AND d.mode = r.mode
+              AND json_type(d.metrics_json, '$.w."' || ? || '"') IS NOT NULL
           )
         )
       GROUP BY q.protocol
@@ -123,7 +130,8 @@ async function loadAvailability(
     FROM combined
     GROUP BY protocol
   `).bind(
-    routeId, amountId, bestOutputMode, cutoffDay, today, protocolMask, ...selectedProtocols,
+    ...selectedProtocols,
+    routeId, amountId, bestOutputMode, cutoffDay, today, protocolMask,
     routeId, amountId, bestOutputMode, startAt, ...selectedProtocols, cutoffDay, today, protocolMask,
   ).all<AvailabilityRow>();
   return new Map(result.results.map((row) => [row.protocol, {

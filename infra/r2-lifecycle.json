@@ -13,7 +13,7 @@
       "enabled": true,
       "prefix": "normalized/",
       "expiration": {
-        "days": 365
+        "days": 2000
       }
     }
   ]

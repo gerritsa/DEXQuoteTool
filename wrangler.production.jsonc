@@ -4,6 +4,9 @@
   "main": "dist/server/index.js",
   "compatibility_date": "2026-08-17",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "BENCHMARK_ZEC_ADDRESS": "t1SEgZvXCu3ceE42qrq5pCeSq7HbLjX8NJv"
+  },
   "assets": {
     "binding": "ASSETS",
     "directory": "dist/client"

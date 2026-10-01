@@ -1,5 +1,5 @@
 import { ensureBenchmarkSchema } from "../db";
-import { benchmarkCatalogGraceMs, fixedThorRouteCount, getCatalog, resolveFixedThorRoutes } from "./routes/catalog";
+import { benchmarkCatalogGraceMs, fixedRouteCount, getCatalog, resolveFixedRoutes } from "./routes/catalog";
 import { quoteSizes } from "./quotes/sizes";
 import { runSelectedBenchmark, type BenchmarkArchiveRecord } from "./quotes/run";
 import { bestOutputMode } from "./quotes/protocols";
@@ -8,12 +8,14 @@ import type { ExecutionMode, NormalizedQuote, ProtocolId } from "./quotes/types"
 const protocols: ProtocolId[] = ["thorchain", "chainflip", "near-intents", "maya"];
 const jobsPerMessage = 20;
 const workerConcurrency = 1;
-const detailRetentionDays = 90;
-const aggregateRetentionDays = 400;
+const detailRetentionDays = 8;
+const aggregateRetentionDays = 2_000;
 const hourlyTrendBucketSeconds = 60 * 60;
 const fourHourTrendBucketSeconds = 4 * hourlyTrendBucketSeconds;
 const hourlyTrendRetentionDays = 8;
 const fourHourTrendRetentionDays = 32;
+const deleteBatchSize = 1_000;
+const deleteBatchesPerMaintenance = 80;
 
 export type CollectorJob = { routeId: string; amountId: string; mode: ExecutionMode };
 export type CollectorBundle = {
@@ -146,7 +148,7 @@ export async function enqueueScheduledSweep(scheduledTime: number, environment: 
     return { sweepId, scheduledFor, skipped: true, reason: `Collection paused: ${reason}` };
   }
   const now = new Date().toISOString();
-  const { routes, missingRouteIds } = resolveFixedThorRoutes(catalog.assets, fixedThorRouteCount);
+  const { routes, missingRouteIds } = resolveFixedRoutes(catalog.assets, fixedRouteCount);
   const jobs = routes.flatMap((route) => quoteSizes.map((size) => ({ routeId: route.id, amountId: size.id, mode: bestOutputMode })));
   const bundles = chunks(jobs, jobsPerMessage).map((bundleJobs, bundleIndex): CollectorBundle => ({ sweepId, scheduledFor, bundleIndex, jobs: bundleJobs }));
 
@@ -212,7 +214,7 @@ async function updateSweepProgress(sweepId: string, d1: D1Database) {
         ELSE completed_at
       END
     WHERE id = ?
-  `).bind(sweepId, sweepId, sweepId, sweepId, sweepId, fixedThorRouteCount, sweepId, now, sweepId).run();
+  `).bind(sweepId, sweepId, sweepId, sweepId, sweepId, fixedRouteCount, sweepId, now, sweepId).run();
   return d1.prepare("SELECT status, scheduled_for AS scheduledFor FROM collector_sweeps WHERE id = ?")
     .bind(sweepId)
     .first<{ status: string; scheduledFor: string }>();
@@ -350,70 +352,156 @@ function protocolMasks() {
     const selected = protocols.filter((_, index) => (mask & (1 << index)) !== 0);
     if (selected.length >= 2) masks.push(selected);
   }
-  return masks;
+  // Keep the all-protocol mask first so the compact payload has a stable,
+  // predictable order across daily rebuilds.
+  return masks.sort((left, right) => right.length - left.length);
 }
 
 async function aggregateDay(day: string, d1: D1Database) {
   const start = `${day}T00:00:00.000Z`;
   const end = new Date(new Date(start).getTime() + 24 * 60 * 60 * 1000).toISOString();
-  for (const selected of protocolMasks()) {
-    const protocolMask = selected.join(",");
-    const quotedProtocols = selected.map((protocol) => `'${protocol}'`).join(", ");
-    await d1.prepare("DELETE FROM daily_comparison_metrics WHERE day = ? AND protocol_mask = ?").bind(day, protocolMask).run();
-    await d1.prepare(`
-      INSERT INTO daily_comparison_metrics (
-        id, day, pair_id, amount_id, mode, protocol_mask, protocol,
-        attempts, successes, comparable_samples, edge_sum_bps,
-        oracle_samples, oracle_gap_sum_bps, wins, latest_at
-      )
-      WITH attempts AS (
-        SELECT r.id AS run_id, r.pair_id, r.amount_id, r.mode, r.initiated_at,
-          q.protocol, q.status, CAST(q.expected_output_formatted AS REAL) AS output,
-          q.oracle_gap_bps
-        FROM benchmark_runs r
-        JOIN protocol_quotes q ON q.run_id = r.id
-        WHERE r.initiated_at >= ? AND r.initiated_at < ?
-          AND r.oracle_captured_at IS NOT NULL
-          AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
-          AND q.protocol IN (${quotedProtocols})
-      ), valid AS (
-        SELECT *, ROW_NUMBER() OVER (PARTITION BY run_id ORDER BY output) AS output_rank,
-          COUNT(*) OVER (PARTITION BY run_id) AS valid_count,
-          MAX(output) OVER (PARTITION BY run_id) AS best_output
-        FROM attempts
-        WHERE status = 'quoted' AND output > 0
-      ), run_stats AS (
-        SELECT run_id, MAX(valid_count) AS valid_count, MAX(best_output) AS best_output,
-          SUM(CASE WHEN output = best_output THEN 1 ELSE 0 END) AS winner_count
-        FROM valid
-        GROUP BY run_id
-      ), medians AS (
-        SELECT run_id, AVG(output) AS median_output
-        FROM valid
-        WHERE output_rank = CAST((valid_count + 1) / 2 AS INTEGER)
-           OR output_rank = CAST((valid_count + 2) / 2 AS INTEGER)
-        GROUP BY run_id
-      ), scored AS (
-        SELECT attempts.*, medians.median_output, run_stats.valid_count, run_stats.best_output, run_stats.winner_count
-        FROM attempts
-        LEFT JOIN medians ON medians.run_id = attempts.run_id
-        LEFT JOIN run_stats ON run_stats.run_id = attempts.run_id
-      )
-      SELECT
-        ? || '|' || pair_id || '|' || amount_id || '|' || mode || '|' || ? || '|' || protocol,
-        ?, pair_id, amount_id, mode, ?, protocol,
-        COUNT(*),
-        SUM(CASE WHEN status = 'quoted' THEN 1 ELSE 0 END),
-        SUM(CASE WHEN status = 'quoted' AND valid_count >= 1 THEN 1 ELSE 0 END),
-        SUM(CASE WHEN status = 'quoted' AND valid_count >= 1 THEN ((output / median_output) - 1) * 10000 ELSE 0 END),
-        SUM(CASE WHEN status = 'quoted' AND oracle_gap_bps IS NOT NULL THEN 1 ELSE 0 END),
-        SUM(CASE WHEN status = 'quoted' AND oracle_gap_bps IS NOT NULL THEN oracle_gap_bps ELSE 0 END),
-        SUM(CASE WHEN status = 'quoted' AND valid_count >= 1 AND output = best_output THEN 1.0 / winner_count ELSE 0 END),
-        MAX(initiated_at)
-      FROM scored
-      GROUP BY pair_id, amount_id, mode, protocol
-    `).bind(start, end, day, protocolMask, day, protocolMask).run();
+  const maskProtocols = protocolMasks().flatMap((selected) => {
+    const mask = selected.join(",");
+    return selected.map((protocol) => `('${mask}', '${protocol}')`);
+  }).join(",\n        ");
+  const removeExisting = d1.prepare("DELETE FROM daily_comparison_metrics WHERE day = ?").bind(day);
+  const insertCompact = d1.prepare(`
+    INSERT INTO daily_comparison_metrics (
+      id, day, pair_id, amount_id, mode, metrics_json, latest_at
+    )
+    WITH mask_protocols(mask, protocol) AS (
+      VALUES ${maskProtocols}
+    ), attempts AS (
+      SELECT r.id AS run_id, r.pair_id, r.amount_id, r.mode, r.initiated_at,
+        q.protocol, q.status, CAST(q.expected_output_formatted AS REAL) AS output,
+        q.oracle_gap_bps
+      FROM benchmark_runs r
+      JOIN protocol_quotes q ON q.run_id = r.id
+      WHERE r.initiated_at >= ? AND r.initiated_at < ?
+        AND r.mode = 'optimized'
+        AND r.oracle_captured_at IS NOT NULL
+        AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
+    ), run_validity AS (
+      SELECT run_id, COUNT(*) AS valid_count
+      FROM attempts
+      WHERE status = 'quoted' AND output > 0
+      GROUP BY run_id
+    ), base_metrics AS (
+      SELECT a.pair_id, a.amount_id, a.mode, a.protocol,
+        COUNT(*) AS attempts,
+        SUM(CASE WHEN a.status = 'quoted' THEN 1 ELSE 0 END) AS successes,
+        SUM(CASE WHEN a.status = 'quoted' AND v.valid_count >= 1 THEN 1 ELSE 0 END) AS comparable_samples,
+        SUM(CASE WHEN a.status = 'quoted' AND a.oracle_gap_bps IS NOT NULL THEN 1 ELSE 0 END) AS oracle_samples,
+        SUM(CASE WHEN a.status = 'quoted' AND a.oracle_gap_bps IS NOT NULL THEN a.oracle_gap_bps ELSE 0 END) AS oracle_gap_sum_bps,
+        MAX(a.initiated_at) AS latest_at
+      FROM attempts a
+      LEFT JOIN run_validity v ON v.run_id = a.run_id
+      GROUP BY a.pair_id, a.amount_id, a.mode, a.protocol
+    ), valid AS (
+      SELECT a.*, mp.mask,
+        MAX(a.output) OVER (PARTITION BY mp.mask, a.run_id) AS best_output
+      FROM attempts a
+      JOIN mask_protocols mp ON mp.protocol = a.protocol
+      WHERE a.status = 'quoted' AND a.output > 0
+    ), run_stats AS (
+      SELECT mask, run_id, MAX(best_output) AS best_output,
+        SUM(CASE WHEN output = best_output THEN 1 ELSE 0 END) AS winner_count
+      FROM valid
+      GROUP BY mask, run_id
+    ), win_metrics AS (
+      SELECT v.pair_id, v.amount_id, v.mode, v.mask, v.protocol,
+        SUM(CASE WHEN v.output = r.best_output THEN 1.0 / r.winner_count ELSE 0 END) AS wins
+      FROM valid v
+      JOIN run_stats r ON r.mask = v.mask AND r.run_id = v.run_id
+      GROUP BY v.pair_id, v.amount_id, v.mode, v.mask, v.protocol
+    ), protocol_payloads AS (
+      SELECT pair_id, amount_id, mode,
+        json_group_object(protocol, json_array(
+          attempts, successes, comparable_samples, oracle_samples, oracle_gap_sum_bps
+        )) AS protocols_json,
+        MAX(latest_at) AS latest_at
+      FROM base_metrics
+      GROUP BY pair_id, amount_id, mode
+    ), cell_masks AS (
+      SELECT DISTINCT b.pair_id, b.amount_id, b.mode, mp.mask
+      FROM base_metrics b
+      CROSS JOIN (SELECT DISTINCT mask FROM mask_protocols) mp
+    ), mask_payloads AS (
+      SELECT c.pair_id, c.amount_id, c.mode, c.mask,
+        json_group_object(mp.protocol, COALESCE(w.wins, 0)) AS mask_json
+      FROM cell_masks c
+      JOIN mask_protocols mp ON mp.mask = c.mask
+      LEFT JOIN win_metrics w
+        ON w.pair_id = c.pair_id AND w.amount_id = c.amount_id AND w.mode = c.mode
+        AND w.mask = c.mask AND w.protocol = mp.protocol
+      GROUP BY c.pair_id, c.amount_id, c.mode, c.mask
+    ), win_payloads AS (
+      SELECT pair_id, amount_id, mode,
+        json_group_object(mask, json(mask_json)) AS wins_json
+      FROM mask_payloads
+      GROUP BY pair_id, amount_id, mode
+    )
+    SELECT
+      ? || '|' || p.pair_id || '|' || p.amount_id || '|' || p.mode,
+      ?, p.pair_id, p.amount_id, p.mode,
+      json_object('p', json(p.protocols_json), 'w', json(COALESCE(w.wins_json, '{}'))),
+      p.latest_at
+    FROM protocol_payloads p
+    LEFT JOIN win_payloads w
+      ON w.pair_id = p.pair_id AND w.amount_id = p.amount_id AND w.mode = p.mode
+  `).bind(start, end, day, day);
+  await d1.batch([removeExisting, insertCompact]);
+}
+
+async function deleteInBatches(d1: D1Database, sql: string, values: unknown[] = []) {
+  let deleted = 0;
+  for (let batch = 0; batch < deleteBatchesPerMaintenance; batch += 1) {
+    const result = await d1.prepare(sql).bind(...values).run();
+    const changes = Number(result.meta.changes ?? 0);
+    deleted += changes;
+    if (changes < deleteBatchSize) break;
   }
+  return deleted;
+}
+
+async function pruneDetailedHistory(cutoff: string, d1: D1Database) {
+  const latestPayloads = await deleteInBatches(d1, `
+    DELETE FROM latest_quote_payloads WHERE id IN (
+      SELECT p.id FROM latest_quote_payloads p
+      JOIN benchmark_runs r ON r.id = p.run_id
+      WHERE r.mode = 'standard' OR r.initiated_at < ?
+      LIMIT ${deleteBatchSize}
+    )
+  `, [cutoff]);
+  const protocolQuotes = await deleteInBatches(d1, `
+    DELETE FROM protocol_quotes WHERE id IN (
+      SELECT q.id FROM protocol_quotes q
+      JOIN benchmark_runs r ON r.id = q.run_id
+      WHERE r.mode = 'standard' OR r.initiated_at < ?
+      LIMIT ${deleteBatchSize}
+    )
+  `, [cutoff]);
+  const benchmarkRuns = await deleteInBatches(d1, `
+    DELETE FROM benchmark_runs WHERE id IN (
+      SELECT r.id FROM benchmark_runs r
+      WHERE (r.mode = 'standard' OR r.initiated_at < ?)
+        AND NOT EXISTS (SELECT 1 FROM protocol_quotes q WHERE q.run_id = r.id)
+      LIMIT ${deleteBatchSize}
+    )
+  `, [cutoff]);
+  return { latestPayloads, protocolQuotes, benchmarkRuns };
+}
+
+async function pruneTrendHistory(hourlyCutoff: string, fourHourCutoff: string, d1: D1Database) {
+  return deleteInBatches(d1, `
+    DELETE FROM trend_buckets WHERE id IN (
+      SELECT id FROM trend_buckets
+      WHERE mode = 'standard'
+        OR (bucket_seconds = ? AND bucket_start < ?)
+        OR (bucket_seconds = ? AND bucket_start < ?)
+      LIMIT ${deleteBatchSize}
+    )
+  `, [hourlyTrendBucketSeconds, hourlyCutoff, fourHourTrendBucketSeconds, fourHourCutoff]);
 }
 
 export async function runDailyMaintenance(scheduledTime: number, environment: CollectorEnvironment) {
@@ -429,15 +517,18 @@ export async function runDailyMaintenance(scheduledTime: number, environment: Co
   const aggregateCutoff = new Date(scheduledTime - aggregateRetentionDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const hourlyTrendCutoff = new Date(scheduledTime - hourlyTrendRetentionDays * 24 * 60 * 60 * 1000).toISOString();
   const fourHourTrendCutoff = new Date(scheduledTime - fourHourTrendRetentionDays * 24 * 60 * 60 * 1000).toISOString();
-  await d1.prepare("DELETE FROM latest_quote_payloads WHERE run_id IN (SELECT id FROM benchmark_runs WHERE initiated_at < ?)").bind(detailCutoff).run();
-  await d1.prepare("DELETE FROM protocol_quotes WHERE run_id IN (SELECT id FROM benchmark_runs WHERE initiated_at < ?)").bind(detailCutoff).run();
-  await d1.prepare("DELETE FROM benchmark_runs WHERE initiated_at < ?").bind(detailCutoff).run();
+  const detailedHistory = await pruneDetailedHistory(detailCutoff, d1);
+  const trendBuckets = await pruneTrendHistory(hourlyTrendCutoff, fourHourTrendCutoff, d1);
   await d1.prepare("DELETE FROM collector_bundles WHERE sweep_id IN (SELECT id FROM collector_sweeps WHERE scheduled_for < ?)").bind(detailCutoff).run();
   await d1.prepare("DELETE FROM collector_sweeps WHERE scheduled_for < ?").bind(detailCutoff).run();
-  await d1.prepare("DELETE FROM pool_depth_snapshots WHERE captured_at < ?").bind(detailCutoff).run();
   await d1.prepare("DELETE FROM daily_comparison_metrics WHERE day < ?").bind(aggregateCutoff).run();
-  await d1.prepare("DELETE FROM trend_buckets WHERE bucket_seconds = ? AND bucket_start < ?").bind(hourlyTrendBucketSeconds, hourlyTrendCutoff).run();
-  await d1.prepare("DELETE FROM trend_buckets WHERE bucket_seconds = ? AND bucket_start < ?").bind(fourHourTrendBucketSeconds, fourHourTrendCutoff).run();
   await d1.prepare("PRAGMA optimize").run();
-  return { aggregatedDay: yesterday, detailCutoff, aggregateCutoff, hourlyTrendCutoff, fourHourTrendCutoff };
+  return {
+    aggregatedDay: yesterday,
+    detailCutoff,
+    aggregateCutoff,
+    hourlyTrendCutoff,
+    fourHourTrendCutoff,
+    deleted: { detailedHistory, trendBuckets },
+  };
 }

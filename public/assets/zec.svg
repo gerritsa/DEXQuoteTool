@@ -1,0 +1,5 @@
+<svg role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Zcash</title>
+  <circle cx="32" cy="32" r="30" fill="#f4b728"/>
+  <path fill="#171915" d="M20 17h8v-5h8v5h9v7l-15 16h15v8h-9v5h-8v-5h-9v-7l15-16H20z"/>
+</svg>

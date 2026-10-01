@@ -3,7 +3,7 @@
 SwapRank compares synchronized cross-chain swap quotes from THORChain,
 Maya Protocol, Chainflip, and NEAR Intents.
 
-The benchmark covers 30 fixed directed routes and seven USD input sizes. Each
+The benchmark covers 50 fixed directed routes and seven USD input sizes. Each
 protocol is queried once for its best-output strategy: automatic streaming for
 THORChain and Maya, the better of Chainflip's regular and DCA candidates, and
 the NEAR solver quote. Scheduled Cloudflare Workers enqueue a complete sweep

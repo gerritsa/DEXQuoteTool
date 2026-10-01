@@ -71,21 +71,25 @@ async function periodComparison(window: Exclude<WindowName, "now">, selectedProt
   const today = new Date().toISOString().slice(0, 10);
   const protocolMask = metricProtocolOrder.filter((protocol) => selectedProtocols.includes(protocol)).join(",");
   const protocolPlaceholders = selectedProtocols.map(() => "?").join(", ");
+  const selectedProtocolRows = selectedProtocols.map(() => "SELECT ? AS protocol").join(" UNION ALL ");
   const result = await getD1().prepare(`
-    WITH aggregate_metrics AS (
-      SELECT pair_id, amount_id, protocol,
-        SUM(attempts) AS attempts,
-        SUM(successes) AS successes,
-        SUM(comparable_samples) AS comparable_samples,
-        SUM(oracle_samples) AS oracle_samples,
-        SUM(oracle_gap_sum_bps) AS oracle_gap_sum_bps,
-        SUM(wins) AS wins,
-        MAX(latest_at) AS latest_at
-      FROM daily_comparison_metrics
-      WHERE mode = ? AND day > ? AND day < ? AND protocol_mask = ?
-        AND oracle_samples > 0
-        AND protocol IN (${protocolPlaceholders})
-      GROUP BY pair_id, amount_id, protocol
+    WITH selected_protocols AS (
+      ${selectedProtocolRows}
+    ), aggregate_metrics AS (
+      SELECT d.pair_id, d.amount_id, p.protocol,
+        SUM(COALESCE(CAST(json_extract(d.metrics_json, '$.p."' || p.protocol || '"[0]') AS INTEGER), 0)) AS attempts,
+        SUM(COALESCE(CAST(json_extract(d.metrics_json, '$.p."' || p.protocol || '"[1]') AS INTEGER), 0)) AS successes,
+        SUM(COALESCE(CAST(json_extract(d.metrics_json, '$.p."' || p.protocol || '"[2]') AS INTEGER), 0)) AS comparable_samples,
+        SUM(COALESCE(CAST(json_extract(d.metrics_json, '$.p."' || p.protocol || '"[3]') AS INTEGER), 0)) AS oracle_samples,
+        SUM(COALESCE(CAST(json_extract(d.metrics_json, '$.p."' || p.protocol || '"[4]') AS REAL), 0)) AS oracle_gap_sum_bps,
+        SUM(COALESCE(CAST(json_extract(d.metrics_json, '$.w."' || ? || '"."' || p.protocol || '"') AS REAL), 0)) AS wins,
+        MAX(d.latest_at) AS latest_at
+      FROM daily_comparison_metrics d
+      CROSS JOIN selected_protocols p
+      WHERE d.mode = ? AND d.day > ? AND d.day < ?
+        AND json_type(d.metrics_json, '$.w."' || ? || '"') IS NOT NULL
+      GROUP BY d.pair_id, d.amount_id, p.protocol
+      HAVING SUM(COALESCE(CAST(json_extract(d.metrics_json, '$.p."' || p.protocol || '"[3]') AS INTEGER), 0)) > 0
     ), raw_attempts AS (
       SELECT r.id AS run_id, r.pair_id AS pair_id, r.amount_id AS amount_id,
         r.initiated_at AS initiated_at, q.protocol AS protocol, q.status AS status,
@@ -102,12 +106,12 @@ async function periodComparison(window: Exclude<WindowName, "now">, selectedProt
           OR NOT EXISTS (
             SELECT 1 FROM daily_comparison_metrics d
             WHERE d.day = substr(r.initiated_at, 1, 10)
-              AND d.mode = r.mode AND d.protocol_mask = ?
+              AND d.mode = r.mode
+              AND json_type(d.metrics_json, '$.w."' || ? || '"') IS NOT NULL
           )
         )
     ), valid AS (
-      SELECT *, ROW_NUMBER() OVER (PARTITION BY run_id ORDER BY output) AS output_rank,
-        COUNT(*) OVER (PARTITION BY run_id) AS valid_count,
+      SELECT *, COUNT(*) OVER (PARTITION BY run_id) AS valid_count,
         MAX(output) OVER (PARTITION BY run_id) AS best_output
       FROM raw_attempts
       WHERE status = 'quoted' AND output > 0
@@ -116,16 +120,9 @@ async function periodComparison(window: Exclude<WindowName, "now">, selectedProt
         SUM(CASE WHEN output = best_output THEN 1 ELSE 0 END) AS winner_count
       FROM valid
       GROUP BY run_id
-    ), medians AS (
-      SELECT run_id, AVG(output) AS median_output
-      FROM valid
-      WHERE output_rank = CAST((valid_count + 1) / 2 AS INTEGER)
-         OR output_rank = CAST((valid_count + 2) / 2 AS INTEGER)
-      GROUP BY run_id
     ), scored AS (
-      SELECT raw_attempts.*, medians.median_output, run_stats.valid_count, run_stats.best_output, run_stats.winner_count
+      SELECT raw_attempts.*, run_stats.valid_count, run_stats.best_output, run_stats.winner_count
       FROM raw_attempts
-      LEFT JOIN medians ON medians.run_id = raw_attempts.run_id
       LEFT JOIN run_stats ON run_stats.run_id = raw_attempts.run_id
     ), raw_metrics AS (
       SELECT pair_id, amount_id, protocol,
@@ -155,7 +152,7 @@ async function periodComparison(window: Exclude<WindowName, "now">, selectedProt
     GROUP BY pair_id, amount_id, protocol
     ORDER BY pair_id, amount_id, protocol
   `).bind(
-    bestOutputMode, cutoffDay, today, protocolMask, ...selectedProtocols,
+    ...selectedProtocols, protocolMask, bestOutputMode, cutoffDay, today, protocolMask,
     bestOutputMode, cutoff, ...selectedProtocols, cutoffDay, today, protocolMask,
   ).all<HistoryRow>();
 

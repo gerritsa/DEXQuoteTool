@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { ensureBenchmarkSchema, getD1, getDb } from "../../db";
 import { benchmarkRuns, protocolQuotes } from "../../db/schema";
 import { getOracleSnapshot, oracleGapBps, referenceForAmount, type OracleReference } from "../oracle";
-import { benchmarkCatalogGraceMs, getCatalog, topThorRoutes, type CatalogAsset, type CatalogRoute, type PartnerId } from "../routes/catalog";
+import { benchmarkCatalogGraceMs, fixedRoutes, getCatalog, type CatalogAsset, type CatalogRoute, type PartnerId } from "../routes/catalog";
 import { getChainflipQuote } from "./adapters/chainflip";
 import { getNearIntentsQuote } from "./adapters/near-intents";
 import { getPoolProtocolQuote } from "./adapters/pool-protocol";
@@ -23,6 +23,7 @@ type BenchmarkRuntimeEnv = {
   BENCHMARK_BCH_ADDRESS?: string;
   BENCHMARK_XRP_ADDRESS?: string;
   BENCHMARK_DOGE_ADDRESS?: string;
+  BENCHMARK_ZEC_ADDRESS?: string;
 };
 
 export type BenchmarkRunOptions = { sweepId?: string; bundleIndex?: number };
@@ -77,6 +78,7 @@ function addressForChain(chain: string, values: BenchmarkRuntimeEnv) {
   if (chain === "bch") return values.BENCHMARK_BCH_ADDRESS;
   if (chain === "xrp") return values.BENCHMARK_XRP_ADDRESS;
   if (chain === "doge") return values.BENCHMARK_DOGE_ADDRESS;
+  if (chain === "zcash") return values.BENCHMARK_ZEC_ADDRESS;
   return undefined;
 }
 
@@ -259,8 +261,8 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, op
   const mode = bestOutputMode;
   await ensureBenchmarkSchema();
   const catalog = await getCatalog({ d1: getD1(), allowStale: true, maxStaleMs: benchmarkCatalogGraceMs });
-  const route = topThorRoutes(catalog.assets).find((candidate) => candidate.id === routeId);
-  if (!route) throw new Error("Select one of the fixed THORChain routes");
+  const route = fixedRoutes(catalog.assets).find((candidate) => candidate.id === routeId);
+  if (!route) throw new Error("Select one of the fixed routes");
   const quoteSize = quoteSizes.find((candidate) => candidate.id === amountId);
   if (!quoteSize) throw new Error("Unknown quote amount");
 

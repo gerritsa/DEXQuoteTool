@@ -1,17 +1,18 @@
 # Production collector
 
-The production collector is designed for 30 fixed routes, seven USD sizes, one
+The production collector is designed for 50 fixed routes, seven USD sizes, one
 best-output quote strategy, and one sweep every 30 minutes.
 
 ## Runtime shape
 
-- The half-hour Cron Trigger creates 210 route/size jobs.
-- Jobs are bundled in groups of 20, producing 11 queue messages per sweep.
+- The half-hour Cron Trigger creates 350 route/size jobs.
+- Jobs are bundled in groups of 20, producing 18 queue messages per sweep.
 - Queue messages are processed with four concurrent benchmark workers.
-- D1 stores normalized quote data for 90 days and daily aggregates for 400 days.
+- D1 stores detailed quote data for eight days and compact daily aggregates for
+  2,000 days.
 - R2 stores one normalized and one raw gzip archive per queue bundle.
 - The included R2 lifecycle rules expire `raw/` after seven days and
-  `normalized/` after one year.
+  `normalized/` after 2,000 days.
 
 ## Production resources
 
@@ -27,6 +28,13 @@ benchmarking and intentionally clears the active benchmark, comparison, trend,
 and collector tables for a fresh oracle-referenced history. The persisted route
 catalog and lifecycle-managed R2 archives are not removed.
 
+Migration `0007_flippant_ben_parker.sql` converts daily metrics from one row per
+protocol/filter combination to one compact row per route, size, and day. It keeps
+all existing optimized-mode filter combinations and clears retired pool-depth
+snapshots. Daily maintenance removes legacy standard-mode and expired detailed
+rows in bounded batches so the migration itself does not issue a very large
+delete.
+
 Configure these Worker secrets or variables:
 
 - `NEAR_INTENTS_API_KEY`
@@ -38,7 +46,12 @@ Configure these Worker secrets or variables:
 - `BENCHMARK_BCH_ADDRESS`
 - `BENCHMARK_XRP_ADDRESS`
 - `BENCHMARK_DOGE_ADDRESS`
+- `BENCHMARK_ZEC_ADDRESS`
 - `COLLECTOR_ADMIN_TOKEN` only when administrator-triggered single runs are needed
+
+The public Zcash benchmark address is stored as `BENCHMARK_ZEC_ADDRESS` in
+`wrangler.production.jsonc`; the remaining values continue to be managed as
+Worker secrets.
 
 `POST /api/runs` is hidden unless a matching administrator bearer token is
 configured; normal dashboard reads remain public.
@@ -47,8 +60,10 @@ configured; normal dashboard reads remain public.
 
 The daily maintenance trigger runs at 00:15 UTC. It builds the previous day's
 metrics for every enabled-protocol combination, removes detailed D1 history
-older than 90 days, removes collector bookkeeping older than 90 days, and keeps
-daily metrics for 400 days.
+and collector bookkeeping older than eight days, and keeps compact daily metrics
+for 2,000 days. Thirty-day charts remain available from precomputed trend buckets,
+while normalized R2 archives retain the inputs needed for future analysis for the
+same 2,000-day period.
 
 ## Monitoring
 
@@ -59,6 +74,6 @@ rate exceeds 20 percent. Configure alerts for the dead-letter queue, Worker
 exceptions, D1 usage, R2 usage, and Queue operations in the Cloudflare account.
 
 Apply `infra/r2-lifecycle.json` to the production archive bucket. It expires
-`raw/` after 7 days and `normalized/` after 365 days. Monitor D1 stored bytes,
+`raw/` after 7 days and `normalized/` after 2,000 days. Monitor D1 stored bytes,
 rows written, Queue operations, Worker requests, and R2 Class A operations in
 the Cloudflare dashboard before enabling public traffic.

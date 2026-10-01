@@ -1,8 +1,8 @@
 import { ensureBenchmarkSchema, getD1 } from "../../../db";
 import { publicCacheHeaders, readPublicCache, writePublicCache } from "../../../lib/http-cache";
+import { bestOutputMode } from "../../../lib/quotes/protocols";
 
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
-type ExecutionMode = "standard" | "optimized";
 type TrendBucketRow = { bucketStart: string; samplesJson: string };
 type AvailabilityRow = { protocol: PartnerId; attempts: number; successes: number };
 type StoredQuote = { protocol: PartnerId; output: number; oracleGapBps: number };
@@ -16,8 +16,9 @@ type ScoredRow = {
   winCredit: number;
 };
 
-const protocols: PartnerId[] = ["near-intents", "chainflip", "thorchain"];
-const metricProtocolOrder: PartnerId[] = ["thorchain", "chainflip", "near-intents"];
+const protocols: PartnerId[] = ["near-intents", "chainflip", "thorchain", "maya"];
+const metricProtocolOrder: PartnerId[] = ["thorchain", "chainflip", "near-intents", "maya"];
+const expectedCollectionIntervalMs = 30 * 60 * 1000;
 
 function median(values: number[]) {
   if (!values.length) return null;
@@ -77,7 +78,6 @@ function scoreRuns(storedRuns: StoredRun[], selectedProtocols: PartnerId[], star
 async function loadAvailability(
   routeId: string,
   amountId: string,
-  mode: ExecutionMode,
   selectedProtocols: PartnerId[],
   startAt: string,
 ) {
@@ -123,8 +123,8 @@ async function loadAvailability(
     FROM combined
     GROUP BY protocol
   `).bind(
-    routeId, amountId, mode, cutoffDay, today, protocolMask, ...selectedProtocols,
-    routeId, amountId, mode, startAt, ...selectedProtocols, cutoffDay, today, protocolMask,
+    routeId, amountId, bestOutputMode, cutoffDay, today, protocolMask, ...selectedProtocols,
+    routeId, amountId, bestOutputMode, startAt, ...selectedProtocols, cutoffDay, today, protocolMask,
   ).all<AvailabilityRow>();
   return new Map(result.results.map((row) => [row.protocol, {
     attempts: Number(row.attempts),
@@ -142,7 +142,6 @@ export async function GET(request: Request) {
     const amountId = url.searchParams.get("amountId")?.trim();
     const requestedDays = Number(url.searchParams.get("days") ?? 1);
     const days = [1, 7, 14, 30].includes(requestedDays) ? requestedDays : 1;
-    const mode: ExecutionMode = url.searchParams.get("mode") === "optimized" ? "optimized" : "standard";
     const requestedProtocols = (url.searchParams.get("protocols") ?? "").split(",").filter((value): value is PartnerId => protocols.includes(value as PartnerId));
     const selectedProtocols = requestedProtocols.length >= 2 ? protocols.filter((protocol) => requestedProtocols.includes(protocol)) : protocols;
     if (!routeId || !amountId) return Response.json({ error: "routeId and amountId are required" }, { status: 400 });
@@ -161,7 +160,7 @@ export async function GET(request: Request) {
     `).bind(
       routeId,
       amountId,
-      mode,
+      bestOutputMode,
       bucketSeconds,
       new Date(firstBucketAt).toISOString(),
       new Date(endAt).toISOString(),
@@ -172,7 +171,6 @@ export async function GET(request: Request) {
     const availabilityByProtocol = await loadAvailability(
       routeId,
       amountId,
-      mode,
       selectedProtocols,
       new Date(startAt).toISOString(),
     );
@@ -187,6 +185,7 @@ export async function GET(request: Request) {
         medianOracleGapBps: median(oracleGaps),
         winRate: comparableRuns ? protocolRows.reduce((sum, row) => sum + row.winCredit, 0) / comparableRuns : null,
         sampleCount: protocolRows.length,
+        attempts: availability?.attempts ?? 0,
         availability: availability?.attempts ? availability.successes / availability.attempts : 0,
       };
     });
@@ -196,10 +195,19 @@ export async function GET(request: Request) {
         || b.availability - a.availability)[0] ?? null;
 
     const pointMode = days <= 7 ? "comparison" : "bucket_median";
+    const comparisonRuns = [...new Map(storedRuns
+      .filter((run) => {
+        const timestamp = new Date(run.initiatedAt).getTime();
+        return Number.isFinite(timestamp) && timestamp >= startAt && timestamp <= endAt;
+      })
+      .map((run) => [run.runId, run] as const)).values()];
     const pointGroups = pointMode === "comparison"
-      ? [...Map.groupBy(rows, (row) => row.runId).values()]
-          .sort((a, b) => Number(a[0]?.timestamp) - Number(b[0]?.timestamp))
-          .map((runRows) => ({ timestamp: Number(runRows[0]?.timestamp), rows: runRows }))
+      ? comparisonRuns
+          .sort((a, b) => new Date(a.initiatedAt).getTime() - new Date(b.initiatedAt).getTime())
+          .map((run) => ({
+            timestamp: new Date(run.initiatedAt).getTime(),
+            rows: rows.filter((row) => row.runId === run.runId),
+          }))
       : Array.from({ length: Math.floor((endAt - firstBucketAt) / bucketMs) + 1 }, (_, index) => {
           const timestamp = firstBucketAt + index * bucketMs;
           return { timestamp, rows: rows.filter((row) => Math.floor(row.timestamp / bucketMs) * bucketMs === timestamp) };
@@ -219,10 +227,10 @@ export async function GET(request: Request) {
     });
 
     return writePublicCache(request, Response.json({
-      routeId, amountId, mode, protocols: selectedProtocols, days, baseline: "thorchain_cex_oracle",
+      routeId, amountId, protocols: selectedProtocols, days, baseline: "thorchain_cex_oracle",
       ranking: "overall_win_share",
-      comparisonRule: "Every quote is measured against the synchronized THORChain CEX-derived oracle cross-rate. The period leader still has the highest share of comparable batch wins; exact ties split the win equally.",
-      bucketMs, pointMode,
+      comparisonRule: "Every quote is measured against the synchronized THORChain CEX-derived oracle cross-rate. The best available quote wins each batch, including batches with one valid quote; exact ties split the win equally.",
+      bucketMs, expectedIntervalMs: expectedCollectionIntervalMs, pointMode,
       startAt: new Date(startAt).toISOString(), endAt: new Date(endAt).toISOString(),
       comparableRuns, leader, summary, buckets,
     }, { headers: publicCacheHeaders(900) }));

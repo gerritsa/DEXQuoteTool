@@ -3,13 +3,12 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { defaultProtocols, type ExecutionMode, type NormalizedDashboardQuery, type PartnerId, type TrendDays, type ViewWindow } from "./dashboard-query";
+import { defaultProtocols, type NormalizedDashboardQuery, type PartnerId, type TrendDays, type ViewWindow } from "./dashboard-query";
 import { quoteSizes, type QuoteSize } from "../lib/quotes/sizes";
 import { rawArchiveRetentionDays } from "../lib/quotes/retention";
 
 type Theme = "dark" | "light";
 type DashboardView = "leaderboard" | "analysis";
-type AnalysisPanel = "performance" | "depth";
 
 const pageRefreshIntervalMs = 15 * 60_000;
 const resumeRefreshThresholdMs = 60_000;
@@ -61,12 +60,13 @@ type TrendPoint = {
 type TrendResponse = {
   days: number;
   bucketMs: number;
+  expectedIntervalMs?: number;
   pointMode: "comparison" | "bucket_median";
   startAt: string;
   endAt: string;
   comparableRuns: number;
-  leader: null | { protocol: PartnerId; averageOracleGapBps: number; medianOracleGapBps: number; winRate: number; sampleCount: number; availability: number };
-  summary: Array<{ protocol: PartnerId; averageOracleGapBps: number | null; medianOracleGapBps: number | null; winRate: number | null; sampleCount: number; availability: number }>;
+  leader: null | { protocol: PartnerId; averageOracleGapBps: number; medianOracleGapBps: number; winRate: number; sampleCount: number; attempts?: number; availability: number };
+  summary: Array<{ protocol: PartnerId; averageOracleGapBps: number | null; medianOracleGapBps: number | null; winRate: number | null; sampleCount: number; attempts?: number; availability: number }>;
   buckets: Array<{ timestamp: number; points: TrendPoint[] }>;
   error?: string;
 };
@@ -112,33 +112,6 @@ type RunResponse = {
     previous: { runId: number; initiatedAt: string } | null;
     next: { runId: number; initiatedAt: string } | null;
   };
-  depthForecast?: null | {
-    modelVersion: "thor-depth-v1" | "thor-depth-v2" | "thor-depth-v3" | "thor-depth-v4" | "thor-analysis-v1";
-    status: "available" | "unavailable";
-    reason?: string;
-    capturedAt: string;
-    competitiveWithinBps: number;
-    bestProtocol?: PartnerId;
-    bestOutput?: number;
-    currentThorOutput?: number;
-    currentGapBps?: number;
-    sourceAmountFormatted?: number;
-    poolImpliedRate?: number;
-    oracleRate?: number | null;
-    bestQuoteRate?: number;
-    poolRateGapVsOracleBps?: number | null;
-    currentOracleGapBps?: number | null;
-    executionDragVsOracleBps?: number | null;
-    executionCostVsOracleBps?: number | null;
-    reportedSlippageVsOracleBps?: number | null;
-    liquidityFeeVsOracleBps?: number | null;
-    outboundFeeVsOracleBps?: number | null;
-    unexplainedExecutionCostVsOracleBps?: number | null;
-    reportedSlippageBps?: number | null;
-    liquidityFeeBps?: number | null;
-    unexplainedExecutionCostBps?: number | null;
-    outboundFeeBps?: number;
-  };
   run: null | {
     id: number;
     initiatedAt: string;
@@ -174,9 +147,9 @@ type RunResponse = {
   error?: string;
 };
 
-const partners: Array<{ id: PartnerId; name: string; cellName: string; color: string; logo: string; disabled?: boolean }> = [
+const partners: Array<{ id: PartnerId; name: string; cellName: string; color: string; logo: string }> = [
   { id: "thorchain", name: "THORChain", cellName: "THORChain", color: "#17b897", logo: "/partners/thorchain.png" },
-  { id: "maya", name: "MAYA PROTOCOL", cellName: "MAYA PROTOCOL", color: "#ef6a38", logo: "/partners/maya.svg", disabled: true },
+  { id: "maya", name: "MAYA PROTOCOL", cellName: "MAYA PROTOCOL", color: "#ef6a38", logo: "/partners/maya.svg" },
   { id: "chainflip", name: "CHAINFLIP", cellName: "CHAINFLIP", color: "#ed49c9", logo: "/partners/chainflip.svg" },
   { id: "near-intents", name: "NEAR", cellName: "NEAR", color: "var(--near-series)", logo: "/partners/near.svg" },
 ];
@@ -202,10 +175,6 @@ function routeMatchesProtocols(route: Route, selected: ReadonlySet<PartnerId>) {
 function PartnerMark({ id, muted = false }: { id: PartnerId; muted?: boolean }) {
   const partner = partners.find((item) => item.id === id)!;
   return <span className={`partner-mark logo-${id} ${muted ? "muted" : ""}`} role="img" aria-label={partner.name} title={partner.name}><img src={partner.logo} alt="" /></span>;
-}
-
-function executionLabel(mode: ExecutionMode) {
-  return mode === "standard" ? "Standard swap" : "Streaming/DCA";
 }
 
 function AssetMark({ asset }: { asset: Route["source"] }) {
@@ -275,17 +244,19 @@ function trendPointContext(point: TrendPoint, pointMode: TrendResponse["pointMod
   return `${Math.round((point.winRate ?? 0) * 100)}% wins · ${point.sampleCount} samples in bucket`;
 }
 
+function trendAvailabilityLabel(summary: TrendResponse["summary"][number]) {
+  const attempts = summary.attempts ?? (summary.availability > 0
+    ? Math.round(summary.sampleCount / summary.availability)
+    : summary.sampleCount);
+  return `${summary.sampleCount}/${Math.max(attempts, summary.sampleCount)} quotes (${Math.round(summary.availability * 100)}%)`;
+}
+
 function formatTokenAmount(value?: string | number | null) {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return "—";
   const absolute = Math.abs(amount);
   const maximumFractionDigits = absolute >= 1_000 ? 2 : absolute >= 1 ? 4 : absolute >= 0.01 ? 6 : 8;
   return amount.toLocaleString([], { maximumFractionDigits });
-}
-
-function formatExchangeRate(value?: number | null) {
-  if (value == null || !Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat([], { maximumSignificantDigits: 8 }).format(value);
 }
 
 function formatBaseUnits(value: string, decimals: number) {
@@ -301,7 +272,6 @@ function quoteStatusLabel(quote: RunResponse["quotes"][number]) {
   if (quote.status === "unavailable") {
     if (quote.errorCode === "UNSUPPORTED_PAIR") return "Not supported";
     if (quote.errorCode === "INSUFFICIENT_LIQUIDITY") return "Insufficient liquidity";
-    if (quote.errorCode === "STRATEGY_UNAVAILABLE") return "No quote for this mode";
     return "No quote at this size";
   }
   if (quote.status === "error") return "Quote error";
@@ -433,18 +403,18 @@ function RequestDetails({ runDetails, runLoading, selectedSize, historical = fal
       </nav>
       {runDetails.rawDetailsAvailable === false && <p>Raw payloads are unavailable for this batch. Normalized quote results are still shown below.</p>}
       <div className="request-list">{orderedQuotes.map((quote) => <details key={quote.id}>
-        <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.protocol === "chainflip" && runDetails.run?.mode === "optimized" && quote.strategy === "regular" ? "regular fallback" : quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quoteStatusLabel(quote)}</strong></summary>
+        <summary><PartnerMark id={quote.protocol} /><span><b>{partners.find((partner) => partner.id === quote.protocol)?.name}</b><small>{quote.strategy} · {quote.responseLatencyMs ?? "—"} ms</small></span><strong className={winnerProtocol === quote.protocol ? "winner" : ""}>{winnerProtocol === quote.protocol ? "Best output" : quoteStatusLabel(quote)}</strong></summary>
         <dl><div><dt>Requested</dt><dd>{formatTime(quote.requestStartedAt)}</dd></div><div><dt>HTTP status</dt><dd>{quote.responseHttpStatus ?? "—"}</dd></div><div><dt>Expected output</dt><dd>{quote.expectedOutputFormatted ?? quote.expectedOutputBaseUnits ?? "—"}</dd></div><div><dt>Oracle deviation</dt><dd>{quote.oracleGapBps == null ? "—" : formatBps(quote.oracleGapBps)}</dd></div><div><dt>Quote expiry</dt><dd>{formatTime(quote.quoteExpiresAt ?? undefined)}</dd></div></dl>
         <span className="json-label">Request</span><pre>{quote.requestPayloadJson ?? quote.requestUrl ?? "No request payload stored"}</pre><span className="json-label">Response</span><pre>{quote.rawResponseJson ?? quote.errorMessage ?? "No response payload stored"}</pre>
       </details>)}</div>
-    </> : <><h3>No captured requests yet</h3><p>{runDetails?.error ?? "The latest scheduled quote refresh for this route, size, and execution mode will appear here when available."}</p><dl><div><dt>Request timestamp</dt><dd>—</dd></div><div><dt>Exact input amount</dt><dd>{selectedSize.label}</dd></div><div><dt>Raw request / response</dt><dd>Available after collection</dd></div></dl></>}
+    </> : <><h3>No captured requests yet</h3><p>{runDetails?.error ?? "The latest scheduled quote refresh for this route and size will appear here when available."}</p><dl><div><dt>Request timestamp</dt><dd>—</dd></div><div><dt>Exact input amount</dt><dd>{selectedSize.label}</dd></div><div><dt>Raw request / response</dt><dd>Available after collection</dd></div></dl></>}
   </div>;
 }
 
 function TrendChart({ data, activePartners }: { data: TrendResponse; activePartners: typeof partners }) {
   const width = 920;
   const height = 300;
-  const padding = { top: 24, right: 18, bottom: 30, left: 58 };
+  const padding = { top: 24, right: 18, bottom: 42, left: 58 };
   const plotted = data.buckets.flatMap((bucket) => bucket.points.flatMap((point) => {
     const value = point.oracleGapBps;
     return value == null ? [] : [{ timestamp: bucket.timestamp, value, point }];
@@ -460,14 +430,18 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
   const y = (value: number) => padding.top + ((bound - Math.max(-bound, Math.min(bound, value))) / (bound * 2)) * (height - padding.top - padding.bottom);
   const ticks = [bound, bound / 2, 0, -bound / 2, -bound];
 
-  const series = activePartners.map((partner) => ({
+  const series = activePartners.map((partner, partnerIndex) => ({
     partner,
-    points: data.buckets.flatMap((bucket) => {
+    partnerIndex,
+    showMissing: (data.summary.find((item) => item.protocol === partner.id)?.sampleCount ?? 0) > 0,
+    slots: data.buckets.map((bucket) => {
       const point = bucket.points.find((item) => item.protocol === partner.id);
       const value = point?.oracleGapBps ?? null;
-      return point && value != null ? [{ timestamp: bucket.timestamp, value, point }] : [];
+      return { timestamp: bucket.timestamp, value, point };
     }),
   }));
+  const gapThresholdMs = (data.pointMode === "comparison" ? data.expectedIntervalMs ?? 30 * 60 * 1000 : data.bucketMs) * 1.9;
+  const hasVisibleGaps = series.some(({ showMissing, slots }) => showMissing && slots.some((slot) => slot.value == null));
 
   return <div className="trend-visual">
     <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${data.days === 1 ? "24-hour" : `${data.days}-day`} quote deviation in basis points from the THORChain CEX-derived oracle`}>
@@ -475,99 +449,34 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
       {ticks.map((value) => <g key={value}><line x1={padding.left} x2={width - padding.right} y1={y(value)} y2={y(value)} className={value === 0 ? "zero-line" : "grid-line"} /><text x={padding.left - 9} y={y(value) + 3} textAnchor="end">{Number.isInteger(value) ? value : value.toFixed(1)}</text></g>)}
       <text x={padding.left} y={height - 7}>{new Date(start).toLocaleString([], data.days === 1 ? { hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric" })}</text>
       <text x={width - padding.right} y={height - 7} textAnchor="end">{new Date(end).toLocaleString([], data.days === 1 ? { hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric" })}</text>
-      {series.map(({ partner, points }) => {
+      {series.map(({ partner, partnerIndex, showMissing, slots }) => {
+        const points = slots.flatMap((slot) => slot.point && slot.value != null
+          ? [{ timestamp: slot.timestamp, value: slot.value, point: slot.point }]
+          : []);
         const segments: typeof points[] = [];
-        for (const point of points) {
-          const current = segments[segments.length - 1];
-          if (!current || point.timestamp - current[current.length - 1].timestamp > data.bucketMs * 1.5) segments.push([point]);
-          else current.push(point);
+        let current: typeof points | undefined;
+        for (const slot of slots) {
+          if (!slot.point || slot.value == null) {
+            current = undefined;
+            continue;
+          }
+          const point = { timestamp: slot.timestamp, value: slot.value, point: slot.point };
+          if (!current || point.timestamp - current[current.length - 1].timestamp > gapThresholdMs) {
+            current = [point];
+            segments.push(current);
+          } else current.push(point);
         }
-        return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => <circle key={point.timestamp} cx={x(point.timestamp)} cy={y(point.value)} r={data.pointMode === "comparison" && point.point.winRate ? "4" : "3"} fill={partner.color}><title>{partner.name} · {formatBps(point.value)} vs oracle · {trendPointContext(point.point, data.pointMode)}</title></circle>)}</g>;
+        const missingSlots = showMissing ? slots.filter((slot) => slot.value == null) : [];
+        const markerY = height - padding.bottom + 7 + partnerIndex * 4;
+        return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => <circle key={point.timestamp} cx={x(point.timestamp)} cy={y(point.value)} r={data.pointMode === "comparison" && point.point.winRate ? "4" : "3"} fill={partner.color}><title>{partner.name} · {formatBps(point.value)} vs oracle · {trendPointContext(point.point, data.pointMode)}</title></circle>)}{missingSlots.map((slot) => <circle className="trend-missing-point" key={`missing-${slot.timestamp}`} cx={x(slot.timestamp)} cy={markerY} r="2" fill="none" stroke={partner.color} vectorEffect="non-scaling-stroke"><title>{partner.name} · no quote for this check</title></circle>)}</g>;
       })}
     </svg>
+    {hasVisibleGaps && <div className="trend-gap-key"><i aria-hidden="true" /><span>Hollow marks below the plot indicate a scheduled check with no quote.</span></div>}
     <div className="trend-legend">{activePartners.map((partner) => {
       const summary = data.summary.find((item) => item.protocol === partner.id);
-      return <span key={partner.id}><i style={{ background: partner.color }} /><b>{partner.name}</b><small>{summary?.sampleCount ? `${Math.round((summary.winRate ?? 0) * 100)}% wins · ${formatBps(summary.averageOracleGapBps)} avg vs oracle · ${Math.round(summary.availability * 100)}% availability` : "No data"}</small></span>;
+      return <span key={partner.id}><i style={{ background: partner.color }} /><b>{partner.name}</b><small>{summary?.sampleCount ? `${Math.round((summary.winRate ?? 0) * 100)}% wins · ${formatBps(summary.averageOracleGapBps)} avg vs oracle · ${trendAvailabilityLabel(summary)}` : "No data"}</small></span>;
     })}</div>
   </div>;
-}
-
-function ThorAnalysisCard({ route, runDetails, runLoading, selectedSize }: { route: Route; runDetails: RunResponse | null; runLoading: boolean; selectedSize: QuoteSize }) {
-  const forecast = runDetails?.depthForecast;
-  if (runLoading) return <section className="depth-forecast-card"><div className="depth-forecast-empty"><b>Loading THORChain analysis…</b><span>Reading the synchronized pool snapshot and executable quotes.</span></div></section>;
-  if (!forecast || forecast.status !== "available") return <section className="depth-forecast-card"><div className="depth-forecast-empty"><b>THORChain analysis unavailable</b><span>{forecast?.reason ?? "Analysis will appear after the next completed quote sweep captures pool balances."}</span></div></section>;
-  const bestPartner = partners.find((partner) => partner.id === forecast.bestProtocol);
-  const competitiveNow = (forecast.currentGapBps ?? -Infinity) >= -forecast.competitiveWithinBps;
-  const statusLabel = competitiveNow
-    ? "Competitive now"
-    : "Behind best quote";
-  const oracleOutput = forecast.oracleRate != null && forecast.sourceAmountFormatted != null
-    ? forecast.oracleRate * forecast.sourceAmountFormatted
-    : null;
-  const currentOracleGapBps = forecast.currentOracleGapBps ?? (oracleOutput && forecast.currentThorOutput
-    ? (forecast.currentThorOutput / oracleOutput - 1) * 10_000
-    : null);
-  const executionDragVsOracleBps = forecast.executionDragVsOracleBps ?? (currentOracleGapBps != null && forecast.poolRateGapVsOracleBps != null
-    ? currentOracleGapBps - forecast.poolRateGapVsOracleBps
-    : null);
-  const executionCostVsOracleBps = forecast.executionCostVsOracleBps ?? (executionDragVsOracleBps == null ? null : Math.max(0, -executionDragVsOracleBps));
-  const reportedSlippageVsOracleBps = forecast.reportedSlippageVsOracleBps ?? forecast.reportedSlippageBps;
-  const liquidityFeeVsOracleBps = forecast.liquidityFeeVsOracleBps ?? forecast.liquidityFeeBps;
-  const outboundFeeVsOracleBps = forecast.outboundFeeVsOracleBps ?? forecast.outboundFeeBps;
-  const unexplainedExecutionCostVsOracleBps = forecast.unexplainedExecutionCostVsOracleBps ?? forecast.unexplainedExecutionCostBps;
-  const hasRateDecomposition = forecast.poolImpliedRate != null && forecast.poolRateGapVsOracleBps != null && currentOracleGapBps != null && executionDragVsOracleBps != null && executionCostVsOracleBps != null;
-  const quoteGap = forecast.currentGapBps ?? 0;
-  const headline = competitiveNow
-    ? `THORChain is within ${forecast.competitiveWithinBps} bps of ${bestPartner?.name ?? "the best DEX"}`
-    : `THORChain is ${Math.abs(Math.round(quoteGap))} bps behind ${bestPartner?.name ?? "the best DEX"}`;
-  const poolRateDirection = (forecast.poolRateGapVsOracleBps ?? 0) >= 0 ? "above" : "below";
-  const conclusion = hasRateDecomposition
-    ? `THORChain's pool rate starts ${Math.abs(Math.round(forecast.poolRateGapVsOracleBps ?? 0))} bps ${poolRateDirection} its oracle. About ${Math.round(executionCostVsOracleBps)} bps of execution impact and fees move the executable quote to ${formatBps(currentOracleGapBps)} versus oracle.`
-    : "This compares the synchronized executable quotes returned by each protocol.";
-  const effectiveQuoteRates = (runDetails?.quotes ?? []).flatMap((quote) => {
-    const output = Number(quote.expectedOutputFormatted);
-    if (quote.status !== "quoted" || !Number.isFinite(output) || output <= 0 || !forecast.sourceAmountFormatted) return [];
-    return [{ ...quote, rate: output / forecast.sourceAmountFormatted }];
-  });
-  return <section className="depth-forecast-card" aria-labelledby="depth-forecast-title">
-    <header className="depth-forecast-header">
-      <div><p className="eyebrow">Observed result · {selectedSize.label}</p><h3 id="depth-forecast-title">{headline}</h3><p>{conclusion}</p></div>
-      <span className={`forecast-status ${competitiveNow ? "competitive" : "modeled"}`}>{statusLabel}</span>
-    </header>
-    {hasRateDecomposition && <section className="rate-decomposition" aria-labelledby="rate-decomposition-title">
-      <header><div><p className="eyebrow">Why the quote lands here</p><h4 id="rate-decomposition-title">Pool rate − execution costs = final quote</h4></div><span>All values vs oracle</span></header>
-      <div className="quote-explanation-flow">
-        <article className={(forecast.poolRateGapVsOracleBps ?? 0) >= 0 ? "positive" : "cost"}><small>Pool rate before the trade</small><strong>{formatBps(forecast.poolRateGapVsOracleBps)}</strong><span><b>Calculated</b> from pool balances vs oracle</span></article>
-        <i aria-hidden="true">+</i>
-        <article className="cost"><small>Trade impact + fees</small><strong>{formatBps(executionDragVsOracleBps)}</strong><span><b>Derived</b> from pool rate to actual quote</span></article>
-        <i aria-hidden="true">=</i>
-        <article><small>Executable THORChain quote</small><strong>{formatBps(currentOracleGapBps)}</strong><span><b>Observed</b> output compared with oracle</span></article>
-      </div>
-      <div className="execution-cost-breakdown">
-        <span><small>THORChain-reported price impact</small><strong>{reportedSlippageVsOracleBps == null ? "Not reported" : `≈ ${formatBps(-reportedSlippageVsOracleBps)}`}</strong></span>
-        <span><small>THORChain-reported liquidity fee</small><strong>{liquidityFeeVsOracleBps == null ? "Not reported" : formatBps(-liquidityFeeVsOracleBps)}</strong></span>
-        <span><small>Outbound network fee</small><strong>{outboundFeeVsOracleBps == null ? "—" : formatBps(-outboundFeeVsOracleBps)}</strong></span>
-        <span><small>Unexplained / rounding</small><strong>{unexplainedExecutionCostVsOracleBps == null ? "—" : formatBps(-unexplainedExecutionCostVsOracleBps)}</strong></span>
-      </div>
-      <div className="competitive-result"><span><small>Separate competitive comparison</small><b>Executable THORChain quote vs {bestPartner?.name ?? "best DEX"}</b></span><strong>{formatBps(forecast.currentGapBps)}</strong></div>
-    </section>}
-    {hasRateDecomposition && <section className="pool-rate-panel" aria-labelledby="pool-rate-title">
-      <header><div><p className="eyebrow">Pool-implied exchange rate</p><h4 id="pool-rate-title">1 {route.source.symbol} priced in {route.destination.symbol}</h4></div><span>{formatBps(forecast.poolRateGapVsOracleBps)} vs oracle</span></header>
-      <div className="effective-rate-wrap"><table className="effective-rate-table">
-        <thead><tr><th>Rate source</th><th>Rate type</th><th>1 {route.source.symbol} equals</th><th>Deviation from oracle</th></tr></thead>
-        <tbody>
-          <tr className="reference"><th><span className="rate-source"><i className="oracle-rate-mark" />Oracle</span></th><td>THORChain enshrined CEX reference</td><td><strong>{formatExchangeRate(forecast.oracleRate)} {route.destination.symbol}</strong></td><td><b>0 bps</b></td></tr>
-          <tr className="pool-rate"><th><span className="rate-source"><PartnerMark id="thorchain" />THORChain</span></th><td>Pool rate before trade impact</td><td><strong>{formatExchangeRate(forecast.poolImpliedRate)} {route.destination.symbol}</strong></td><td><b>{formatBps(forecast.poolRateGapVsOracleBps)}</b></td></tr>
-          {effectiveQuoteRates.map((quote) => {
-            const partner = partners.find((candidate) => candidate.id === quote.protocol);
-            const isBest = quote.protocol === forecast.bestProtocol;
-            return <tr key={quote.protocol} className={isBest ? "best" : ""}><th><span className="rate-source"><PartnerMark id={quote.protocol} />{partner?.name ?? quote.protocol}</span></th><td>Executable {quote.strategy} quote{isBest ? <em>Best</em> : null}</td><td><strong>{formatExchangeRate(quote.rate)} {route.destination.symbol}</strong></td><td><b>{formatBps(quote.oracleGapBps)}</b></td></tr>;
-          })}
-        </tbody>
-      </table></div>
-      <p><b>How to read this:</b> The pool row is THORChain&apos;s starting exchange rate before this trade changes the pools. The executable rows are what each venue actually offered for this exact amount. A favorable pool rate can still produce a losing quote when price impact and fees are larger.</p>
-    </section>}
-  </section>;
 }
 
 export default function SwapRankDashboard({
@@ -583,8 +492,6 @@ export default function SwapRankDashboard({
   const [loading, setLoading] = useState(true);
   const [enabledProtocols, setEnabledProtocols] = useState<PartnerId[]>(initialQuery.protocols);
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>(initialQuery.assets);
-  const [analysisPanel, setAnalysisPanel] = useState<AnalysisPanel>("performance");
-  const [executionMode, setExecutionMode] = useState<ExecutionMode>(initialQuery.mode);
   const [viewWindow, setViewWindow] = useState<ViewWindow>(initialQuery.window);
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
   const [comparisonLoading, setComparisonLoading] = useState(view === "leaderboard");
@@ -746,7 +653,7 @@ export default function SwapRankDashboard({
     if (view !== "leaderboard") return;
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) setComparisonLoading(true); });
-    const params = new URLSearchParams({ window: viewWindow, mode: executionMode, protocols: protocolParam });
+    const params = new URLSearchParams({ window: viewWindow, protocols: protocolParam });
     fetch(`/api/comparison?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const data = await response.json() as ComparisonResponse;
@@ -758,13 +665,13 @@ export default function SwapRankDashboard({
       })
       .finally(() => { if (!controller.signal.aborted) setComparisonLoading(false); });
     return () => controller.abort();
-  }, [executionMode, protocolParam, refreshVersion, view, viewWindow]);
+  }, [protocolParam, refreshVersion, view, viewWindow]);
 
   useEffect(() => {
     if (!selectedRoute) return;
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) setRunLoading(true); });
-    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode });
+    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id });
     fetch(`/api/runs?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const data = await response.json() as RunResponse;
@@ -776,13 +683,13 @@ export default function SwapRankDashboard({
       })
       .finally(() => { if (!controller.signal.aborted) setRunLoading(false); });
     return () => controller.abort();
-  }, [executionMode, refreshVersion, selectedRoute, selectedSize.id]);
+  }, [refreshVersion, selectedRoute, selectedSize.id]);
 
   useEffect(() => {
     if (!selectedRoute) return;
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) { setTrendLoading(true); setTrendError(null); } });
-    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, mode: executionMode, days: String(trendDays), protocols: protocolParam, v: "4" });
+    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, days: String(trendDays), protocols: protocolParam, v: "5" });
     fetch(`/api/trends?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const data = await response.json() as TrendResponse;
@@ -794,7 +701,7 @@ export default function SwapRankDashboard({
       })
       .finally(() => { if (!controller.signal.aborted) setTrendLoading(false); });
     return () => controller.abort();
-  }, [executionMode, protocolParam, refreshVersion, selectedRoute, selectedSize.id, trendDays]);
+  }, [protocolParam, refreshVersion, selectedRoute, selectedSize.id, trendDays]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("swaprank-theme");
@@ -846,7 +753,6 @@ export default function SwapRankDashboard({
     const params = new URLSearchParams();
     if (selectedAssetIds.length) params.set("assets", selectedAssetIds.join(","));
     if (enabledProtocols.join(",") !== defaultProtocols.join(",")) params.set("protocols", enabledProtocols.join(","));
-    if (executionMode !== "optimized") params.set("mode", executionMode);
     if (viewWindow !== "now") params.set("window", viewWindow);
     const query = params.toString();
     return `/${query ? `?${query}` : ""}#leaderboard-results`;
@@ -855,7 +761,6 @@ export default function SwapRankDashboard({
   function analysisHref(route: Route, size: QuoteSize) {
     const params = new URLSearchParams({
       size: size.id,
-      mode: executionMode,
       days: String(viewWindow === "now" ? trendDays : Number(viewWindow.slice(0, -1))),
       protocols: enabledProtocols.join(","),
       back: leaderboardReturnHref(),
@@ -867,7 +772,6 @@ export default function SwapRankDashboard({
     if (view !== "analysis" || !selectedRoute) return;
     const params = new URLSearchParams({
       size: size.id,
-      mode: executionMode,
       days: String(days),
       protocols: enabledProtocols.join(","),
       back: initialQuery.back,
@@ -939,7 +843,6 @@ export default function SwapRankDashboard({
   }
 
   function toggleProtocol(id: PartnerId) {
-    if (partners.find((partner) => partner.id === id)?.disabled) return;
     const next = enabledProtocols.includes(id)
       ? enabledProtocols.length <= 2 ? enabledProtocols : enabledProtocols.filter((protocol) => protocol !== id)
       : partners.filter((partner) => [...enabledProtocols, id].includes(partner.id)).map((partner) => partner.id);
@@ -1009,9 +912,9 @@ export default function SwapRankDashboard({
       </header>
 
       <section className={`leaderboard-filter-panel ${mobileFiltersOpen ? "open" : ""}`}>
-        <button className="leaderboard-filter-summary" type="button" onClick={() => setMobileFiltersOpen((current) => !current)} aria-expanded={mobileFiltersOpen} aria-controls="leaderboard-filters"><span><b>Ranking settings</b><small>{assetSummary} · {activePartners.length} protocols · {executionLabel(executionMode)} · {viewWindow === "now" ? "Latest" : viewWindow}</small></span><strong>Filters</strong></button>
+        <button className="leaderboard-filter-summary" type="button" onClick={() => setMobileFiltersOpen((current) => !current)} aria-expanded={mobileFiltersOpen} aria-controls="leaderboard-filters"><span><b>Ranking settings</b><small>{assetSummary} · {activePartners.length} protocols · {viewWindow === "now" ? "Latest" : viewWindow}</small></span><strong>Filters</strong></button>
         <div className="filter-bar leaderboard-tools" id="leaderboard-filters">
-          <fieldset className="protocol-filter"><legend>Compare protocols</legend><div>{partners.map((partner) => <button key={partner.id} className={`${enabledProtocols.includes(partner.id) ? "selected" : ""} ${partner.disabled ? "disabled" : ""}`} onClick={() => toggleProtocol(partner.id)} aria-pressed={enabledProtocols.includes(partner.id)} disabled={Boolean(partner.disabled) || (enabledProtocols.length <= 2 && enabledProtocols.includes(partner.id))}><PartnerMark id={partner.id} muted={!enabledProtocols.includes(partner.id)} /><span>{partner.name}{partner.disabled ? " · DISABLED" : ""}</span></button>)}</div><small>Choose at least two. Maya is disabled while the protocol is halted.</small></fieldset>
+          <fieldset className="protocol-filter"><legend>Compare protocols</legend><div>{partners.map((partner) => <button key={partner.id} className={enabledProtocols.includes(partner.id) ? "selected" : ""} onClick={() => toggleProtocol(partner.id)} aria-pressed={enabledProtocols.includes(partner.id)} disabled={enabledProtocols.length <= 2 && enabledProtocols.includes(partner.id)}><PartnerMark id={partner.id} muted={!enabledProtocols.includes(partner.id)} /><span>{partner.name}</span></button>)}</div><small>Choose at least two. Results recalculate using only enabled protocols.</small></fieldset>
           <fieldset className="asset-filter"><legend>Assets</legend><div className="asset-select" ref={assetMenu}>
             <button className="asset-select-trigger" type="button" onClick={() => setAssetMenuOpen((current) => !current)} aria-expanded={assetMenuOpen} aria-controls="asset-select-menu">
               <span className="asset-select-summary" ref={assetSummaryBox}>{selectedAssets.length === 0
@@ -1033,7 +936,6 @@ export default function SwapRankDashboard({
               <div className="asset-select-footer">{filteredRoutes.length} of {catalog?.routes.length ?? 0} routes</div>
             </div>}
           </div></fieldset>
-          <fieldset className="execution-filter"><legend>Execution mode</legend><div className="segmented"><button className={executionMode === "optimized" ? "selected" : ""} onClick={() => setExecutionMode("optimized")}>Streaming/DCA</button><button className={executionMode === "standard" ? "selected" : ""} onClick={() => setExecutionMode("standard")}>Standard swap</button></div></fieldset>
           <fieldset className="comparison-window-filter"><legend>Comparison window</legend><div className="segmented">{(["now", "7d", "14d", "30d"] as ViewWindow[]).map((window) => <button key={window} className={viewWindow === window ? "selected" : ""} onClick={() => changeWindow(window)}>{window === "now" ? "Latest check" : window.replace("d", " days")}</button>)}</div></fieldset>
         </div>
       </section>
@@ -1064,7 +966,7 @@ export default function SwapRankDashboard({
     {view === "analysis" && <section className="route-detail" id="analysis">
       <a className="analysis-back-link" href={initialQuery.back}>← Back to leaderboard</a>
       <div className="detail-header compact">
-        <div><p className="eyebrow">Route analysis · {executionLabel(executionMode)}</p>{selectedRoute ? <h2 className="detail-route"><RoutePair route={selectedRoute} /></h2> : <h2>{loading ? "Loading route…" : "Route unavailable"}</h2>}</div>
+        <div><p className="eyebrow">Route analysis · best-output quotes</p>{selectedRoute ? <h2 className="detail-route"><RoutePair route={selectedRoute} /></h2> : <h2>{loading ? "Loading route…" : "Route unavailable"}</h2>}</div>
         {selectedRoute && <div className="detail-actions"><div className="coverage-summary"><span>Compared protocols</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</div></div></div>}
       </div>
       {!loading && !selectedRoute && <div className="error-state"><b>This route could not be found</b><span>It may no longer be in the supported route catalog. Return to the leaderboard to choose another route.</span></div>}
@@ -1081,23 +983,16 @@ export default function SwapRankDashboard({
         <div className="size-selectors" role="group" aria-label="Exact USD input for route analysis">{quoteSizes.map((size) => <button key={size.id} className={selectedSize.id === size.id ? "selected" : ""} onClick={() => changeAnalysisSize(size)} aria-pressed={selectedSize.id === size.id}><strong>{size.label}</strong></button>)}</div>
       </div>}
 
-      {selectedRoute && <div className="analysis-view-tabs" role="tablist" aria-label="Route analysis view">
-        <button role="tab" aria-selected={analysisPanel === "performance"} className={analysisPanel === "performance" ? "selected" : ""} onClick={() => setAnalysisPanel("performance")}>Quote performance</button>
-        <button role="tab" aria-selected={analysisPanel === "depth"} className={analysisPanel === "depth" ? "selected" : ""} onClick={() => setAnalysisPanel("depth")}>Pool + execution</button>
-      </div>}
-
-      {selectedRoute && analysisPanel === "performance" && <section className="trend-card" aria-labelledby="trend-title">
+      {selectedRoute && <section className="trend-card" aria-labelledby="trend-title">
         <header className="trend-header">
-          <div><p className="eyebrow">Historical {executionLabel(executionMode)} deviation from THORChain oracle · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} won most quotes over {trendPeriodLabel(trendDays)}</> : <>Performance over {trendPeriodLabel(trendDays)}</>}</h3><p>{trend?.leader ? `${Math.round(trend.leader.winRate * 100)}% win share · ${formatBps(trend.leader.averageOracleGapBps)} average vs oracle · ${Math.round(trend.leader.availability * 100)}% quote availability · ${trend.comparableRuns} comparisons` : "A period leader appears after the first oracle-referenced quote batch."}</p></div>
+          <div><p className="eyebrow">Historical best-output deviation from THORChain oracle · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} won most quotes over {trendPeriodLabel(trendDays)}</> : <>Performance over {trendPeriodLabel(trendDays)}</>}</h3><p>{trend?.leader ? `${Math.round(trend.leader.winRate * 100)}% win share · ${formatBps(trend.leader.averageOracleGapBps)} average vs oracle · ${Math.round(trend.leader.availability * 100)}% quote availability · ${trend.comparableRuns} comparisons` : "A period leader appears after the first oracle-referenced quote batch."}</p></div>
           <div className="trend-controls">
             <fieldset><legend>Period</legend><div className="segmented light">{([1, 7, 14, 30] as const).map((days) => <button key={days} className={trendDays === days ? "selected" : ""} onClick={() => changeTrendDays(days)}>{days === 1 ? "Last 24 hours" : `${days}d`}</button>)}</div></fieldset>
           </div>
         </header>
         {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} activePartners={activePartners} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
-        <div className="trend-note"><b>0 bps is THORChain oracle parity</b><span>{trend?.pointMode === "comparison" ? "Every point compares the quoted output with the same synchronized CEX-derived oracle cross-rate. The highest point is the batch winner; points below zero return less than oracle parity and points above zero return more." : "Every point shows each DEX’s median signed deviation from the synchronized CEX-derived oracle within that time bucket. Winner share is still calculated from the highest quoted output in each batch."}</span></div>
+        <div className="trend-note"><b>0 bps is THORChain oracle parity</b><span>{trend?.pointMode === "comparison" ? "Every point compares the quoted output with the same synchronized CEX-derived oracle cross-rate. The best available valid quote wins each batch; if only one DEX returns a quote, it wins. Missing quotes appear as gaps and never invent a price point." : "Every point shows each DEX’s median signed deviation from the synchronized CEX-derived oracle within that time bucket. The best available valid quote wins each batch, including batches with only one quote; missing buckets appear as gaps."}</span></div>
       </section>}
-
-      {selectedRoute && analysisPanel === "depth" && <ThorAnalysisCard route={selectedRoute} runDetails={runDetails} runLoading={runLoading} selectedSize={selectedSize} />}
 
       {requestsOpen && <div className="request-drawer-backdrop">
         <button className="request-drawer-dismiss" onClick={closeRequestDrawer} aria-label="Close quote details" />

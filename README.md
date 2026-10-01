@@ -3,18 +3,12 @@
 SwapRank compares synchronized cross-chain swap quotes from THORChain,
 Maya Protocol, Chainflip, and NEAR Intents.
 
-The benchmark covers 30 fixed directed routes, seven USD input sizes, and two
-execution modes: Standard Swap and Streaming/DCA. Scheduled Cloudflare Workers
-enqueue a complete sweep every 30 minutes. D1 stores queryable quote history
-and R2 stores compressed archives.
-
-Route analysis also includes a THORChain pool-and-execution analysis. Each sweep
-reuses its Midgard pool snapshot to calculate the pool-implied exchange rate
-and explain against the THORChain enshrined oracle how pool price,
-THORChain-reported price impact, liquidity fees, and the outbound fee produce the
-synchronized executable quote. Competition against the best executable DEX
-quote is shown separately. No counterfactual liquidity or future-price model is
-included.
+The benchmark covers 30 fixed directed routes and seven USD input sizes. Each
+protocol is queried once for its best-output strategy: automatic streaming for
+THORChain and Maya, the better of Chainflip's regular and DCA candidates, and
+the NEAR solver quote. Scheduled Cloudflare Workers enqueue a complete sweep
+every 30 minutes. D1 stores queryable quote history and R2 stores compressed
+archives.
 
 ## Local development
 

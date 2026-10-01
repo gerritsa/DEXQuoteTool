@@ -1,11 +1,11 @@
 import { ensureBenchmarkSchema, getD1 } from "../../../db";
 import { publicCacheHeaders, readPublicCache, writePublicCache } from "../../../lib/http-cache";
+import { bestOutputMode } from "../../../lib/quotes/protocols";
 
 type WindowName = "now" | "7d" | "14d" | "30d";
-type ExecutionMode = "standard" | "optimized";
 type PartnerId = "thorchain" | "chainflip" | "near-intents" | "maya";
-const protocols: PartnerId[] = ["near-intents", "chainflip", "thorchain"];
-const metricProtocolOrder: PartnerId[] = ["thorchain", "chainflip", "near-intents"];
+const protocols: PartnerId[] = ["near-intents", "chainflip", "thorchain", "maya"];
+const metricProtocolOrder: PartnerId[] = ["thorchain", "chainflip", "near-intents", "maya"];
 type NowRow = { pairId: string; amountId: string; initiatedAt: string; protocol: string; status: string; output: number | null; oracleGapBps: number | null };
 type HistoryRow = { pairId: string; amountId: string; protocol: string; attempts: number; successes: number; comparableSamples: number; oracleSamples: number; oracleGapSumBps: number; wins: number; latestAt: string };
 
@@ -18,10 +18,10 @@ function groupByCell<T extends { pairId: string; amountId: string }>(rows: T[]) 
   return grouped;
 }
 
-async function latestComparison(mode: ExecutionMode, selectedProtocols: PartnerId[]) {
+async function latestComparison(selectedProtocols: PartnerId[]) {
   const protocolPlaceholders = selectedProtocols.map(() => "?").join(", ");
   // This table is already updated atomically when a run completes and stays
-  // bounded to one row per route, amount, mode, and protocol.
+  // bounded to one row per route, amount, stored strategy mode, and protocol.
   const result = await getD1().prepare(`
     WITH latest AS (
       SELECT pair_id, amount_id, MAX(run_id) AS run_id
@@ -39,7 +39,7 @@ async function latestComparison(mode: ExecutionMode, selectedProtocols: PartnerI
       AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
       AND q.protocol IN (${protocolPlaceholders})
     ORDER BY r.pair_id, r.amount_id, q.protocol
-  `).bind(mode, ...selectedProtocols).all<NowRow>();
+  `).bind(bestOutputMode, ...selectedProtocols).all<NowRow>();
 
   const cells = [...groupByCell(result.results).values()].map((rows) => {
     const quoted = rows.filter((row) => row.status === "quoted" && row.output != null && row.output > 0)
@@ -61,10 +61,10 @@ async function latestComparison(mode: ExecutionMode, selectedProtocols: PartnerI
       results: rows.map((row) => ({ protocol: row.protocol, status: row.status, output: row.output, oracleGapBps: row.oracleGapBps })),
     };
   });
-  return { window: "now" as const, mode, cells };
+  return { window: "now" as const, cells };
 }
 
-async function periodComparison(window: Exclude<WindowName, "now">, mode: ExecutionMode, selectedProtocols: PartnerId[]) {
+async function periodComparison(window: Exclude<WindowName, "now">, selectedProtocols: PartnerId[]) {
   const days = Number(window.slice(0, -1));
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   const cutoffDay = cutoff.slice(0, 10);
@@ -131,10 +131,10 @@ async function periodComparison(window: Exclude<WindowName, "now">, mode: Execut
       SELECT pair_id, amount_id, protocol,
         COUNT(*) AS attempts,
         SUM(CASE WHEN status = 'quoted' THEN 1 ELSE 0 END) AS successes,
-        SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 THEN 1 ELSE 0 END) AS comparable_samples,
+        SUM(CASE WHEN status = 'quoted' AND valid_count >= 1 THEN 1 ELSE 0 END) AS comparable_samples,
         SUM(CASE WHEN status = 'quoted' AND oracle_gap_bps IS NOT NULL THEN 1 ELSE 0 END) AS oracle_samples,
         SUM(CASE WHEN status = 'quoted' AND oracle_gap_bps IS NOT NULL THEN oracle_gap_bps ELSE 0 END) AS oracle_gap_sum_bps,
-        SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 AND output = best_output THEN 1.0 / winner_count ELSE 0 END) AS wins,
+        SUM(CASE WHEN status = 'quoted' AND valid_count >= 1 AND output = best_output THEN 1.0 / winner_count ELSE 0 END) AS wins,
         MAX(initiated_at) AS latest_at
       FROM scored
       GROUP BY pair_id, amount_id, protocol
@@ -155,8 +155,8 @@ async function periodComparison(window: Exclude<WindowName, "now">, mode: Execut
     GROUP BY pair_id, amount_id, protocol
     ORDER BY pair_id, amount_id, protocol
   `).bind(
-    mode, cutoffDay, today, protocolMask, ...selectedProtocols,
-    mode, cutoff, ...selectedProtocols, cutoffDay, today, protocolMask,
+    bestOutputMode, cutoffDay, today, protocolMask, ...selectedProtocols,
+    bestOutputMode, cutoff, ...selectedProtocols, cutoffDay, today, protocolMask,
   ).all<HistoryRow>();
 
   const cells = [...groupByCell(result.results).values()].map((rows) => {
@@ -184,7 +184,7 @@ async function periodComparison(window: Exclude<WindowName, "now">, mode: Execut
       results: measured.map((row) => ({ protocol: row.protocol, averageOracleGapBps: row.averageOracleGapBps, wins: row.wins, winRate: row.winRate, samples: row.oracleSamples, comparisons: comparableChecks, availability: row.availability })),
     };
   });
-  return { window, mode, cutoff, baseline: "thorchain_cex_oracle", ranking: "overall_win_share", cells };
+  return { window, cutoff, baseline: "thorchain_cex_oracle", ranking: "overall_win_share", cells };
 }
 
 export async function GET(request: Request) {
@@ -195,10 +195,9 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const requested = url.searchParams.get("window") as WindowName | null;
     const window: WindowName = requested && ["now", "7d", "14d", "30d"].includes(requested) ? requested : "now";
-    const mode: ExecutionMode = url.searchParams.get("mode") === "optimized" ? "optimized" : "standard";
     const requestedProtocols = (url.searchParams.get("protocols") ?? "").split(",").filter((value): value is PartnerId => protocols.includes(value as PartnerId));
     const selectedProtocols = requestedProtocols.length >= 2 ? protocols.filter((protocol) => requestedProtocols.includes(protocol)) : protocols;
-    const payload = window === "now" ? await latestComparison(mode, selectedProtocols) : await periodComparison(window, mode, selectedProtocols);
+    const payload = window === "now" ? await latestComparison(selectedProtocols) : await periodComparison(window, selectedProtocols);
     return writePublicCache(request, Response.json(payload, { headers: publicCacheHeaders(900) }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Comparison data unavailable";

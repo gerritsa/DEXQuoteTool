@@ -4,13 +4,8 @@ import { ensureBenchmarkSchema, getD1, getDb } from "../../../db";
 import { benchmarkRuns, protocolQuotes } from "../../../db/schema";
 import { runSelectedBenchmark, type BenchmarkArchiveRecord } from "../../../lib/quotes/run";
 import { rawArchiveRetentionMs } from "../../../lib/quotes/retention";
-import type { ExecutionMode } from "../../../lib/quotes/types";
-import type { ThorQuoteAnalysis } from "../../../lib/quotes/depth-forecast";
+import { bestOutputMode } from "../../../lib/quotes/protocols";
 import { publicCacheHeaders, readPublicCache, writePublicCache } from "../../../lib/http-cache";
-
-function executionMode(value: unknown): ExecutionMode {
-  return value === "optimized" ? "optimized" : "standard";
-}
 
 type StoredRun = typeof benchmarkRuns.$inferSelect;
 type StoredPayload = {
@@ -25,18 +20,6 @@ type NavigationRow = NavigationTarget & { direction: "previous" | "next" };
 
 function serialized(value: unknown) {
   return value == null ? null : JSON.stringify(value, null, 2);
-}
-
-function parsedDepthForecast(value: string | null) {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(value) as { modelVersion?: string; status?: string };
-    return (["thor-depth-v1", "thor-depth-v2", "thor-depth-v3", "thor-depth-v4", "thor-analysis-v1"].includes(parsed.modelVersion ?? "")) && (parsed.status === "available" || parsed.status === "unavailable")
-      ? parsed as ThorQuoteAnalysis
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 async function archivedPayloads(run: StoredRun) {
@@ -122,7 +105,6 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const routeId = url.searchParams.get("routeId")?.trim();
     const amountId = url.searchParams.get("amountId")?.trim();
-    const mode = executionMode(url.searchParams.get("mode"));
     const requestedRunId = Number(url.searchParams.get("runId"));
     const hasRunId = Number.isInteger(requestedRunId) && requestedRunId > 0;
     if (!hasRunId && (!routeId || !amountId)) return Response.json({ error: "routeId and amountId are required" }, { status: 400 });
@@ -138,7 +120,7 @@ export async function GET(request: Request) {
           .where(and(
             eq(benchmarkRuns.pairId, routeId!),
             eq(benchmarkRuns.amountId, amountId!),
-            eq(benchmarkRuns.mode, mode),
+            eq(benchmarkRuns.mode, bestOutputMode),
             isNotNull(benchmarkRuns.completedAt),
             inArray(benchmarkRuns.status, ["complete", "partial"]),
           ))
@@ -159,10 +141,8 @@ export async function GET(request: Request) {
       availableNavigation(run),
     ]);
     const payloadByProtocol = new Map(payloads.results.map((payload) => [payload.protocol, payload]));
-    const { depthForecastJson, ...publicRun } = run;
     return writePublicCache(request, Response.json({
-      run: publicRun,
-      depthForecast: parsedDepthForecast(depthForecastJson),
+      run: { ...run, depthForecastJson: undefined },
       rawDetailsAvailable: payloads.results.length > 0 || archived.available,
       navigation,
       quotes: quotes.map((quote) => {
@@ -190,11 +170,11 @@ export async function POST(request: Request) {
     const configuredToken = (env as unknown as { COLLECTOR_ADMIN_TOKEN?: string }).COLLECTOR_ADMIN_TOKEN;
     const suppliedToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
     if (!configuredToken || suppliedToken !== configuredToken) return Response.json({ error: "Not found" }, { status: 404 });
-    const body = await request.json() as { routeId?: string; amountId?: string; mode?: string };
+    const body = await request.json() as { routeId?: string; amountId?: string };
     const routeId = body.routeId?.trim();
     const amountId = body.amountId?.trim();
     if (!routeId || !amountId) return Response.json({ error: "routeId and amountId are required" }, { status: 400 });
-    const result = await runSelectedBenchmark(routeId, amountId, executionMode(body.mode));
+    const result = await runSelectedBenchmark(routeId, amountId);
     return Response.json(result, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Benchmark run failed";

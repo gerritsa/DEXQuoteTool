@@ -5,10 +5,8 @@ type ThorPool = {
   status: string;
   assetPriceUSD?: string;
   nativeDecimal?: string;
-  assetDepth?: string;
-  runeDepth?: string;
-  liquidityInUSD?: string;
 };
+type MayaPool = { asset: string; status: string };
 type NearToken = { assetId: string; blockchain: string; symbol: string; contractAddress?: string | null; decimals: number };
 type ChainflipNetworkInfo = {
   assets: Array<{
@@ -35,7 +33,6 @@ export type CatalogAsset = {
   thorAsset: string;
   priceUsd: number | null;
   decimals: number;
-  thorPoolDepth?: { asset: string; assetDepth: string; runeDepth: string; liquidityUsd: number };
   support: Record<PartnerId, { source: boolean; destination: boolean; assetId?: string }>;
 };
 
@@ -58,8 +55,8 @@ type CatalogStateRow = {
   refreshedAt: string | null;
 };
 
-type CatalogSourceId = "thorchain" | "near-intents" | "chainflip";
-type CatalogSourcePayload = ThorPool[] | NearToken[] | ChainflipNetworkInfo;
+type CatalogSourceId = "thorchain" | "maya" | "near-intents" | "chainflip";
+type CatalogSourcePayload = ThorPool[] | MayaPool[] | NearToken[] | ChainflipNetworkInfo;
 type CatalogSourceRow = {
   source: CatalogSourceId;
   payloadJson: string | null;
@@ -78,6 +75,7 @@ type CatalogOptions = {
 };
 
 const THOR_MIDGARD_POOLS = "https://gateway.liquify.com/chain/thorchain_midgard/v2/pools";
+const MAYA_POOLS = "https://mayanode.mayachain.info/mayachain/pools";
 const NEAR_TOKENS = "https://1click.chaindefuser.com/v0/tokens";
 const CHAINFLIP_NETWORK_INFO = "https://chainflip-swap.chainflip.io/api/networkInfo";
 
@@ -136,9 +134,13 @@ const liveCatalogTtlMs = 5 * 60_000;
 export const benchmarkCatalogGraceMs = 6 * 60 * 60_000;
 let cache: { expiresAt: number; value: CatalogResult } | undefined;
 
-function buildCatalog(thorPools: ThorPool[], near: NearToken[], chainflipNetworkInfo: ChainflipNetworkInfo) {
+function buildCatalog(thorPools: ThorPool[], mayaPools: MayaPool[], near: NearToken[], chainflipNetworkInfo: ChainflipNetworkInfo) {
   const chainflipNetworkAssets = chainflipNetworkInfo.assets;
 
+  const mayaAssets = new Map(mayaPools.filter((pool) => pool.status.toLowerCase() === "available").map((pool) => {
+    const parsed = parsePoolAsset(pool.asset);
+    return [parsed.id, pool.asset];
+  }));
   const nearAssets = new Map(near.map((asset) => [canonicalAsset(asset.blockchain, asset.symbol, asset.contractAddress), asset.assetId]));
   const chainflipSupport = new Map(chainflipNetworkAssets.map((asset) => [asset.asset, asset]));
   const cfSourceAssets = new Map(CHAINFLIP_ASSETS.flatMap((asset) => {
@@ -159,9 +161,7 @@ function buildCatalog(thorPools: ThorPool[], near: NearToken[], chainflipNetwork
     const cfSource = cfSourceAssets.get(parsed.id);
     const cfDestination = cfDestinationAssets.get(parsed.id);
     const nearAsset = nearAssets.get(parsed.id);
-    const assetDepth = pool.assetDepth && /^\d+$/.test(pool.assetDepth) ? pool.assetDepth : null;
-    const runeDepth = pool.runeDepth && /^\d+$/.test(pool.runeDepth) ? pool.runeDepth : null;
-    const liquidityUsd = Number(pool.liquidityInUSD);
+    const mayaAsset = mayaAssets.get(parsed.id);
     return {
       id: parsed.id,
       label: `${parsed.symbol} · ${parsed.chain}`,
@@ -172,14 +172,11 @@ function buildCatalog(thorPools: ThorPool[], near: NearToken[], chainflipNetwork
       decimals: Number.isInteger(reportedDecimals) && reportedDecimals >= 0
         ? reportedDecimals
         : nativeDecimalFallbacks[pool.asset] ?? 8,
-      ...(assetDepth && runeDepth && Number.isFinite(liquidityUsd) && liquidityUsd > 0
-        ? { thorPoolDepth: { asset: pool.asset, assetDepth, runeDepth, liquidityUsd } }
-        : {}),
       support: {
         thorchain: { source: true, destination: true, assetId: pool.asset },
         chainflip: { source: Boolean(cfSource), destination: Boolean(cfDestination), assetId: cfSource ?? cfDestination },
         "near-intents": { source: Boolean(nearAsset), destination: Boolean(nearAsset), assetId: nearAsset },
-        maya: { source: false, destination: false },
+        maya: { source: Boolean(mayaAsset), destination: Boolean(mayaAsset), assetId: mayaAsset },
       },
     };
   }).sort((a, b) => a.label.localeCompare(b.label));
@@ -196,7 +193,7 @@ function parseSourcePayload(source: CatalogSourceId, value: string | null): Cata
         ? parsed as ChainflipNetworkInfo
         : null;
     }
-    return Array.isArray(parsed) ? parsed as ThorPool[] | NearToken[] : null;
+    return Array.isArray(parsed) ? parsed as ThorPool[] | MayaPool[] | NearToken[] : null;
   } catch {
     return null;
   }
@@ -255,6 +252,7 @@ async function storeCatalogSourceAttempt(
 function sourceError(source: CatalogSourceId, reason: unknown) {
   const labels: Record<CatalogSourceId, string> = {
     thorchain: "THORChain catalog unavailable",
+    maya: "Maya catalog unavailable",
     "near-intents": "NEAR Intents catalog unavailable",
     chainflip: "Chainflip catalog unavailable",
   };
@@ -263,6 +261,7 @@ function sourceError(source: CatalogSourceId, reason: unknown) {
 
 function sourcePayload(source: CatalogSourceId, value: CatalogSourcePayload): CatalogSourcePayload {
   if (source === "thorchain") return value as ThorPool[];
+  if (source === "maya") return value as MayaPool[];
   if (source === "near-intents") return value as NearToken[];
   return value as ChainflipNetworkInfo;
 }
@@ -326,13 +325,15 @@ export async function getCatalog(options: CatalogOptions = {}): Promise<CatalogR
   const storedAggregate = await loadStoredCatalog(options.d1);
   const storedAggregateAgeMs = storedAggregate ? Date.now() - new Date(storedAggregate.refreshedAt).getTime() : Infinity;
   const storedSources = await loadStoredCatalogSources(options.d1);
-  const [thorResult, nearResult, chainflipResult] = await Promise.allSettled([
+  const [thorResult, mayaResult, nearResult, chainflipResult] = await Promise.allSettled([
     fetchJson<ThorPool[]>(THOR_MIDGARD_POOLS),
+    fetchJson<MayaPool[]>(MAYA_POOLS),
     fetchJson<NearToken[]>(NEAR_TOKENS),
     fetchJson<ChainflipNetworkInfo>(CHAINFLIP_NETWORK_INFO, { "X-Chainflip-Sdk-Version": "2.2.1" }),
   ]);
   const sourceResults = [
     { id: "thorchain" as const, result: thorResult },
+    { id: "maya" as const, result: mayaResult },
     { id: "near-intents" as const, result: nearResult },
     { id: "chainflip" as const, result: chainflipResult },
   ];
@@ -383,12 +384,13 @@ export async function getCatalog(options: CatalogOptions = {}): Promise<CatalogR
 
     // A missing secondary catalog only disables that provider's routes. The
     // other catalogs can still produce valid routes and quote requests.
-    selected[id] = id === "near-intents" ? [] : { assets: [] };
+    selected[id] = id === "chainflip" ? { assets: [] } : [];
     warnings.push(`${message}; ${id} routes are temporarily unavailable`);
   }
 
   const assets = buildCatalog(
     selected.thorchain as ThorPool[],
+    selected.maya as MayaPool[],
     selected["near-intents"] as NearToken[],
     selected.chainflip as ChainflipNetworkInfo,
   );
@@ -450,11 +452,12 @@ const staticAssetDefinitions: Array<{
   symbol: string;
   decimals: number;
   chainflipAssetId?: string;
+  mayaAssetId?: string;
 }> = [
-  { thorAsset: "BTC.BTC", chain: "bitcoin", symbol: "BTC", decimals: 8, chainflipAssetId: "Bitcoin:BTC" },
-  { thorAsset: "ETH.ETH", chain: "ethereum", symbol: "ETH", decimals: 18, chainflipAssetId: "Ethereum:ETH" },
-  { thorAsset: "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", chain: "ethereum", symbol: "USDC", decimals: 6, chainflipAssetId: "Ethereum:USDC" },
-  { thorAsset: "ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7", chain: "ethereum", symbol: "USDT", decimals: 6, chainflipAssetId: "Ethereum:USDT" },
+  { thorAsset: "BTC.BTC", chain: "bitcoin", symbol: "BTC", decimals: 8, chainflipAssetId: "Bitcoin:BTC", mayaAssetId: "BTC.BTC" },
+  { thorAsset: "ETH.ETH", chain: "ethereum", symbol: "ETH", decimals: 18, chainflipAssetId: "Ethereum:ETH", mayaAssetId: "ETH.ETH" },
+  { thorAsset: "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", chain: "ethereum", symbol: "USDC", decimals: 6, chainflipAssetId: "Ethereum:USDC", mayaAssetId: "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48" },
+  { thorAsset: "ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7", chain: "ethereum", symbol: "USDT", decimals: 6, chainflipAssetId: "Ethereum:USDT", mayaAssetId: "ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7" },
   { thorAsset: "TRON.USDT-TR7NHQJEKQXGTCI8Q8ZY4PL8OTSZGJLJ6T", chain: "tron", symbol: "USDT", decimals: 6, chainflipAssetId: "Tron:USDT" },
   { thorAsset: "LTC.LTC", chain: "ltc", symbol: "LTC", decimals: 8 },
   { thorAsset: "BSC.BNB", chain: "bsc", symbol: "BNB", decimals: 18 },
@@ -480,7 +483,7 @@ function staticCatalogAssets(): CatalogAsset[] {
         thorchain: { source: true, destination: true, assetId: asset.thorAsset },
         chainflip: { source: Boolean(asset.chainflipAssetId), destination: Boolean(asset.chainflipAssetId), assetId: asset.chainflipAssetId },
         "near-intents": { source: true, destination: true },
-        maya: { source: false, destination: false },
+        maya: { source: Boolean(asset.mayaAssetId), destination: Boolean(asset.mayaAssetId), assetId: asset.mayaAssetId },
       },
     };
   }).sort((a, b) => a.label.localeCompare(b.label));

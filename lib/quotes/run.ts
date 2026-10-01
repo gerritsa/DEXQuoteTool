@@ -7,12 +7,11 @@ import { benchmarkCatalogGraceMs, getCatalog, topThorRoutes, type CatalogAsset, 
 import { getChainflipQuote } from "./adapters/chainflip";
 import { getNearIntentsQuote } from "./adapters/near-intents";
 import { getPoolProtocolQuote } from "./adapters/pool-protocol";
-import { strategyFor } from "./protocols";
-import { analyzeThorQuote, poolDepthSnapshotFromAssets, type ThorPoolDepthSnapshot, type ThorQuoteAnalysis } from "./depth-forecast";
+import { bestOutputMode, strategyFor } from "./protocols";
 import { quoteSizes } from "./sizes";
 import type { BenchmarkRequest, ChainAsset, ExecutionMode, NormalizedQuote, ProtocolId } from "./types";
 
-const allProtocols: ProtocolId[] = ["thorchain", "chainflip", "near-intents"];
+const allProtocols: ProtocolId[] = ["thorchain", "chainflip", "near-intents", "maya"];
 
 type BenchmarkRuntimeEnv = {
   NEAR_INTENTS_API_KEY?: string;
@@ -26,7 +25,7 @@ type BenchmarkRuntimeEnv = {
   BENCHMARK_DOGE_ADDRESS?: string;
 };
 
-export type BenchmarkRunOptions = { sweepId?: string; bundleIndex?: number; poolDepthSnapshot?: ThorPoolDepthSnapshot };
+export type BenchmarkRunOptions = { sweepId?: string; bundleIndex?: number };
 
 export type BenchmarkArchiveRecord = {
   runId: number;
@@ -37,7 +36,6 @@ export type BenchmarkArchiveRecord = {
   completedAt: string;
   maxRequestSkewMs: number;
   oracle: OracleReference | null;
-  depthForecast: ThorQuoteAnalysis | null;
   request: BenchmarkRequest;
   quotes: NormalizedQuote[];
 };
@@ -82,16 +80,16 @@ function addressForChain(chain: string, values: BenchmarkRuntimeEnv) {
   return undefined;
 }
 
-function unavailable(protocol: PartnerId, requestStartedAt: string, mode: ExecutionMode): NormalizedQuote {
-  return { protocol, strategy: strategyFor(protocol, { mode }), status: "unavailable", requestStartedAt, errorCode: "UNSUPPORTED_PAIR", errorMessage: "This protocol does not support the selected route.", rawResponse: null };
+function unavailable(protocol: PartnerId, requestStartedAt: string): NormalizedQuote {
+  return { protocol, strategy: strategyFor(protocol), status: "unavailable", requestStartedAt, errorCode: "UNSUPPORTED_PAIR", errorMessage: "This protocol does not support the selected route.", rawResponse: null };
 }
 
 async function requestQuote(protocol: PartnerId, request: BenchmarkRequest, supported: boolean, apiKey?: string) {
-  if (!supported) return unavailable(protocol, new Date().toISOString(), request.mode);
+  if (!supported) return unavailable(protocol, new Date().toISOString());
   const signal = AbortSignal.timeout(15_000);
   if (protocol === "thorchain" || protocol === "maya") return getPoolProtocolQuote(protocol, request, signal);
   if (protocol === "chainflip") return getChainflipQuote(request, signal);
-  if (!apiKey) return { ...unavailable(protocol, new Date().toISOString(), request.mode), status: "error" as const, errorCode: "MISSING_API_KEY", errorMessage: "NEAR Intents API key is not configured." };
+  if (!apiKey) return { ...unavailable(protocol, new Date().toISOString()), status: "error" as const, errorCode: "MISSING_API_KEY", errorMessage: "NEAR Intents API key is not configured." };
   return getNearIntentsQuote(request, apiKey, signal);
 }
 
@@ -188,12 +186,6 @@ async function loadStoredArchive(
         capturedAt: run.oracleCapturedAt,
       }
     : null;
-  let depthForecast: ThorQuoteAnalysis | null = null;
-  try {
-    depthForecast = run.depthForecastJson ? JSON.parse(run.depthForecastJson) as ThorQuoteAnalysis : null;
-  } catch {
-    depthForecast = null;
-  }
   return {
     runId,
     routeId,
@@ -203,7 +195,6 @@ async function loadStoredArchive(
     completedAt: run.completedAt,
     maxRequestSkewMs: run.maxRequestSkewMs ?? 0,
     oracle,
-    depthForecast,
     request: storedRequest ?? fallbackRequest,
     quotes,
   };
@@ -252,20 +243,20 @@ async function finalizeRun(
   completedAt: string,
   maxRequestSkewMs: number,
   quotes: NormalizedQuote[],
-  depthForecast: ThorQuoteAnalysis,
 ) {
   const d1 = getD1();
   await d1.batch([
     d1.prepare(`
       UPDATE benchmark_runs
-      SET status = ?, completed_at = ?, max_request_skew_ms = ?, depth_forecast_json = ?
+      SET status = ?, completed_at = ?, max_request_skew_ms = ?
       WHERE id = ?
-    `).bind(status, completedAt, maxRequestSkewMs, JSON.stringify(depthForecast), runId),
+    `).bind(status, completedAt, maxRequestSkewMs, runId),
     ...latestPayloadStatements(d1, runId, routeId, amountId, mode, quotes, completedAt),
   ]);
 }
 
-export async function runSelectedBenchmark(routeId: string, amountId: string, mode: ExecutionMode = "standard", options: BenchmarkRunOptions = {}): Promise<StoredBenchmarkResult> {
+export async function runSelectedBenchmark(routeId: string, amountId: string, options: BenchmarkRunOptions = {}): Promise<StoredBenchmarkResult> {
+  const mode = bestOutputMode;
   await ensureBenchmarkSchema();
   const catalog = await getCatalog({ d1: getD1(), allowStale: true, maxStaleMs: benchmarkCatalogGraceMs });
   const route = topThorRoutes(catalog.assets).find((candidate) => candidate.id === routeId);
@@ -336,7 +327,6 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
       oracleReferenceOutput: oracle?.referenceOutput ?? null,
       oracleCapturedAt: oracle?.capturedAt ?? null,
       requestJson: JSON.stringify(request),
-      depthForecastJson: null,
       status: "pending",
       initiatedAt,
       completedAt: null,
@@ -356,7 +346,6 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
       oracleReferenceOutput: oracle?.referenceOutput,
       oracleCapturedAt: oracle?.capturedAt,
       requestJson: JSON.stringify(request),
-      depthForecastJson: null,
       mode,
       status: "pending",
       initiatedAt,
@@ -368,9 +357,6 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
 
   const rawQuotes = await Promise.all(allProtocols.map((protocol) => requestQuote(protocol, request, route.partners.includes(protocol), runtime.NEAR_INTENTS_API_KEY)));
   const quotes = rawQuotes.map((quote) => ({ ...quote, oracleGapBps: oracleGapBps(quote.expectedOutputFormatted, oracle) }));
-  const poolDepthSnapshot = options.poolDepthSnapshot
-    ?? poolDepthSnapshotFromAssets([route.source, route.destination], catalog.refreshedAt ?? initiatedAt);
-  const depthForecast = analyzeThorQuote(request, quotes, poolDepthSnapshot);
   const startTimes = quotes.map((quote) => new Date(quote.requestStartedAt).getTime()).filter(Number.isFinite);
   const maxRequestSkewMs = startTimes.length ? Math.max(...startTimes) - Math.min(...startTimes) : 0;
   const completedAt = new Date().toISOString();
@@ -396,8 +382,8 @@ export async function runSelectedBenchmark(routeId: string, amountId: string, mo
     errorMessage: quote.errorMessage,
   })));
 
-  await finalizeRun(runId, routeId, amountId, mode, hasError ? "partial" : "complete", completedAt, maxRequestSkewMs, quotes, depthForecast);
+  await finalizeRun(runId, routeId, amountId, mode, hasError ? "partial" : "complete", completedAt, maxRequestSkewMs, quotes);
 
-  const archive: BenchmarkArchiveRecord = { runId, routeId, amountId, mode, initiatedAt, completedAt, maxRequestSkewMs, oracle, depthForecast, request, quotes };
+  const archive: BenchmarkArchiveRecord = { runId, routeId, amountId, mode, initiatedAt, completedAt, maxRequestSkewMs, oracle, request, quotes };
   return { runId, routeId, amountId, mode, quoteCount: quotes.length, completedAt, skipped: false, archive };
 }

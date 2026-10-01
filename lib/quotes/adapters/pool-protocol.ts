@@ -24,7 +24,7 @@ export async function getPoolProtocolQuote(
   signal?: AbortSignal,
 ): Promise<NormalizedQuote> {
   const requestStartedAt = new Date().toISOString();
-  const strategy = strategyFor(protocol, request);
+  const strategy = strategyFor(protocol);
   const fromAsset = request.source.protocolIds[protocol];
   const toAsset = request.destination.protocolIds[protocol];
 
@@ -37,9 +37,9 @@ export async function getPoolProtocolQuote(
   url.searchParams.set("to_asset", toAsset);
   url.searchParams.set("amount", convertAtomicDecimals(request.sourceAmountBaseUnits, request.source.decimals, 8));
   url.searchParams.set("liquidity_tolerance_bps", String(request.slippageToleranceBps));
-  const streamingInterval = protocol === "thorchain" && request.mode === "optimized" ? "0" : "1";
+  const streamingInterval = protocol === "thorchain" ? "0" : "1";
   url.searchParams.set("streaming_interval", streamingInterval);
-  url.searchParams.set("streaming_quantity", request.mode === "optimized" ? "0" : "1");
+  url.searchParams.set("streaming_quantity", "0");
 
   const started = Date.now();
 

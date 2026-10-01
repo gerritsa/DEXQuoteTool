@@ -1,12 +1,12 @@
 # Production collector
 
-The production collector is designed for 30 fixed routes, seven USD sizes, two
-execution modes, and one sweep every 30 minutes.
+The production collector is designed for 30 fixed routes, seven USD sizes, one
+best-output quote strategy, and one sweep every 30 minutes.
 
 ## Runtime shape
 
-- The half-hour Cron Trigger creates 420 route/size/mode jobs.
-- Jobs are bundled in groups of 20, producing 21 queue messages per sweep.
+- The half-hour Cron Trigger creates 210 route/size jobs.
+- Jobs are bundled in groups of 20, producing 11 queue messages per sweep.
 - Queue messages are processed with four concurrent benchmark workers.
 - D1 stores normalized quote data for 90 days and daily aggregates for 400 days.
 - R2 stores one normalized and one raw gzip archive per queue bundle.

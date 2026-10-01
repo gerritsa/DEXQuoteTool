@@ -29,7 +29,7 @@ type CatalogStateRow = {
   lastError: string | null;
 };
 type CatalogSourceRow = {
-  source: "thorchain" | "near-intents" | "chainflip";
+  source: "thorchain" | "maya" | "near-intents" | "chainflip";
   refreshedAt: string | null;
   lastAttemptAt: string;
   lastError: string | null;

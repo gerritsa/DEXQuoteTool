@@ -19,6 +19,21 @@ function isChainflipQuote(value: unknown): value is ChainflipQuote {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function quoteOutput(quote: ChainflipQuote) {
+  if (typeof quote.egressAmount !== "string" || !/^\d+$/.test(quote.egressAmount)) return null;
+  return BigInt(quote.egressAmount);
+}
+
+function bestOutputQuote(quotes: ChainflipQuote[]) {
+  return quotes.reduce<ChainflipQuote | undefined>((best, candidate) => {
+    if (candidate.type !== "REGULAR" && candidate.type !== "DCA") return best;
+    const output = quoteOutput(candidate);
+    if (output == null) return best;
+    const bestOutput = best ? quoteOutput(best) : null;
+    return bestOutput == null || output > bestOutput ? candidate : best;
+  }, undefined);
+}
+
 function responseMessage(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
@@ -31,7 +46,7 @@ function isExpectedUnavailable(status: number, message?: string) {
 
 export async function getChainflipQuote(request: BenchmarkRequest, signal?: AbortSignal): Promise<NormalizedQuote> {
   const protocol = "chainflip" as const;
-  const requestedStrategy = request.mode === "optimized" ? "dca" as const : "regular" as const;
+  const requestedStrategy = "dca" as const;
   const requestStartedAt = new Date().toISOString();
   const sourceId = request.source.protocolIds[protocol];
   const destinationId = request.destination.protocolIds[protocol];
@@ -49,7 +64,7 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
   url.searchParams.set("destChain", destination.chain);
   url.searchParams.set("destAsset", destination.asset);
   url.searchParams.set("isVaultSwap", "true");
-  url.searchParams.set("dcaV2Enabled", String(request.mode === "optimized"));
+  url.searchParams.set("dcaV2Enabled", "true");
 
   const started = Date.now();
 
@@ -74,10 +89,13 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
       };
     }
 
-    const quotes = Array.isArray(rawResponse) ? rawResponse.filter(isChainflipQuote) : [];
-    const requestedType = request.mode === "optimized" ? "DCA" : "REGULAR";
-    const quote = quotes.find((candidate) => candidate.type === requestedType)
-      ?? (request.mode === "optimized" ? quotes.find((candidate) => candidate.type === "REGULAR") : undefined);
+    const responseQuotes = Array.isArray(rawResponse)
+      ? rawResponse
+      : isChainflipQuote(rawResponse) && Array.isArray(rawResponse.quotes)
+        ? rawResponse.quotes
+        : [];
+    const quotes = responseQuotes.filter(isChainflipQuote);
+    const quote = bestOutputQuote(quotes);
     const strategy = quote?.type === "DCA" ? "dca" as const : quote?.type === "REGULAR" ? "regular" as const : requestedStrategy;
 
     if (!response.ok) {
@@ -99,18 +117,18 @@ export async function getChainflipQuote(request: BenchmarkRequest, signal?: Abor
     }
 
     if (!quote) {
-      const strategyUnavailable = quotes.length > 0;
+      const invalidQuote = quotes.some((candidate) => candidate.type === "REGULAR" || candidate.type === "DCA");
       return {
         protocol,
         strategy,
-        status: "unavailable",
+        status: invalidQuote ? "error" : "unavailable",
         requestStartedAt,
         responseReceivedAt,
         responseHttpStatus,
         responseLatencyMs,
         requestUrl: url.toString(),
-        errorCode: strategyUnavailable ? "STRATEGY_UNAVAILABLE" : "NO_USABLE_QUOTE",
-        errorMessage: strategyUnavailable ? `Chainflip returned no ${requestedType.toLowerCase()} quote` : "Chainflip returned no executable quote",
+        errorCode: invalidQuote ? "INVALID_RESPONSE" : "NO_USABLE_QUOTE",
+        errorMessage: invalidQuote ? "Chainflip quotes omitted a valid output amount" : "Chainflip returned no executable quote",
         rawResponse,
       };
     }

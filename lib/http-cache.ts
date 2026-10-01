@@ -1,10 +1,6 @@
 type CloudflareCacheStorage = CacheStorage & { default: Cache };
 
-const comparableProtocols = ["near-intents", "chainflip", "thorchain"];
-
-function normalizedMode(url: URL) {
-  return url.searchParams.get("mode") === "optimized" ? "optimized" : "standard";
-}
+const comparableProtocols = ["near-intents", "chainflip", "thorchain", "maya"];
 
 function normalizedProtocols(url: URL) {
   const requested = (url.searchParams.get("protocols") ?? "").split(",");
@@ -28,20 +24,18 @@ export function canonicalPublicCacheUrl(request: Request) {
     const window = ["now", "7d", "14d", "30d"].includes(requestedWindow) ? requestedWindow : "now";
     return replaceSearch(url, [
       ["window", window],
-      ["mode", normalizedMode(url)],
       ["protocols", normalizedProtocols(url)],
     ]).toString();
   }
   if (url.pathname === "/api/runs") {
     const requestedRunId = Number(url.searchParams.get("runId"));
     if (Number.isInteger(requestedRunId) && requestedRunId > 0) {
-      return replaceSearch(url, [["schema", "7"], ["runId", String(requestedRunId)]]).toString();
+      return replaceSearch(url, [["schema", "8"], ["runId", String(requestedRunId)]]).toString();
     }
     return replaceSearch(url, [
-      ["schema", "7"],
+      ["schema", "8"],
       ["routeId", url.searchParams.get("routeId")?.trim() ?? ""],
       ["amountId", url.searchParams.get("amountId")?.trim() ?? ""],
-      ["mode", normalizedMode(url)],
     ]).toString();
   }
   if (url.pathname === "/api/trends") {
@@ -50,7 +44,6 @@ export function canonicalPublicCacheUrl(request: Request) {
     return replaceSearch(url, [
       ["routeId", url.searchParams.get("routeId")?.trim() ?? ""],
       ["amountId", url.searchParams.get("amountId")?.trim() ?? ""],
-      ["mode", normalizedMode(url)],
       ["days", days],
       ["protocols", normalizedProtocols(url)],
     ]).toString();

@@ -1,12 +1,11 @@
 import { ensureBenchmarkSchema } from "../db";
 import { benchmarkCatalogGraceMs, fixedThorRouteCount, getCatalog, resolveFixedThorRoutes } from "./routes/catalog";
-import { poolDepthSnapshotFromAssets, type ThorPoolDepthSnapshot } from "./quotes/depth-forecast";
 import { quoteSizes } from "./quotes/sizes";
 import { runSelectedBenchmark, type BenchmarkArchiveRecord } from "./quotes/run";
+import { bestOutputMode } from "./quotes/protocols";
 import type { ExecutionMode, NormalizedQuote, ProtocolId } from "./quotes/types";
 
-const modes: ExecutionMode[] = ["standard", "optimized"];
-const protocols: ProtocolId[] = ["thorchain", "chainflip", "near-intents"];
+const protocols: ProtocolId[] = ["thorchain", "chainflip", "near-intents", "maya"];
 const jobsPerMessage = 20;
 const workerConcurrency = 1;
 const detailRetentionDays = 90;
@@ -22,7 +21,6 @@ export type CollectorBundle = {
   scheduledFor: string;
   bundleIndex: number;
   jobs: CollectorJob[];
-  poolDepthSnapshot?: ThorPoolDepthSnapshot;
 };
 
 export type CollectorEnvironment = {
@@ -71,7 +69,6 @@ function normalizedRecord(record: BenchmarkArchiveRecord) {
     completedAt: record.completedAt,
     maxRequestSkewMs: record.maxRequestSkewMs,
     oracle: record.oracle,
-    depthForecast: record.depthForecast,
     request: {
       pairId: record.request.pairId,
       source: record.request.source,
@@ -150,24 +147,8 @@ export async function enqueueScheduledSweep(scheduledTime: number, environment: 
   }
   const now = new Date().toISOString();
   const { routes, missingRouteIds } = resolveFixedThorRoutes(catalog.assets, fixedThorRouteCount);
-  const livePoolDepthSnapshot = poolDepthSnapshotFromAssets(catalog.assets, catalog.refreshedAt ?? now);
-  let poolDepthSnapshot = livePoolDepthSnapshot;
-  if (existing) {
-    const storedSnapshot = await d1.prepare(`
-      SELECT captured_at AS capturedAt, pools_json AS poolsJson
-      FROM pool_depth_snapshots WHERE id = ?
-    `).bind(sweepId).first<{ capturedAt: string; poolsJson: string }>();
-    if (storedSnapshot) {
-      try {
-        const pools = JSON.parse(storedSnapshot.poolsJson) as ThorPoolDepthSnapshot["pools"];
-        if (Array.isArray(pools)) poolDepthSnapshot = { capturedAt: storedSnapshot.capturedAt, pools };
-      } catch {
-        // A malformed snapshot is safely replaced with the current catalog snapshot below.
-      }
-    }
-  }
-  const jobs = routes.flatMap((route) => quoteSizes.flatMap((size) => modes.map((mode) => ({ routeId: route.id, amountId: size.id, mode }))));
-  const bundles = chunks(jobs, jobsPerMessage).map((bundleJobs, bundleIndex): CollectorBundle => ({ sweepId, scheduledFor, bundleIndex, jobs: bundleJobs, poolDepthSnapshot }));
+  const jobs = routes.flatMap((route) => quoteSizes.map((size) => ({ routeId: route.id, amountId: size.id, mode: bestOutputMode })));
+  const bundles = chunks(jobs, jobsPerMessage).map((bundleJobs, bundleIndex): CollectorBundle => ({ sweepId, scheduledFor, bundleIndex, jobs: bundleJobs }));
 
   if (!existing) {
     await d1.prepare(`
@@ -190,11 +171,6 @@ export async function enqueueScheduledSweep(scheduledTime: number, environment: 
       VALUES (?, ?, ?, 'pending', ?)
     `).bind(`${sweepId}:${bundle.bundleIndex}`, sweepId, bundle.bundleIndex, bundle.jobs.length)));
   }
-  await d1.prepare(`
-    INSERT INTO pool_depth_snapshots (id, captured_at, pools_json)
-    VALUES (?, ?, ?)
-    ON CONFLICT(id) DO NOTHING
-  `).bind(sweepId, poolDepthSnapshot.capturedAt, JSON.stringify(poolDepthSnapshot.pools)).run();
   const storedBundles = existing
     ? await d1.prepare("SELECT bundle_index AS bundleIndex, status FROM collector_bundles WHERE sweep_id = ?").bind(sweepId).all<{ bundleIndex: number; status: string }>()
     : { results: [] as Array<{ bundleIndex: number; status: string }> };
@@ -328,10 +304,9 @@ export async function processCollectorBundle(bundle: CollectorBundle, environmen
     while (nextJob < bundle.jobs.length) {
       const job = bundle.jobs[nextJob++];
       try {
-        const result = await runSelectedBenchmark(job.routeId, job.amountId, job.mode, {
+        const result = await runSelectedBenchmark(job.routeId, job.amountId, {
           sweepId: bundle.sweepId,
           bundleIndex: bundle.bundleIndex,
-          poolDepthSnapshot: bundle.poolDepthSnapshot,
         });
         records.push(result.archive);
       } catch (error) {
@@ -429,11 +404,11 @@ async function aggregateDay(day: string, d1: D1Database) {
         ?, pair_id, amount_id, mode, ?, protocol,
         COUNT(*),
         SUM(CASE WHEN status = 'quoted' THEN 1 ELSE 0 END),
-        SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 THEN 1 ELSE 0 END),
-        SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 THEN ((output / median_output) - 1) * 10000 ELSE 0 END),
+        SUM(CASE WHEN status = 'quoted' AND valid_count >= 1 THEN 1 ELSE 0 END),
+        SUM(CASE WHEN status = 'quoted' AND valid_count >= 1 THEN ((output / median_output) - 1) * 10000 ELSE 0 END),
         SUM(CASE WHEN status = 'quoted' AND oracle_gap_bps IS NOT NULL THEN 1 ELSE 0 END),
         SUM(CASE WHEN status = 'quoted' AND oracle_gap_bps IS NOT NULL THEN oracle_gap_bps ELSE 0 END),
-        SUM(CASE WHEN status = 'quoted' AND valid_count >= 2 AND output = best_output THEN 1.0 / winner_count ELSE 0 END),
+        SUM(CASE WHEN status = 'quoted' AND valid_count >= 1 AND output = best_output THEN 1.0 / winner_count ELSE 0 END),
         MAX(initiated_at)
       FROM scored
       GROUP BY pair_id, amount_id, mode, protocol

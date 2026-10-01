@@ -1,12 +1,14 @@
-import type { BenchmarkRequest, ExecutionStrategy, ProtocolId } from "./types";
+import type { ExecutionMode, ExecutionStrategy, ProtocolId } from "./types";
 
-const protocolStrategies: Record<ProtocolId, Record<BenchmarkRequest["mode"], ExecutionStrategy>> = {
-  thorchain: { standard: "single", optimized: "streaming" },
-  chainflip: { standard: "regular", optimized: "dca" },
-  "near-intents": { standard: "solver", optimized: "solver" },
-  maya: { standard: "single", optimized: "streaming" },
+export const bestOutputMode: ExecutionMode = "optimized";
+
+const protocolStrategies: Record<ProtocolId, ExecutionStrategy> = {
+  thorchain: "streaming",
+  chainflip: "dca",
+  "near-intents": "solver",
+  maya: "streaming",
 };
 
-export function strategyFor(protocol: ProtocolId, request: Pick<BenchmarkRequest, "mode">) {
-  return protocolStrategies[protocol][request.mode];
+export function strategyFor(protocol: ProtocolId) {
+  return protocolStrategies[protocol];
 }

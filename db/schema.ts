@@ -162,7 +162,7 @@ export const catalogState = sqliteTable("catalog_state", {
 });
 
 export const catalogSources = sqliteTable("catalog_sources", {
-  source: text("source", { enum: ["thorchain", "near-intents", "chainflip"] }).primaryKey(),
+  source: text("source", { enum: ["thorchain", "maya", "near-intents", "chainflip"] }).primaryKey(),
   payloadJson: text("payload_json"),
   refreshedAt: text("refreshed_at"),
   lastAttemptAt: text("last_attempt_at").notNull(),

@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { canonicalPublicCacheUrl } from "../lib/http-cache.ts";
 import { oracleGapBps, referenceForAmount } from "../lib/oracle.ts";
-import { analyzeThorQuote } from "../lib/quotes/depth-forecast.ts";
 
 async function render(path = "/", environment = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -36,17 +35,15 @@ test("server-renders the SwapRank dashboard", async () => {
   assert.match(html, /Loading ranked routes/);
   assert.match(html, /leaderboard-skeleton-row/);
   assert.match(html, /aria-busy="true"/);
-  assert.match(html, /Execution mode/);
   assert.match(html, /Compare protocols/);
-  assert.match(html, /Standard swap/);
-  assert.match(html, /Streaming\/DCA/);
-  assert.match(html, /Execution mode[\s\S]*Streaming\/DCA[\s\S]*Standard swap/);
+  assert.doesNotMatch(html, /Execution mode|Standard swap|Streaming\/DCA/);
   assert.match(html, /\/partners\/near\.svg/);
   assert.match(html, /\/partners\/chainflip\.svg/);
   assert.match(html, /\/partners\/thorchain\.png/);
   assert.match(html, /\/partners\/maya\.svg/);
   assert.match(html, /MAYA PROTOCOL/);
   assert.match(html, /THORChain[\s\S]*MAYA PROTOCOL[\s\S]*CHAINFLIP[\s\S]*NEAR/);
+  assert.doesNotMatch(html, /Maya is disabled|MAYA PROTOCOL · DISABLED/);
   assert.doesNotMatch(html, /Route analysis/);
   assert.doesNotMatch(html, />Exact input</);
   assert.doesNotMatch(html, /Run \$.*test/);
@@ -54,10 +51,10 @@ test("server-renders the SwapRank dashboard", async () => {
 });
 
 test("route analysis renders on a dedicated, bookmarkable page", async () => {
-  const response = await render("/routes/bitcoin%3Anative%3Abtc__ethereum%3Anative%3Aeth?size=10000&mode=standard&days=7&back=%2F%3Fwindow%3D7d%23leaderboard-results");
+  const response = await render("/routes/bitcoin%3Anative%3Abtc__ethereum%3Anative%3Aeth?size=10000&days=7&back=%2F%3Fwindow%3D7d%23leaderboard-results");
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /Route analysis · [\s\S]*Standard swap/);
+  assert.match(html, /Route analysis · best-output quotes/);
   assert.match(html, /← Back to leaderboard/);
   assert.match(html, /href="\/\?window=7d#leaderboard-results"/);
   assert.doesNotMatch(html, /QUOTE LEADERBOARD/);
@@ -106,10 +103,12 @@ test("quote adapters separate expected unavailability from operational errors", 
   const near = await readFile(new URL("../lib/quotes/adapters/near-intents.ts", import.meta.url), "utf8");
   const response = await readFile(new URL("../lib/quotes/adapters/response.ts", import.meta.url), "utf8");
   assert.match(chainflip, /INSUFFICIENT_LIQUIDITY/);
-  assert.match(chainflip, /STRATEGY_UNAVAILABLE/);
   assert.match(chainflip, /INVALID_RESPONSE/);
   assert.match(chainflip, /readQuoteJsonResponse/);
   assert.match(chainflip, /isVaultSwap", "true"/);
+  assert.match(chainflip, /dcaV2Enabled", "true"/);
+  assert.match(chainflip, /function bestOutputQuote/);
+  assert.match(chainflip, /output > bestOutput/);
   assert.doesNotMatch(chainflip, /isOnChain/);
   assert.match(pool, /readQuoteJsonResponse/);
   assert.match(near, /readQuoteJsonResponse/);
@@ -118,7 +117,8 @@ test("quote adapters separate expected unavailability from operational errors", 
   assert.match(response, /maxStoredResponseChars = 8_000/);
   assert.match(chainflip, /catch \(error\)[\s\S]*strategy: requestedStrategy/);
   assert.match(pool, /total_swap_seconds/);
-  assert.match(pool, /protocol === "thorchain" && request\.mode === "optimized" \? "0" : "1"/);
+  assert.match(pool, /protocol === "thorchain" \? "0" : "1"/);
+  assert.match(pool, /streaming_quantity", "0"/);
   assert.match(pool, /min\(\?:imum\)\?/);
   assert.match(near, /INSUFFICIENT_LIQUIDITY/);
 });
@@ -158,6 +158,23 @@ test("catalog failures and trend availability are not reported as successful sup
   assert.match(trends, /availability\.successes \/ availability\.attempts/);
   assert.match(trends, /FROM daily_comparison_metrics/);
   assert.doesNotMatch(trends, /quotes\.length < 2/);
+});
+
+test("Maya Protocol is enabled across discovery, collection, APIs, and the dashboard", async () => {
+  const catalog = await readFile(new URL("../lib/routes/catalog.ts", import.meta.url), "utf8");
+  const run = await readFile(new URL("../lib/quotes/run.ts", import.meta.url), "utf8");
+  const collector = await readFile(new URL("../lib/collector.ts", import.meta.url), "utf8");
+  const comparison = await readFile(new URL("../app/api/comparison/route.ts", import.meta.url), "utf8");
+  const trends = await readFile(new URL("../app/api/trends/route.ts", import.meta.url), "utf8");
+  const dashboard = await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8");
+
+  assert.match(catalog, /MAYA_POOLS = "https:\/\/mayanode\.mayachain\.info\/mayachain\/pools"/);
+  assert.match(catalog, /maya: \{ source: Boolean\(mayaAsset\), destination: Boolean\(mayaAsset\), assetId: mayaAsset \}/);
+  assert.match(run, /const allProtocols: ProtocolId\[\] = \["thorchain", "chainflip", "near-intents", "maya"\]/);
+  assert.match(collector, /const protocols: ProtocolId\[\] = \["thorchain", "chainflip", "near-intents", "maya"\]/);
+  assert.match(comparison, /const metricProtocolOrder: PartnerId\[\] = \["thorchain", "chainflip", "near-intents", "maya"\]/);
+  assert.match(trends, /const metricProtocolOrder: PartnerId\[\] = \["thorchain", "chainflip", "near-intents", "maya"\]/);
+  assert.doesNotMatch(dashboard, /Maya is disabled|id: "maya"[^\n]+disabled: true/);
 });
 
 test("does not expose a public collector page", async () => {
@@ -204,6 +221,20 @@ test("leaderboard and graph use fifteen-minute shared caching", async () => {
   assert.match(await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8"), /Every point compares the quoted output/);
 });
 
+test("trend lines preserve missing quote slots without changing best-available winner scoring", async () => {
+  const trends = await readFile(new URL("../app/api/trends/route.ts", import.meta.url), "utf8");
+  const page = await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8");
+  assert.match(trends, /expectedCollectionIntervalMs = 30 \* 60 \* 1000/);
+  assert.match(trends, /const comparisonRuns = \[\.\.\.new Map\(storedRuns/);
+  assert.match(trends, /expectedIntervalMs: expectedCollectionIntervalMs/);
+  assert.doesNotMatch(trends, /quotes\.length < 2/);
+  assert.match(page, /if \(!slot\.point \|\| slot\.value == null\) \{[\s\S]*?current = undefined/);
+  assert.match(page, /className="trend-missing-point"/);
+  assert.match(page, /if only one DEX returns a quote, it wins/);
+  assert.match(page, /function trendAvailabilityLabel/);
+  assert.match(page, /data\.expectedIntervalMs \?\? 30 \* 60 \* 1000/);
+});
+
 test("the dashboard refreshes stale long-lived tabs", async () => {
   const page = await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8");
   const cache = await readFile(new URL("../lib/http-cache.ts", import.meta.url), "utf8");
@@ -218,7 +249,7 @@ test("the dashboard refreshes stale long-lived tabs", async () => {
 });
 
 test("public cache keys ignore cache-busting and irrelevant parameters", () => {
-  const semantic = "https://swaprank.test/api/trends?routeId=eth_btc&amountId=500000&mode=optimized&days=7&protocols=thorchain,chainflip,near-intents";
+  const semantic = "https://swaprank.test/api/trends?routeId=eth_btc&amountId=500000&days=7&protocols=thorchain,chainflip,near-intents";
   const noisy = `${semantic}&refresh=999&v=random&junk=anything`;
   assert.equal(
     canonicalPublicCacheUrl(new Request(noisy)),
@@ -234,83 +265,49 @@ test("public cache keys ignore cache-busting and irrelevant parameters", () => {
   );
   assert.equal(
     canonicalPublicCacheUrl(new Request("https://swaprank.test/api/runs?runId=42&routeId=ignored&junk=anything")),
-    "https://swaprank.test/api/runs?schema=7&runId=42",
+    "https://swaprank.test/api/runs?schema=8&runId=42",
+  );
+  assert.match(
+    canonicalPublicCacheUrl(new Request("https://swaprank.test/api/comparison?protocols=thorchain,maya")),
+    /[?&]protocols=thorchain%2Cmaya(?:&|$)/,
+  );
+  assert.equal(
+    canonicalPublicCacheUrl(new Request(`${semantic}&mode=standard`)),
+    canonicalPublicCacheUrl(new Request(semantic)),
   );
 });
 
-test("THORChain analysis decomposes the executable quote against the oracle", () => {
-  const sourcePool = { asset: "BTC.BTC", assetDepth: "10000000000", runeDepth: "10000000000000", liquidityUsd: 10_000_000 };
-  const destinationPool = { asset: "ETH.ETH", assetDepth: "400000000000", runeDepth: "10000000000000", liquidityUsd: 8_000_000 };
-  const request = {
-    pairId: "btc_eth",
-    source: { canonicalId: "btc", chain: "bitcoin", symbol: "BTC", decimals: 8, protocolIds: { thorchain: "BTC.BTC" } },
-    destination: { canonicalId: "eth", chain: "ethereum", symbol: "ETH", decimals: 18, protocolIds: { thorchain: "ETH.ETH" } },
-    sourceAmountBaseUnits: "100000000",
-    sourceAmountUsd: 80_000,
-    sourcePriceUsd: 80_000,
-    mode: "standard",
-    recipient: "0xrecipient",
-    refundAddress: "bc1refund",
-    slippageToleranceBps: 100,
-  };
-  const thorQuote = {
-    protocol: "thorchain",
-    strategy: "single",
-    status: "quoted",
-    expectedOutputFormatted: "38.4",
-    oracleGapBps: -100,
-    requestStartedAt: "2026-09-04T00:00:00.000Z",
-    rawResponse: { max_streaming_quantity: 1, fees: { outbound: "0", liquidity: "1000000", slippage_bps: 10 } },
-  };
-  const competitor = (output) => ({
-    protocol: "chainflip",
-    strategy: "regular",
-    status: "quoted",
-    expectedOutputFormatted: String(output),
-    requestStartedAt: "2026-09-04T00:00:00.000Z",
-    rawResponse: {},
-  });
-  const snapshot = { capturedAt: "2026-09-04T00:00:00.000Z", pools: [sourcePool, destinationPool] };
+test("collection uses one best-output strategy per route and size", async () => {
+  const collector = await readFile(new URL("../lib/collector.ts", import.meta.url), "utf8");
+  const protocols = await readFile(new URL("../lib/quotes/protocols.ts", import.meta.url), "utf8");
+  const pool = await readFile(new URL("../lib/quotes/adapters/pool-protocol.ts", import.meta.url), "utf8");
+  const chainflip = await readFile(new URL("../lib/quotes/adapters/chainflip.ts", import.meta.url), "utf8");
+  const dashboard = await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8");
+  const cache = await readFile(new URL("../lib/http-cache.ts", import.meta.url), "utf8");
 
-  const analysis = analyzeThorQuote(request, [thorQuote, competitor(39.2)], snapshot);
-  assert.equal(analysis.status, "available");
-  assert.equal(analysis.modelVersion, "thor-analysis-v1");
-  assert.ok(analysis.poolImpliedRate > 0);
-  assert.ok(analysis.bestQuoteRate > 0);
-  assert.ok(Number.isFinite(analysis.poolRateGapVsOracleBps));
-  assert.ok(Number.isFinite(analysis.currentOracleGapBps));
-  assert.ok(Number.isFinite(analysis.executionCostVsOracleBps));
-  assert.ok(Math.abs(analysis.poolRateGapVsOracleBps + analysis.executionDragVsOracleBps - analysis.currentOracleGapBps) < 1e-8);
-  assert.ok(Number.isFinite(analysis.reportedSlippageVsOracleBps));
-  assert.ok(Number.isFinite(analysis.liquidityFeeVsOracleBps));
-  assert.ok(Number.isFinite(analysis.outboundFeeVsOracleBps));
-  assert.ok(Number.isFinite(analysis.unexplainedExecutionCostVsOracleBps));
-  assert.equal("curve" in analysis, false);
-  assert.equal("requiredDepthMultiplier" in analysis, false);
+  assert.match(protocols, /bestOutputMode: ExecutionMode = "optimized"/);
+  assert.match(collector, /quoteSizes\.map\(\(size\) => \(\{ routeId: route\.id, amountId: size\.id, mode: bestOutputMode \}\)\)/);
+  assert.doesNotMatch(collector, /const modes/);
+  assert.match(pool, /streaming_quantity", "0"/);
+  assert.match(chainflip, /dcaV2Enabled", "true"/);
+  assert.match(chainflip, /bestOutputQuote\(quotes\)/);
+  assert.doesNotMatch(dashboard, /executionMode|Execution mode|Standard swap|Streaming\/DCA/);
+  assert.doesNotMatch(cache, /normalizedMode/);
 });
 
-test("THORChain pool and execution analysis is precomputed once per quote run", async () => {
+test("the retired pool and execution analysis stays out of active product code", async () => {
   const collector = await readFile(new URL("../lib/collector.ts", import.meta.url), "utf8");
   const run = await readFile(new URL("../lib/quotes/run.ts", import.meta.url), "utf8");
   const api = await readFile(new URL("../app/api/runs/route.ts", import.meta.url), "utf8");
   const page = await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const migration = await readFile(new URL("../drizzle/0005_productive_gertrude_yorkes.sql", import.meta.url), "utf8");
-  assert.match(collector, /poolDepthSnapshotFromAssets/);
-  assert.match(collector, /INSERT INTO pool_depth_snapshots/);
-  assert.match(run, /analyzeThorQuote\(request, quotes, poolDepthSnapshot\)/);
-  assert.match(api, /depthForecast: parsedDepthForecast/);
-  assert.match(page, /Quote performance/);
-  assert.match(page, /Pool \+ execution/);
-  assert.match(page, /Pool-implied exchange rate/);
-  assert.match(page, /Pool rate − execution costs = final quote/);
-  assert.match(page, /All values vs oracle/);
-  assert.match(page, /Separate competitive comparison/);
-  assert.doesNotMatch(page, /Experimental symmetric scenario/);
-  assert.doesNotMatch(page, /MODELED THORChain GAP VS BEST DEX/);
-  assert.match(page, /Deviation from oracle/);
-  assert.match(page, /Pool rate before trade impact/);
-  assert.match(page, /THORChain enshrined CEX reference/);
-  assert.match(page, /Executable \{quote\.strategy\} quote/);
+  assert.doesNotMatch(collector, /poolDepthSnapshotFromAssets|INSERT INTO pool_depth_snapshots/);
+  assert.doesNotMatch(run, /analyzeThorQuote|poolDepthSnapshot/);
+  assert.doesNotMatch(api, /parsedDepthForecast|depthForecast:/);
+  assert.doesNotMatch(page, /Pool \+ execution|ThorAnalysisCard|depthForecast|analysis-view-tabs/);
+  assert.doesNotMatch(styles, /depth-forecast|pool-rate-panel|analysis-view-tabs/);
+  // Keep the historical schema migration intact so retiring the feature is non-destructive.
   assert.match(migration, /ADD `depth_forecast_json` text/);
 });
 

@@ -442,7 +442,11 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
     }),
   }));
   const gapThresholdMs = (data.pointMode === "comparison" ? data.expectedIntervalMs ?? 30 * 60 * 1000 : data.bucketMs) * 1.9;
-  const hasVisibleGaps = series.some(({ showMissing, slots }) => showMissing && slots.some((slot) => slot.value == null));
+  const hasVisibleGaps = series.some(({ showMissing, slots }) => {
+    const firstValueIndex = slots.findIndex((slot) => slot.value != null);
+    const lastValueIndex = slots.findLastIndex((slot) => slot.value != null);
+    return showMissing && firstValueIndex >= 0 && slots.slice(firstValueIndex + 1, lastValueIndex).some((slot) => slot.value == null);
+  });
 
   return <div className="trend-visual">
     <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${data.days === 1 ? "24-hour" : `${data.days}-day`} quote deviation in basis points from the THORChain CEX-derived oracle`}>
@@ -450,7 +454,7 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
       {ticks.map((value) => <g key={value}><line x1={padding.left} x2={width - padding.right} y1={y(value)} y2={y(value)} className={value === 0 ? "zero-line" : "grid-line"} /><text x={padding.left - 9} y={y(value) + 3} textAnchor="end">{Number.isInteger(value) ? value : value.toFixed(1)}</text></g>)}
       <text x={padding.left} y={height - 7}>{new Date(start).toLocaleString([], data.days === 1 ? { hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric" })}</text>
       <text x={width - padding.right} y={height - 7} textAnchor="end">{new Date(end).toLocaleString([], data.days === 1 ? { hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric" })}</text>
-      {series.map(({ partner, partnerIndex, showMissing, slots }) => {
+      {series.map(({ partner, showMissing, slots }) => {
         const points = slots.flatMap((slot) => slot.point && slot.value != null
           ? [{ timestamp: slot.timestamp, value: slot.value, point: slot.point }]
           : []);
@@ -467,12 +471,24 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
             segments.push(current);
           } else current.push(point);
         }
-        const missingSlots = showMissing ? slots.filter((slot) => slot.value == null) : [];
-        const markerY = height - padding.bottom + 7 + partnerIndex * 4;
-        return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => <circle key={point.timestamp} cx={x(point.timestamp)} cy={y(point.value)} r={data.pointMode === "comparison" && point.point.winRate ? "4" : "3"} fill={partner.color}><title>{partner.name} · {formatBps(point.value)} vs oracle · {trendPointContext(point.point, data.pointMode)}</title></circle>)}{missingSlots.map((slot) => <circle className="trend-missing-point" key={`missing-${slot.timestamp}`} cx={x(slot.timestamp)} cy={markerY} r="2" fill="none" stroke={partner.color} vectorEffect="non-scaling-stroke"><title>{partner.name} · no quote for this check</title></circle>)}</g>;
+        const firstValueIndex = slots.findIndex((slot) => slot.value != null);
+        const lastValueIndex = slots.findLastIndex((slot) => slot.value != null);
+        const missingSlots = showMissing ? slots.flatMap((slot, index) => {
+          if (slot.value != null || index <= firstValueIndex || index >= lastValueIndex) return [];
+          let previousIndex = index - 1;
+          while (previousIndex >= firstValueIndex && slots[previousIndex].value == null) previousIndex -= 1;
+          let nextIndex = index + 1;
+          while (nextIndex <= lastValueIndex && slots[nextIndex].value == null) nextIndex += 1;
+          const previous = slots[previousIndex];
+          const next = slots[nextIndex];
+          if (previous?.value == null || next?.value == null) return [];
+          const progress = (slot.timestamp - previous.timestamp) / Math.max(1, next.timestamp - previous.timestamp);
+          return [{ ...slot, markerValue: previous.value + (next.value - previous.value) * progress }];
+        }) : [];
+        return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => <circle key={point.timestamp} cx={x(point.timestamp)} cy={y(point.value)} r={data.pointMode === "comparison" && point.point.winRate ? "4" : "3"} fill={partner.color}><title>{partner.name} · {formatBps(point.value)} vs oracle · {trendPointContext(point.point, data.pointMode)}</title></circle>)}{missingSlots.map((slot) => <circle className="trend-missing-point" key={`missing-${slot.timestamp}`} cx={x(slot.timestamp)} cy={y(slot.markerValue)} r="4" fill="var(--card)" stroke={partner.color} vectorEffect="non-scaling-stroke"><title>{partner.name} · no quote for this check</title></circle>)}</g>;
       })}
     </svg>
-    {hasVisibleGaps && <div className="trend-gap-key"><i aria-hidden="true" /><span>Hollow marks below the plot indicate a scheduled check with no quote.</span></div>}
+    {hasVisibleGaps && <div className="trend-gap-key"><i aria-hidden="true" /><span>A hollow point interrupts the series where that DEX returned no quote.</span></div>}
     <div className="trend-legend">{activePartners.map((partner) => {
       const summary = data.summary.find((item) => item.protocol === partner.id);
       return <span key={partner.id}><i style={{ background: partner.color }} /><b>{partner.name}</b><small>{summary?.sampleCount ? `${Math.round((summary.winRate ?? 0) * 100)}% wins · ${formatBps(summary.averageOracleGapBps)} avg vs oracle · ${trendAvailabilityLabel(summary)}` : "No data"}</small></span>;

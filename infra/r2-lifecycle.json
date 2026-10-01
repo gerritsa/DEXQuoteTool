@@ -3,17 +3,27 @@
     {
       "id": "expire-raw-quote-payloads",
       "enabled": true,
-      "prefix": "raw/",
-      "expiration": {
-        "days": 7
+      "conditions": {
+        "prefix": "raw/"
+      },
+      "deleteObjectsTransition": {
+        "condition": {
+          "type": "Age",
+          "maxAge": 604800
+        }
       }
     },
     {
       "id": "expire-normalized-quote-archives",
       "enabled": true,
-      "prefix": "normalized/",
-      "expiration": {
-        "days": 2000
+      "conditions": {
+        "prefix": "normalized/"
+      },
+      "deleteObjectsTransition": {
+        "condition": {
+          "type": "Age",
+          "maxAge": 172800000
+        }
       }
     }
   ]

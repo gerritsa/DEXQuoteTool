@@ -463,7 +463,8 @@ test("collector archives fixed-length gzip bodies and preserves finalization err
   assert.match(collector, /const deleteBatchSize = 1_000/);
   assert.match(collector, /r\.mode = 'standard' OR r\.initiated_at < \?/);
   assert.match(collector, /pruneTrendHistory/);
-  assert.equal(lifecycle.rules.find((rule) => rule.prefix === "normalized/")?.expiration.days, 2000);
+  const normalizedRule = lifecycle.rules.find((rule) => rule.conditions?.prefix === "normalized/");
+  assert.equal(normalizedRule?.deleteObjectsTransition.condition.maxAge, 2_000 * 24 * 60 * 60);
   assert.match(collector, /Archive upload failed:/);
   assert.match(collector, /status IN \('partial', 'failed'\)/);
   assert.match(worker, /console\.error\("Collector bundle failed"/);

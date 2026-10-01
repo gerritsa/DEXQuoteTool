@@ -296,9 +296,7 @@ test("trend lines preserve missing quote slots without changing best-available w
   assert.match(trends, /expectedIntervalMs: expectedCollectionIntervalMs/);
   assert.doesNotMatch(trends, /quotes\.length < 2/);
   assert.match(page, /if \(!slot\.point \|\| slot\.value == null\) \{[\s\S]*?current = undefined/);
-  assert.match(page, /className="trend-missing-point"/);
-  assert.match(page, /markerValue: previous\.value \+ \(next\.value - previous\.value\) \* progress/);
-  assert.match(page, /A hollow point interrupts the series where that DEX returned no quote/);
+  assert.doesNotMatch(page, /trend-missing-point|hollow point|no quote for this check/);
   assert.match(page, /if only one DEX returns a quote, it wins/);
   assert.match(page, /function trendAvailabilityLabel/);
   assert.match(page, /data\.expectedIntervalMs \?\? 30 \* 60 \* 1000/);

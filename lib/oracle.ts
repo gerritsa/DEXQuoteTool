@@ -3,6 +3,13 @@ const THORCHAIN_ORACLE_PRICES = "https://gateway.liquify.com/chain/thorchain_api
 type OraclePrice = { symbol: string; price: string };
 type OraclePricesResponse = { prices?: OraclePrice[] } | OraclePrice[];
 
+// THORChain publishes a BTC reference price, while the Ethereum-wrapped asset
+// is named WBTC in the route catalog. Both represent the same underlying asset
+// for the cross-rate used to compare quote outputs.
+const oracleSymbolAliases: Record<string, string> = {
+  WBTC: "BTC",
+};
+
 export type OracleSnapshot = {
   sourceSymbol: string;
   destinationSymbol: string;
@@ -23,6 +30,11 @@ function parsedPrices(payload: OraclePricesResponse) {
   }));
 }
 
+export function oraclePriceForAsset(prices: ReadonlyMap<string, number>, symbol: string) {
+  const normalized = symbol.toUpperCase();
+  return prices.get(oracleSymbolAliases[normalized] ?? normalized);
+}
+
 export async function getOracleSnapshot(
   sourceSymbol: string,
   destinationSymbol: string,
@@ -35,8 +47,8 @@ export async function getOracleSnapshot(
     });
     if (!response.ok) return null;
     const prices = parsedPrices(await response.json() as OraclePricesResponse);
-    const sourcePriceUsd = prices.get(sourceSymbol.toUpperCase());
-    const destinationPriceUsd = prices.get(destinationSymbol.toUpperCase());
+    const sourcePriceUsd = oraclePriceForAsset(prices, sourceSymbol);
+    const destinationPriceUsd = oraclePriceForAsset(prices, destinationSymbol);
     if (!sourcePriceUsd || !destinationPriceUsd) return null;
     return {
       sourceSymbol,

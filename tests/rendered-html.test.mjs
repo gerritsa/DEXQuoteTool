@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { canonicalPublicCacheUrl } from "../lib/http-cache.ts";
-import { oracleGapBps, referenceForAmount } from "../lib/oracle.ts";
+import { oracleGapBps, oraclePriceForAsset, referenceForAmount } from "../lib/oracle.ts";
 
 async function render(path = "/", environment = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -194,6 +194,12 @@ test("oracle references normalize quotes against a shared cross-rate", () => {
   assert.equal(reference?.referenceOutput, 40);
   assert.equal(oracleGapBps("40", reference), 0);
   assert.ok(Math.abs(oracleGapBps("39.8", reference) + 50) < 1e-9);
+});
+
+test("oracle references use BTC pricing for wrapped Bitcoin", () => {
+  const prices = new Map([["BTC", 84_000], ["ETH", 2_800]]);
+  assert.equal(oraclePriceForAsset(prices, "WBTC"), 84_000);
+  assert.equal(oraclePriceForAsset(prices, "ETH"), 2_800);
 });
 
 test("catalog failures and trend availability are not reported as successful support", async () => {

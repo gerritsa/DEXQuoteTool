@@ -66,19 +66,23 @@ test("analytics renders an eligibility-aware DEX comparison shell", async () => 
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /DEX ANALYTICS/);
-  assert.match(html, /Compare quote quality and reliability only where each DEX is eligible/);
+  assert.match(html, /Compare quote quality, reliability, and route coverage without rewarding an easier competitive field/);
   assert.match(html, /Building eligibility-aware comparisons/);
   assert.match(html, /href="\/analytics"/);
 });
 
-test("analytics excludes unsupported pairs from opportunity and availability denominators", async () => {
+test("analytics adjusts for field size while excluding unsupported pairs from denominators", async () => {
   const analytics = await readFile(new URL("../app/api/analytics/route.ts", import.meta.url), "utf8");
   const collector = await readFile(new URL("../lib/collector.ts", import.meta.url), "utf8");
   const cache = await readFile(new URL("../lib/http-cache.ts", import.meta.url), "utf8");
   assert.match(collector, /error_code = 'UNSUPPORTED_PAIR' THEN 0 ELSE 1 END\) AS eligible_attempts/);
   assert.match(collector, /oracle_gap_sum_bps, eligible_attempts/);
   assert.match(analytics, /eligibleAttempts: explicitEligibleAttempts \?\? \(supported \? attempts : 0\)/);
-  assert.match(analytics, /A sole valid quote wins/);
+  assert.match(analytics, /value\.expectedWins = eligibleProtocolCount \? value\.eligibleAttempts \/ eligibleProtocolCount : 0/);
+  assert.match(analytics, /winIndex = percent\(current\.wins, current\.expectedWins\)/);
+  assert.match(analytics, /medianRouteOracleGapBps: median\(routeOracleAverages\)/);
+  assert.match(analytics, /1\.00× is the neutral baseline/);
+  assert.match(analytics, /A sole valid quote still wins/);
   assert.match(analytics, /Unsupported routes are excluded/);
   assert.match(analytics, /if \(!route \|\| !protocols\.includes\(row\.protocol\) \|\| !route\.partners\.includes\(row\.protocol\)\) continue/);
   assert.match(cache, /url\.pathname === "\/api\/analytics"/);

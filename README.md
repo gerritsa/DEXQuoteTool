@@ -10,9 +10,11 @@ the NEAR solver quote. Scheduled Cloudflare Workers enqueue a complete sweep
 every 30 minutes. D1 stores queryable quote history and R2 stores compressed
 archives.
 
-The `/analytics` dashboard compares supported-route win rate, quote
+The `/analytics` dashboard compares a competition-adjusted win score, quote
 availability, route coverage, period-over-period movers, and route-level win
-share. Unsupported pairs are stored as ineligible and appear as `N/A`; they do
+share. The score divides actual wins by the equal-performance expectation for
+the number of eligible DEXes on each route, so narrower two-provider routes do
+not inflate the cross-DEX comparison. Unsupported pairs appear as `N/A` and do
 not count as losses or availability failures. A sole valid quote still wins its
 comparison.
 

@@ -10,10 +10,12 @@ type Period = "current" | "previous";
 type Metric = {
   attempts: number;
   eligibleAttempts: number;
+  expectedWins: number;
   successes: number;
   oracleSamples: number;
   oracleGapSumBps: number;
   wins: number;
+  firstObservedAt: string | null;
 };
 type DailyRow = { day: string; pairId: string; metricsJson: string };
 type RawRow = Metric & { period: Period; bucket: string; pairId: string; protocol: PartnerId };
@@ -23,16 +25,20 @@ type DailyPayload = {
 };
 
 function emptyMetric(): Metric {
-  return { attempts: 0, eligibleAttempts: 0, successes: 0, oracleSamples: 0, oracleGapSumBps: 0, wins: 0 };
+  return { attempts: 0, eligibleAttempts: 0, expectedWins: 0, successes: 0, oracleSamples: 0, oracleGapSumBps: 0, wins: 0, firstObservedAt: null };
 }
 
 function addMetric(target: Metric, value: Metric) {
   target.attempts += value.attempts;
   target.eligibleAttempts += value.eligibleAttempts;
+  target.expectedWins += value.expectedWins;
   target.successes += value.successes;
   target.oracleSamples += value.oracleSamples;
   target.oracleGapSumBps += value.oracleGapSumBps;
   target.wins += value.wins;
+  if (value.firstObservedAt && (!target.firstObservedAt || value.firstObservedAt < target.firstObservedAt)) {
+    target.firstObservedAt = value.firstObservedAt;
+  }
 }
 
 function metricKey(period: Period, pairId: string, protocol: PartnerId) {
@@ -62,6 +68,13 @@ function percent(value: number, total: number) {
   return total > 0 ? value / total : null;
 }
 
+function median(values: number[]) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
 function parseDailyPayload(metricsJson: string) {
   try {
     return JSON.parse(metricsJson) as DailyPayload;
@@ -77,10 +90,12 @@ function parseDailyMetric(payload: DailyPayload, protocol: PartnerId, supported:
   return {
     attempts,
     eligibleAttempts: explicitEligibleAttempts ?? (supported ? attempts : 0),
+    expectedWins: 0,
     successes: numeric(values[1]),
     oracleSamples: numeric(values[3]),
     oracleGapSumBps: numeric(values[4]),
     wins: numeric(payload.w?.[aggregateProtocolMask]?.[protocol]),
+    firstObservedAt: null,
   };
 }
 
@@ -108,6 +123,11 @@ async function loadRawRows(amountId: string, previousStart: string, currentStart
       WHERE r.mode = ? AND r.amount_id = ? AND r.initiated_at >= ?
         AND r.oracle_captured_at IS NOT NULL
         AND r.completed_at IS NOT NULL AND r.status IN ('complete', 'partial')
+    ), eligible_counts AS (
+      SELECT run_id,
+        SUM(CASE WHEN error_code = 'UNSUPPORTED_PAIR' THEN 0 ELSE 1 END) AS eligible_count
+      FROM attempts
+      GROUP BY run_id
     ), valid AS (
       SELECT *, MAX(output) OVER (PARTITION BY run_id) AS best_output
       FROM attempts
@@ -118,13 +138,15 @@ async function loadRawRows(amountId: string, previousStart: string, currentStart
       FROM valid
       GROUP BY run_id
     ), scored AS (
-      SELECT a.*, s.best_output, s.winner_count
+      SELECT a.*, s.best_output, s.winner_count, e.eligible_count
       FROM attempts a
       LEFT JOIN run_stats s ON s.run_id = a.run_id
+      LEFT JOIN eligible_counts e ON e.run_id = a.run_id
     )
     SELECT period, bucket, pair_id AS pairId, protocol,
       COUNT(*) AS attempts,
       SUM(CASE WHEN error_code = 'UNSUPPORTED_PAIR' THEN 0 ELSE 1 END) AS eligibleAttempts,
+      SUM(CASE WHEN error_code = 'UNSUPPORTED_PAIR' OR eligible_count <= 0 THEN 0 ELSE 1.0 / eligible_count END) AS expectedWins,
       SUM(CASE WHEN status = 'quoted' THEN 1 ELSE 0 END) AS successes,
       SUM(CASE WHEN status = 'quoted' AND oracle_gap_bps IS NOT NULL THEN 1 ELSE 0 END) AS oracleSamples,
       SUM(CASE WHEN status = 'quoted' AND oracle_gap_bps IS NOT NULL THEN oracle_gap_bps ELSE 0 END) AS oracleGapSumBps,
@@ -137,10 +159,12 @@ async function loadRawRows(amountId: string, previousStart: string, currentStart
     ...row,
     attempts: numeric(row.attempts),
     eligibleAttempts: numeric(row.eligibleAttempts),
+    expectedWins: numeric(row.expectedWins),
     successes: numeric(row.successes),
     oracleSamples: numeric(row.oracleSamples),
     oracleGapSumBps: numeric(row.oracleGapSumBps),
     wins: numeric(row.wins),
+    firstObservedAt: numeric(row.eligibleAttempts) > 0 ? row.bucket : null,
   }));
 }
 
@@ -195,10 +219,16 @@ export async function GET(request: Request) {
         const payload = parseDailyPayload(row.metricsJson);
         if (!route || !payload) continue;
         const period: Period = row.day >= currentStartDay ? "current" : "previous";
-        for (const protocol of protocols) {
-          const supported = route.partners.includes(protocol);
+        const rowMetrics = protocols.map((protocol) => ({
+          protocol,
+          supported: route.partners.includes(protocol),
+          value: parseDailyMetric(payload, protocol, route.partners.includes(protocol)),
+        }));
+        const eligibleProtocolCount = rowMetrics.filter((item) => item.supported && item.value.eligibleAttempts > 0).length;
+        for (const { protocol, supported, value } of rowMetrics) {
           if (!supported) continue;
-          const value = parseDailyMetric(payload, protocol, supported);
+          value.expectedWins = eligibleProtocolCount ? value.eligibleAttempts / eligibleProtocolCount : 0;
+          value.firstObservedAt = value.eligibleAttempts > 0 ? `${row.day}T00:00:00.000Z` : null;
           const key = metricKey(period, row.pairId, protocol);
           const target = metrics.get(key) ?? emptyMetric();
           addMetric(target, value);
@@ -215,22 +245,31 @@ export async function GET(request: Request) {
     const summaries = protocols.map((protocol) => {
       const current = emptyMetric();
       const previous = emptyMetric();
+      const routeOracleAverages: number[] = [];
       for (const route of routes) {
         if (!route.partners.includes(protocol)) continue;
-        addMetric(current, metrics.get(metricKey("current", route.id, protocol)) ?? emptyMetric());
+        const routeCurrent = metrics.get(metricKey("current", route.id, protocol)) ?? emptyMetric();
+        addMetric(current, routeCurrent);
         addMetric(previous, metrics.get(metricKey("previous", route.id, protocol)) ?? emptyMetric());
+        if (routeCurrent.oracleSamples > 0) routeOracleAverages.push(routeCurrent.oracleGapSumBps / routeCurrent.oracleSamples);
       }
       const winRate = percent(current.wins, current.eligibleAttempts);
-      const previousWinRate = percent(previous.wins, previous.eligibleAttempts);
+      const winIndex = percent(current.wins, current.expectedWins);
+      const previousWinIndex = percent(previous.wins, previous.expectedWins);
+      const partialThresholdMs = days === 1 ? 3 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
       return {
         protocol,
+        winIndex,
         winRate,
         availability: percent(current.successes, current.eligibleAttempts),
-        averageOracleGapBps: current.oracleSamples ? current.oracleGapSumBps / current.oracleSamples : null,
+        medianRouteOracleGapBps: median(routeOracleAverages),
         supportedRoutes: routes.filter((route) => route.partners.includes(protocol)).length,
         eligibleChecks: current.eligibleAttempts,
         wins: current.wins,
-        change: winRate != null && previousWinRate != null ? winRate - previousWinRate : null,
+        expectedWins: current.expectedWins,
+        observedSince: current.firstObservedAt,
+        partialPeriod: Boolean(current.firstObservedAt && new Date(current.firstObservedAt).getTime() - new Date(currentStart).getTime() > partialThresholdMs),
+        previousWinIndex,
       };
     });
 
@@ -284,7 +323,12 @@ export async function GET(request: Request) {
       bucket,
       results: protocols.map((protocol) => {
         const value = timeline.get(timelineKey(bucket, protocol)) ?? emptyMetric();
-        return { protocol, winRate: percent(value.wins, value.eligibleAttempts), eligibleChecks: value.eligibleAttempts };
+        return {
+          protocol,
+          winIndex: percent(value.wins, value.expectedWins),
+          winRate: percent(value.wins, value.eligibleAttempts),
+          eligibleChecks: value.eligibleAttempts,
+        };
       }),
     }));
 
@@ -306,8 +350,10 @@ export async function GET(request: Request) {
       period: { days, currentStart, currentEnd, previousStart },
       amount,
       definitions: {
-        winRate: "Wins divided by eligible scheduled checks on routes supported by that DEX. A sole valid quote wins.",
+        winIndex: "Actual best-quote wins divided by the fair-share wins expected from the number of eligible DEXes on each route. 1.00× is the neutral baseline. A sole valid quote still wins.",
+        winRate: "Raw best-quote wins divided by eligible scheduled checks. It is shown with the underlying win and check counts for transparency.",
         availability: "Valid quotes divided by eligible scheduled checks. Unsupported routes are excluded.",
+        oracle: "The median of each supported route's average deviation from the oracle, so one malformed quote cannot dominate the DEX-wide result.",
       },
       summaries,
       timeline: timelineRows,

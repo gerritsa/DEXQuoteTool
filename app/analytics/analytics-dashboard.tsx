@@ -19,20 +19,24 @@ type AnalyticsResponse = {
   generatedAt: string;
   period: { days: PeriodDays; currentStart: string; currentEnd: string; previousStart: string };
   amount: { id: string; amountUsd: number; label: string };
-  definitions: { winRate: string; availability: string };
+  definitions: { winIndex: string; winRate: string; availability: string; oracle: string };
   summaries: Array<{
     protocol: PartnerId;
+    winIndex: number | null;
     winRate: number | null;
     availability: number | null;
-    averageOracleGapBps: number | null;
+    medianRouteOracleGapBps: number | null;
     supportedRoutes: number;
     eligibleChecks: number;
     wins: number;
-    change: number | null;
+    expectedWins: number;
+    observedSince: string | null;
+    partialPeriod: boolean;
+    previousWinIndex: number | null;
   }>;
   timeline: Array<{
     bucket: string;
-    results: Array<{ protocol: PartnerId; winRate: number | null; eligibleChecks: number }>;
+    results: Array<{ protocol: PartnerId; winIndex: number | null; winRate: number | null; eligibleChecks: number }>;
   }>;
   routes: Array<{
     routeId: string;
@@ -88,11 +92,25 @@ function bps(value: number | null) {
   return `${rounded > 0 ? "+" : ""}${rounded} bps`;
 }
 
-function delta(value: number | null) {
-  if (value == null) return "No prior data";
+function score(value: number | null) {
+  return value == null ? "—" : `${value.toFixed(2)}×`;
+}
+
+function routeChange(value: number) {
   const points = value * 100;
   if (Math.abs(points) < 0.05) return "No change";
-  return `${points > 0 ? "↑" : "↓"} ${Math.abs(points).toFixed(1)} pp`;
+  return `${Math.abs(points).toFixed(1)}-point ${points > 0 ? "gain" : "drop"}`;
+}
+
+function winCount(value: number) {
+  return Number.isInteger(value) ? value.toLocaleString() : value.toLocaleString([], { maximumFractionDigits: 1 });
+}
+
+function observationLabel(observedSince: string | null, partialPeriod: boolean, days: PeriodDays) {
+  if (!observedSince) return "No observations";
+  if (!partialPeriod) return days === 1 ? "Full 24h window" : `Full ${days}d window`;
+  const since = new Date(observedSince).toLocaleDateString([], { month: "short", day: "numeric" });
+  return `Since ${since} · partial ${days === 1 ? "24h" : `${days}d`}`;
 }
 
 function chainLabel(value: string) {
@@ -111,22 +129,22 @@ function TimelineChart({ data }: { data: AnalyticsResponse["timeline"] }) {
   const width = 960;
   const height = 280;
   const padding = { top: 26, right: 18, bottom: 30, left: 48 };
-  const observed = data.flatMap((bucket) => bucket.results.flatMap((result) => result.winRate == null ? [] : [result.winRate]));
-  const ceiling = Math.max(0.25, Math.ceil((Math.max(...observed, 0) + 0.02) * 10) / 10);
+  const observed = data.flatMap((bucket) => bucket.results.flatMap((result) => result.winIndex == null ? [] : [result.winIndex]));
+  const ceiling = Math.max(1, Math.ceil((Math.max(...observed, 0) + 0.1) * 10) / 10);
   const x = (index: number) => padding.left + index / Math.max(1, data.length - 1) * (width - padding.left - padding.right);
   const y = (value: number) => padding.top + (1 - Math.min(ceiling, Math.max(0, value)) / ceiling) * (height - padding.top - padding.bottom);
-  const ticks = [ceiling, ceiling / 2, 0];
+  const ticks = [...new Set([ceiling, 1, 0])].sort((left, right) => right - left);
 
   return <div className="analytics-chart-wrap">
-    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Supported-route win rate over time">
-      {ticks.map((tick) => <g key={tick}><line className="analytics-grid-line" x1={padding.left} x2={width - padding.right} y1={y(tick)} y2={y(tick)} /><text x={padding.left - 9} y={y(tick) + 3} textAnchor="end">{percent(tick)}</text></g>)}
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Competition-adjusted win score over time">
+      {ticks.map((tick) => <g key={tick}><line className="analytics-grid-line" x1={padding.left} x2={width - padding.right} y1={y(tick)} y2={y(tick)} strokeDasharray={tick === 1 ? "5 5" : undefined} /><text x={padding.left - 9} y={y(tick) + 3} textAnchor="end">{score(tick)}</text></g>)}
       <text x={padding.left} y={height - 7}>{new Date(data[0].bucket).toLocaleDateString([], { month: "short", day: "numeric" })}</text>
       <text x={width - padding.right} y={height - 7} textAnchor="end">{new Date(data[data.length - 1].bucket).toLocaleDateString([], { month: "short", day: "numeric" })}</text>
       {partners.map((item) => {
         const segments: Array<Array<{ index: number; value: number }>> = [];
         let current: Array<{ index: number; value: number }> | undefined;
         data.forEach((bucket, index) => {
-          const value = bucket.results.find((result) => result.protocol === item.id)?.winRate;
+          const value = bucket.results.find((result) => result.protocol === item.id)?.winIndex;
           if (value == null) {
             current = undefined;
             return;
@@ -139,7 +157,7 @@ function TimelineChart({ data }: { data: AnalyticsResponse["timeline"] }) {
         });
         return <g key={item.id}>
           {segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.index)},${y(point.value)}`).join(" ")} fill="none" stroke={item.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}
-          {segments.flat().map((point) => <circle key={point.index} cx={x(point.index)} cy={y(point.value)} r="3" fill={item.color}><title>{item.name} · {percent(point.value, 1)}</title></circle>)}
+          {segments.flat().map((point) => <circle key={point.index} cx={x(point.index)} cy={y(point.value)} r="3" fill={item.color}><title>{item.name} · {score(point.value)}</title></circle>)}
         </g>;
       })}
     </svg>
@@ -205,7 +223,7 @@ export default function AnalyticsDashboard() {
 
     <section className="analytics-page">
       <header className="analytics-heading">
-        <div><p className="eyebrow">Market data / protocol comparison</p><h1>DEX ANALYTICS</h1><p>Compare quote quality and reliability only where each DEX is eligible to serve the route.</p></div>
+        <div><p className="eyebrow">Market data / protocol comparison</p><h1>DEX ANALYTICS</h1><p>Compare quote quality, reliability, and route coverage without rewarding an easier competitive field.</p></div>
         <div className="analytics-freshness"><span>DATA THROUGH</span><strong>{dataThrough ? dataThrough.toLocaleString([], days === 1 ? { hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric" }) : "—"}</strong><small>{days === 1 ? "Rolling 24-hour window" : "Complete UTC days"}</small></div>
       </header>
 
@@ -222,15 +240,15 @@ export default function AnalyticsDashboard() {
           {partners.map((item) => {
             const summary = data.summaries.find((entry) => entry.protocol === item.id);
             return <article className="analytics-summary-card" key={item.id} style={{ borderTopColor: item.color }}>
-              <header><PartnerLogo id={item.id} /><div><span>{item.name}</span><small>{summary?.supportedRoutes ?? 0} supported routes</small></div><b className={summary?.change != null && summary.change < 0 ? "down" : "up"}>{delta(summary?.change ?? null)}</b></header>
-              <strong>{percent(summary?.winRate ?? null, 1)}</strong><span>supported-route win rate</span>
-              <dl><div><dt>Availability</dt><dd>{percent(summary?.availability ?? null, 1)}</dd></div><div><dt>Avg vs oracle</dt><dd>{bps(summary?.averageOracleGapBps ?? null)}</dd></div><div><dt>Eligible checks</dt><dd>{summary?.eligibleChecks.toLocaleString() ?? "—"}</dd></div></dl>
+              <header><PartnerLogo id={item.id} /><div><span>{item.name}</span><small>{summary?.supportedRoutes ?? 0} supported routes</small></div><b>{summary?.previousWinIndex == null ? "New data" : `Prior ${days === 1 ? "24h" : `${days}d`}: ${score(summary.previousWinIndex)}`}</b></header>
+              <strong>{score(summary?.winIndex ?? null)}</strong><span>competition-adjusted win score</span>
+              <dl><div><dt>Raw wins</dt><dd>{summary ? `${winCount(summary.wins)} / ${summary.eligibleChecks.toLocaleString()} · ${percent(summary.winRate, 1)}` : "—"}</dd></div><div><dt>Availability</dt><dd>{percent(summary?.availability ?? null, 1)}</dd></div><div><dt>Median route vs oracle</dt><dd>{bps(summary?.medianRouteOracleGapBps ?? null)}</dd></div><div><dt>Observed</dt><dd>{summary ? observationLabel(summary.observedSince, summary.partialPeriod, days) : "—"}</dd></div></dl>
             </article>;
           })}
         </section>
 
         <section className="analytics-panel">
-          <header><div><p className="eyebrow">Change over time</p><h2>Supported-route win rate</h2><p>Each DEX is measured only on checks for routes it supports. Missing data remains an empty gap.</p></div></header>
+          <header><div><p className="eyebrow">Change over time</p><h2>Competition-adjusted win score</h2><p>1.00× is fair-share performance for the number of eligible DEXes on each route. Missing data remains an empty gap.</p></div></header>
           <TimelineChart data={data.timeline} />
         </section>
 
@@ -240,13 +258,13 @@ export default function AnalyticsDashboard() {
             <div>{data.movers.length ? data.movers.map((mover) => {
               const item = partner(mover.protocol)!;
               return <Link href={`/routes/${encodeURIComponent(mover.routeId)}?size=${amountId}&days=${days}`} key={`${mover.routeId}-${mover.protocol}`}>
-                <PartnerLogo id={mover.protocol} /><span><b>{mover.source.symbol} → {mover.destination.symbol}</b><small>{item.name}{mover.leaderChanged ? " · leadership changed" : ""}</small></span><strong className={mover.change < 0 ? "down" : "up"}>{delta(mover.change)}</strong>
+                <PartnerLogo id={mover.protocol} /><span><b>{mover.source.symbol} → {mover.destination.symbol}</b><small>{item.name}{mover.leaderChanged ? " · leadership changed" : ""}</small></span><strong className={mover.change < 0 ? "down" : "up"}>{routeChange(mover.change)}</strong>
               </Link>;
             }) : <div className="analytics-empty compact">No comparable prior-period data yet.</div>}</div>
           </div>
 
           <aside className="analytics-method">
-            <p className="eyebrow">How to read this</p><h2>Coverage is not failure</h2><p>{data.definitions.winRate}</p><p>{data.definitions.availability}</p><div><b>N/A</b><span>The DEX does not support that route and receives no loss or availability penalty.</span></div>
+            <p className="eyebrow">How to read this</p><h2>Fair across different route sets</h2><p>{data.definitions.winIndex}</p><p>{data.definitions.winRate}</p><p>{data.definitions.availability}</p><p>{data.definitions.oracle}</p><div><b>N/A</b><span>The DEX does not support that route and receives no loss or availability penalty.</span></div>
           </aside>
         </section>
 

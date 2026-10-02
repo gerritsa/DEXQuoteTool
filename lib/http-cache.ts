@@ -19,6 +19,14 @@ function replaceSearch(url: URL, entries: Array<[string, string]>) {
 export function canonicalPublicCacheUrl(request: Request) {
   const url = new URL(request.url);
   if (url.pathname === "/api/routes") return replaceSearch(url, []).toString();
+  if (url.pathname === "/api/analytics") {
+    const requestedDays = Number(url.searchParams.get("days") ?? 7);
+    const days = requestedDays === 1 || requestedDays === 30 ? String(requestedDays) : "7";
+    return replaceSearch(url, [
+      ["days", days],
+      ["amountId", url.searchParams.get("amountId")?.trim() ?? "50000"],
+    ]).toString();
+  }
   if (url.pathname === "/api/comparison") {
     const requestedWindow = url.searchParams.get("window") ?? "now";
     const window = ["now", "7d", "14d", "30d"].includes(requestedWindow) ? requestedWindow : "now";

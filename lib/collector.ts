@@ -374,7 +374,7 @@ async function aggregateDay(day: string, d1: D1Database) {
     ), attempts AS (
       SELECT r.id AS run_id, r.pair_id, r.amount_id, r.mode, r.initiated_at,
         q.protocol, q.status, CAST(q.expected_output_formatted AS REAL) AS output,
-        q.oracle_gap_bps
+        q.oracle_gap_bps, q.error_code
       FROM benchmark_runs r
       JOIN protocol_quotes q ON q.run_id = r.id
       WHERE r.initiated_at >= ? AND r.initiated_at < ?
@@ -389,6 +389,7 @@ async function aggregateDay(day: string, d1: D1Database) {
     ), base_metrics AS (
       SELECT a.pair_id, a.amount_id, a.mode, a.protocol,
         COUNT(*) AS attempts,
+        SUM(CASE WHEN a.error_code = 'UNSUPPORTED_PAIR' THEN 0 ELSE 1 END) AS eligible_attempts,
         SUM(CASE WHEN a.status = 'quoted' THEN 1 ELSE 0 END) AS successes,
         SUM(CASE WHEN a.status = 'quoted' AND v.valid_count >= 1 THEN 1 ELSE 0 END) AS comparable_samples,
         SUM(CASE WHEN a.status = 'quoted' AND a.oracle_gap_bps IS NOT NULL THEN 1 ELSE 0 END) AS oracle_samples,
@@ -417,7 +418,7 @@ async function aggregateDay(day: string, d1: D1Database) {
     ), protocol_payloads AS (
       SELECT pair_id, amount_id, mode,
         json_group_object(protocol, json_array(
-          attempts, successes, comparable_samples, oracle_samples, oracle_gap_sum_bps
+          attempts, successes, comparable_samples, oracle_samples, oracle_gap_sum_bps, eligible_attempts
         )) AS protocols_json,
         MAX(latest_at) AS latest_at
       FROM base_metrics

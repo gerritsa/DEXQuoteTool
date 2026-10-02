@@ -57,6 +57,13 @@
       "when": 1790885031631,
       "tag": "0007_flippant_ben_parker",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790902800000,
+      "tag": "0008_eligibility_snapshot",
+      "breakpoints": true
     }
   ]
 }

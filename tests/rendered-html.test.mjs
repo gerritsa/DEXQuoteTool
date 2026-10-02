@@ -61,6 +61,29 @@ test("route analysis renders on a dedicated, bookmarkable page", async () => {
   assert.doesNotMatch(html, /QUOTE LEADERBOARD/);
 });
 
+test("analytics renders an eligibility-aware DEX comparison shell", async () => {
+  const response = await render("/analytics");
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /DEX ANALYTICS/);
+  assert.match(html, /Compare quote quality and reliability only where each DEX is eligible/);
+  assert.match(html, /Building eligibility-aware comparisons/);
+  assert.match(html, /href="\/analytics"/);
+});
+
+test("analytics excludes unsupported pairs from opportunity and availability denominators", async () => {
+  const analytics = await readFile(new URL("../app/api/analytics/route.ts", import.meta.url), "utf8");
+  const collector = await readFile(new URL("../lib/collector.ts", import.meta.url), "utf8");
+  const cache = await readFile(new URL("../lib/http-cache.ts", import.meta.url), "utf8");
+  assert.match(collector, /error_code = 'UNSUPPORTED_PAIR' THEN 0 ELSE 1 END\) AS eligible_attempts/);
+  assert.match(collector, /oracle_gap_sum_bps, eligible_attempts/);
+  assert.match(analytics, /eligibleAttempts: explicitEligibleAttempts \?\? \(supported \? attempts : 0\)/);
+  assert.match(analytics, /A sole valid quote wins/);
+  assert.match(analytics, /Unsupported routes are excluded/);
+  assert.match(analytics, /if \(!route \|\| !protocols\.includes\(row\.protocol\) \|\| !route\.partners\.includes\(row\.protocol\)\) continue/);
+  assert.match(cache, /url\.pathname === "\/api\/analytics"/);
+});
+
 test("health endpoint covers stale sweeps, partial routes, and partner errors", async () => {
   const source = await readFile(new URL("../app/api/health/route.ts", import.meta.url), "utf8");
   assert.match(source, /minutesSinceTerminal > 75/);
@@ -285,6 +308,43 @@ test("daily metric migration compacts filters without retaining standard-mode ag
   assert.equal(metrics.w["thorchain,near-intents"].thorchain, 30);
   assert.equal(metrics.w["thorchain,near-intents"]["near-intents"], 18);
   assert.equal(database.prepare("SELECT COUNT(*) AS count FROM pool_depth_snapshots").get().count, 0);
+  database.close();
+});
+
+test("eligibility snapshot freezes legacy route support before providers add routes", async () => {
+  const migration = await readFile(new URL("../drizzle/0008_eligibility_snapshot.sql", import.meta.url), "utf8");
+  const database = new DatabaseSync(":memory:");
+  database.exec(`
+    CREATE TABLE daily_comparison_metrics (
+      id text PRIMARY KEY NOT NULL, day text NOT NULL, pair_id text NOT NULL, amount_id text NOT NULL,
+      mode text NOT NULL, metrics_json text NOT NULL, latest_at text NOT NULL,
+      created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL
+    );
+  `);
+  const payload = JSON.stringify({
+    p: {
+      thorchain: [48, 47, 47, 47, -1000], maya: [48, 40, 40, 40, -1200],
+      chainflip: [48, 45, 45, 45, -1100], "near-intents": [48, 46, 46, 46, -900],
+    },
+    w: {},
+  });
+  const insert = database.prepare("INSERT INTO daily_comparison_metrics (id, day, pair_id, amount_id, mode, metrics_json, latest_at) VALUES (?, '2026-10-01', ?, '50000', 'optimized', ?, '2026-10-01T23:30:00Z')");
+  insert.run("btc-eth", "bitcoin:native:btc__ethereum:native:eth", payload);
+  insert.run("zec-btc", "zcash:native:zec__bitcoin:native:btc", payload);
+  insert.run("btc-bnb", "bitcoin:native:btc__bsc:native:bnb", payload);
+  database.exec(migration);
+  database.exec(migration);
+  const rows = database.prepare("SELECT id, metrics_json AS metricsJson FROM daily_comparison_metrics ORDER BY id").all();
+  const metrics = Object.fromEntries(rows.map((row) => [row.id, JSON.parse(row.metricsJson)]));
+  assert.deepEqual(Object.values(metrics["btc-eth"].p).map((values) => values[5]), [48, 48, 48, 48]);
+  assert.equal(metrics["zec-btc"].p.thorchain[5], 0);
+  assert.equal(metrics["zec-btc"].p.maya[5], 48);
+  assert.equal(metrics["zec-btc"].p.chainflip[5], 0);
+  assert.equal(metrics["zec-btc"].p["near-intents"][5], 48);
+  assert.equal(metrics["btc-bnb"].p.thorchain[5], 48);
+  assert.equal(metrics["btc-bnb"].p.maya[5], 0);
+  assert.equal(metrics["btc-bnb"].p.chainflip[5], 0);
+  assert.equal(metrics["btc-bnb"].p["near-intents"][5], 48);
   database.close();
 });
 

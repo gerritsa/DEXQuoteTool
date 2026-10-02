@@ -10,6 +10,12 @@ the NEAR solver quote. Scheduled Cloudflare Workers enqueue a complete sweep
 every 30 minutes. D1 stores queryable quote history and R2 stores compressed
 archives.
 
+The `/analytics` dashboard compares supported-route win rate, quote
+availability, route coverage, period-over-period movers, and route-level win
+share. Unsupported pairs are stored as ineligible and appear as `N/A`; they do
+not count as losses or availability failures. A sole valid quote still wins its
+comparison.
+
 ## Local development
 
 Requires Node.js 22.13 or newer.

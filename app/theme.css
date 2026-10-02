@@ -1,0 +1,155 @@
+/* Shared visual refinements. Loaded after the structural dashboard styles. */
+:root {
+  --font-geist-sans: "Geist Variable", Arial, Helvetica, sans-serif;
+  --font-geist-mono: "Geist Mono Variable", ui-monospace, monospace;
+}
+
+body { font-family: var(--font-geist-sans); }
+button, input, select { font-family: inherit; }
+.app-shell button:focus-visible,
+.app-shell a:focus-visible,
+.app-shell summary:focus-visible,
+.app-shell select:focus-visible { outline: 2px solid var(--acid); outline-offset: 3px; }
+.topbar { height: 68px; }
+.brand { font-weight: 750; }
+.topbar nav { font: 600 13px var(--font-geist-sans); }
+.topbar nav a { padding: 24px 0; border-bottom-width: 2px; }
+.topbar nav a.active, .topbar nav a:hover { border-bottom-color: var(--acid); }
+.theme-toggle { min-height: 40px; background: var(--soft); }
+.theme-toggle b { font-size: 12px; }
+.route-section, .route-detail { width: calc(100% - 48px); margin-left: auto; margin-right: auto; }
+.route-section { margin-top: 24px; }
+.page-heading { padding: 16px 0 24px; }
+.page-heading-main { position: relative; padding-left: 16px; min-width: 0; }
+.page-heading-main::before { content: ""; position: absolute; inset: 3px auto 3px 0; width: 2px; background: var(--acid); }
+.page-heading h1, .analytics-heading h1 { font: 700 clamp(30px, 3.2vw, 40px)/1.1 var(--font-geist-sans); letter-spacing: -.045em; }
+.page-heading .eyebrow, .eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .08em; }
+.page-heading .eyebrow { color: var(--brand-accent); }
+.page-heading-description { font-size: 14px; line-height: 1.5; }
+.latest-check > div > span, .latest-check small { font-size: 11px; font-weight: 500; }
+.latest-check strong { font-size: 13px; font-weight: 600; }
+.refresh-button { min-height: 36px; padding: 6px 10px; font-size: 11px; font-weight: 600; }
+
+/* Filters: visible selection, full labels, and enough room for each group. */
+.app-shell .leaderboard-filter-panel { background: var(--card); color: var(--ink); }
+.app-shell .leaderboard-tools {
+  display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(220px, 1fr);
+  gap: 20px 24px; padding: 20px; border: 1px solid var(--line); border-bottom: 0;
+  background: var(--card); color: var(--ink);
+}
+.leaderboard-tools fieldset { min-width: 0; width: 100%; }
+.leaderboard-tools .comparison-window-filter { grid-column: 1 / -1; display: grid; grid-template-columns: auto 1fr; gap: 8px 24px; align-items: center; border-top: 1px solid var(--line); padding-top: 16px; }
+.leaderboard-tools .comparison-window-filter legend { float: left; margin: 0; padding: 0; }
+.app-shell .filter-bar legend { font: 600 13px var(--font-geist-sans); text-transform: none; letter-spacing: 0; color: var(--ink); }
+.app-shell .protocol-filter > div { gap: 8px; }
+.app-shell .protocol-filter button { min-height: 40px; padding: 8px 10px; gap: 7px; border: 1px solid var(--line); background: var(--soft); color: var(--muted); font: 500 13px var(--font-geist-sans); }
+.app-shell .protocol-filter button.selected { border-color: var(--brand-accent); background: color-mix(in srgb, var(--acid) 8%, var(--card)); color: var(--ink); }
+.protocol-selection { width: 14px; height: 14px; border: 1px solid var(--muted); border-radius: 2px; display: inline-grid; place-items: center; font-size: 11px; line-height: 1; }
+.selected .protocol-selection { border-color: var(--acid); background: var(--acid); color: var(--acid-ink); }
+.app-shell .protocol-filter button:disabled { opacity: 1; cursor: default; }
+.app-shell .protocol-filter > small, .filter-help { display: block; margin: 8px 0 0; color: var(--muted); font: 400 12px/1.5 var(--font-geist-sans); }
+.filter-help { grid-column: 2; margin: 0; }
+.app-shell .segmented { background: var(--soft); border-radius: 4px; }
+.app-shell .segmented button { min-height: 40px; padding: 8px 14px; color: var(--muted); font: 500 13px var(--font-geist-sans); text-transform: none; white-space: nowrap; }
+.app-shell .segmented button.selected { background: var(--acid); color: var(--acid-ink); }
+.comparison-window-filter .segmented { width: max-content; max-width: 100%; }
+.app-shell .asset-filter { min-width: 0; }
+.app-shell .asset-select-trigger { min-height: 40px; padding: 6px 10px; background: var(--soft); color: var(--ink); border-color: var(--line); }
+.app-shell .asset-select-trigger[aria-expanded="true"] { border-color: var(--acid); }
+.app-shell .asset-summary-chip, .app-shell .asset-summary-more { background: var(--card-raised); color: var(--ink); border-color: var(--line); font-size: 12px; font-weight: 500; text-transform: none; }
+.app-shell .asset-summary-chip.all { background: transparent; border-color: transparent; padding: 0; }
+.app-shell .asset-summary-chip small { color: var(--muted); font-size: 11px; font-weight: 400; }
+.app-shell .asset-select-menu { background: var(--card-raised); border-color: var(--line); }
+.app-shell .asset-select-option { min-height: 48px; color: var(--ink); border-bottom-color: var(--line); }
+.app-shell .asset-select-option:hover { background: var(--soft); }
+.app-shell .asset-select-option.selected { background: color-mix(in srgb, var(--acid) 8%, var(--card-raised)); }
+.app-shell .asset-checkbox { background: var(--soft); border-color: var(--muted); }
+.app-shell .asset-select-option.selected .asset-checkbox { background: var(--acid); color: var(--acid-ink); border-color: var(--acid); }
+.app-shell .asset-option-copy b { font-size: 13px; font-weight: 600; }
+.app-shell .asset-option-copy small, .app-shell .asset-select-footer { font-size: 11px; font-weight: 400; color: var(--muted); }
+.app-shell .asset-select-footer { background: var(--soft); border-color: var(--line); }
+
+/* Data hierarchy: aligned values, readable context, subdued protocol colors. */
+.leaderboard-table { min-width: 1200px; }
+.leaderboard-table thead th:first-child, .leaderboard-table tbody th { width: 240px; min-width: 240px; max-width: 240px; }
+.app-shell .leaderboard-table thead th { background: var(--table-head); color: var(--muted); font-size: 12px; font-weight: 500; letter-spacing: .02em; }
+.leaderboard-route-path code { font-size: 13px; font-weight: 600; }
+.route-cell, .result-button { min-height: 88px; }
+.app-shell .result-button:hover { background: var(--soft); }
+.cell-result { gap: 6px; }
+.cell-result b { font: 600 13px var(--font-geist-sans); }
+.cell-result strong { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cell-result small, .cell-empty small, .cell-result .margin-context { font-size: 11px; font-weight: 400; }
+.cell-empty { color: var(--muted); }
+.cell-result.protocol-thorchain { background: var(--thor-bg); }
+.cell-result.protocol-chainflip { background: var(--flip-bg); }
+.cell-result.protocol-near-intents { background: var(--near-bg); }
+.cell-result.protocol-maya { background: var(--maya-bg); }
+.app-shell .size-selectors button.selected { color: var(--ink); background: color-mix(in srgb, var(--acid) 12%, var(--card)); border-color: var(--brand-accent); box-shadow: inset 0 0 0 1px var(--brand-accent); }
+.size-selectors strong { font-size: 16px; font-weight: 600; }
+.route-telemetry b, .latest-input-card small, .latest-input-card b, .latest-quote-card > small, .latest-quote-card em, .latest-comparison > header > div > span, .quote-audit-link span { font-size: 11px; font-weight: 500; }
+.route-telemetry code, .route-telemetry strong, .latest-quote-card > div > b, .latest-comparison > header > div > b { font-size: 12px; font-weight: 600; }
+.route-telemetry code { white-space: normal; overflow-wrap: anywhere; }
+.latest-input-card strong, .latest-quote-card > strong { font-size: 16px; font-weight: 600; }
+.latest-input-card strong span, .latest-quote-card > strong span { font-size: 11px; }
+.latest-quote-card > div { flex-wrap: wrap; }
+.latest-quote-card em { margin-left: 0; }
+.latest-quote-card > strong, .latest-quote-card > small { white-space: normal; overflow-wrap: anywhere; }
+.coverage-summary > span, .trend-controls legend, .trend-legend small, .trend-gap-key, .json-label, .request-history-nav small { font-size: 11px; }
+.trend-header h3, .analytics-panel h2, .analytics-route-heading h2 { font-family: var(--font-geist-sans); font-weight: 650; }
+.trend-header > div:first-child > p:last-child, .trend-note, .trend-legend b, .trend-empty span, .latest-comparison-state span, .request-panel dl div, .request-list summary small, .request-list summary strong { font-size: 12px; }
+.trend-header > div:first-child > p:last-child { font-family: var(--font-geist-sans); }
+.trend-note { background: var(--soft); }
+.trend-visual svg text { font-size: 12px; }
+.trend-visual { overflow-x: auto; }
+.trend-visual svg { min-width: 760px; }
+.request-list pre, .request-history-nav button, .request-history-nav b { font-size: 11px; }
+.request-list summary b { font-size: 13px; }
+.request-list summary strong.winner { background: var(--soft); color: var(--brand-accent); }
+.analysis-back-link { font: 500 13px var(--font-geist-sans); text-transform: none; }
+.app-shell .analytics-summary-card > header small, .app-shell .analytics-summary-card > header > b, .app-shell .analytics-summary-card > span, .app-shell .analytics-summary-card dl div, .analytics-routes small, .analytics-chart-legend { font-size: 11px; }
+.analytics-panel > header p:last-child, .analytics-method > p { font-size: 13px; }
+
+@media (max-width: 1050px) {
+  .app-shell .leaderboard-tools { grid-template-columns: minmax(0, 1fr); }
+  .leaderboard-tools .comparison-window-filter { grid-column: 1; }
+}
+@media (max-width: 760px) {
+  .topbar { height: 62px; }
+  .route-section, .route-detail { width: calc(100% - 28px); }
+  .page-heading h1 { font-size: 30px; }
+  .page-heading-description { font-size: 13px; }
+  .latest-check { min-width: 0; }
+  .latest-check > div > span { font-size: 11px; }
+  .latest-check strong { font-size: 11px; }
+  .app-shell .leaderboard-filter-panel:not(.open) > .filter-bar { display: none; }
+  .app-shell .leaderboard-tools { padding: 16px; gap: 20px; }
+  .leaderboard-tools .comparison-window-filter { display: block; }
+  .leaderboard-tools .comparison-window-filter legend { float: none; margin-bottom: 10px; }
+  .comparison-window-filter .segmented { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; overflow: visible; }
+  .app-shell .protocol-filter button, .app-shell .segmented button { min-height: 44px; }
+  .filter-help { margin-top: 8px; }
+  .leaderboard-filter-summary { gap: 8px; padding: 12px; }
+  .leaderboard-filter-summary b { font: 600 13px var(--font-geist-sans); text-transform: none; letter-spacing: 0; }
+  .leaderboard-filter-summary small { color: var(--muted); font: 400 11px/1.5 var(--font-geist-sans); white-space: normal; }
+  .leaderboard-filter-summary strong { font: 500 12px var(--font-geist-sans); color: var(--ink); border-color: var(--line); }
+  .mobile-leaderboard-header { top: 62px; }
+  .mobile-leaderboard-header b { font: 600 13px var(--font-geist-sans); text-transform: none; letter-spacing: 0; }
+  .mobile-leaderboard-header small { font-size: 11px; }
+  .mobile-leaderboard-sizes { display: flex; overflow-x: auto; padding-bottom: 4px; }
+  .mobile-leaderboard-sizes button { flex: 0 0 auto; min-width: 52px; min-height: 44px; padding: 8px; font-size: 12px; font-weight: 500; }
+  .mobile-route-card-header { flex-wrap: wrap; }
+  .mobile-route-card-header .leaderboard-route-path code { font-size: 12px; }
+  .mobile-route-cta, .mobile-route-card-label, .mobile-route-card-label b, .mobile-route-coverage, .mobile-toolbar-label { font-size: 11px; letter-spacing: 0; }
+  .mobile-route-card-label { flex-wrap: wrap; gap: 6px; }
+  .mobile-result-button .cell-result b { font-size: 13px; }
+  .mobile-result-button .cell-result strong { font-size: 14px; }
+  .mobile-result-button .cell-result small { font-size: 11px; }
+  .latest-comparison > header { height: auto; min-height: 52px; }
+  .latest-comparison > header > div { gap: 4px; padding: 8px 0; }
+  .latest-comparison > header > div > b { font-size: 11px; }
+  .latest-comparison > header > div > span { font-size: 11px; }
+  .quote-audit-link { min-width: 90px; }
+  .latest-quote-card { width: 210px; flex-basis: 210px; }
+  .size-selectors strong { font-size: 14px; }
+}

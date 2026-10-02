@@ -487,15 +487,15 @@ test("the raw details drawer navigates retained quote batches", async () => {
   assert.match(retention, /rawArchiveRetentionDays = 7/);
 });
 
-test("leaderboard uses THORChain green and compact unranked asset paths", async () => {
+test("leaderboard uses the mint brand accent and compact unranked asset paths", async () => {
   const page = await readFile(new URL("../app/swap-rank-dashboard.tsx", import.meta.url), "utf8");
   const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(page, /function LeaderboardRoutePath/);
   assert.match(page, /asset\.thorAsset\.split\("-"\)\[0\]/);
   assert.doesNotMatch(page, /mobile-route-rank/);
   assert.doesNotMatch(page, /String\(index \+ 1\)/);
-  assert.match(styles, /--acid:#17b897/);
-  assert.match(styles, /--brand-accent:#17b897/);
+  assert.match(styles, /--acid:#45f5be/);
+  assert.match(styles, /--brand-accent:#45f5be/);
   assert.doesNotMatch(styles, /#d1ff45|#d6ff4b/);
 });
 

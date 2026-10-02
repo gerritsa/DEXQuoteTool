@@ -1,5 +1,5 @@
-import AnalyticsDashboard from "./analytics-dashboard";
+import { notFound } from "next/navigation";
 
 export default function AnalyticsPage() {
-  return <AnalyticsDashboard />;
+  notFound();
 }

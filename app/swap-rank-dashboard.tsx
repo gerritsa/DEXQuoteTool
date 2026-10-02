@@ -896,7 +896,7 @@ export default function SwapRankDashboard({
   return <main className="app-shell" id="top">
     <header className="topbar">
       <Link className="brand" href="/" aria-label="SwapRank home"><span className="brand-symbol"><i /><i /><i /></span><span>Swap<span>Rank</span></span></Link>
-      <div className="top-actions"><nav aria-label="Primary navigation">{view === "analysis" ? <><a href={initialQuery.back}>Leaderboard</a><a className="active" href="#analysis">Route analysis</a><Link href="/analytics">Analytics</Link></> : <><a className="active" href="#leaderboard">Leaderboard</a><Link href="/analytics">Analytics</Link></>}</nav><button className="theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}><span className="theme-glyph" aria-hidden="true" /><b>{theme === "dark" ? "Light" : "Dark"}</b></button></div>
+      <div className="top-actions"><nav aria-label="Primary navigation">{view === "analysis" ? <><a href={initialQuery.back}>Leaderboard</a><a className="active" href="#analysis">Route analysis</a></> : <a className="active" href="#leaderboard">Leaderboard</a>}</nav><button className="theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}><span className="theme-glyph" aria-hidden="true" /><b>{theme === "dark" ? "Light" : "Dark"}</b></button></div>
     </header>
 
     {view === "leaderboard" && <section className="route-section" id="leaderboard">

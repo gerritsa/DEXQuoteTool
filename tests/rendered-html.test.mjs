@@ -46,6 +46,7 @@ test("server-renders the SwapRank dashboard", async () => {
   assert.match(html, /THORChain[\s\S]*MAYA PROTOCOL[\s\S]*CHAINFLIP[\s\S]*NEAR/);
   assert.doesNotMatch(html, /Maya is disabled|MAYA PROTOCOL · DISABLED/);
   assert.doesNotMatch(html, /Route analysis/);
+  assert.doesNotMatch(html, /href="\/analytics"/);
   assert.doesNotMatch(html, />Exact input</);
   assert.doesNotMatch(html, /Run \$.*test/);
   assert.doesNotMatch(html, /Real requests\. Exact sizes\. Explainable winners\./);
@@ -61,14 +62,11 @@ test("route analysis renders on a dedicated, bookmarkable page", async () => {
   assert.doesNotMatch(html, /QUOTE LEADERBOARD/);
 });
 
-test("analytics renders a route-first comparison shell", async () => {
+test("analytics page remains hidden until it is ready", async () => {
   const response = await render("/analytics");
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 404);
   const html = await response.text();
-  assert.match(html, /ROUTE ANALYTICS/);
-  assert.match(html, /Compare like-for-like execution across every tracked trade size/);
-  assert.match(html, /Building route comparison/);
-  assert.match(html, /href="\/analytics"/);
+  assert.doesNotMatch(html, /ROUTE ANALYTICS/);
 });
 
 test("analytics separates best-quote, pairwise, coverage, and availability metrics", async () => {

@@ -10,13 +10,14 @@ the NEAR solver quote. Scheduled Cloudflare Workers enqueue a complete sweep
 every 30 minutes. D1 stores queryable quote history and R2 stores compressed
 archives.
 
-The `/analytics` dashboard compares a competition-adjusted win score, quote
-availability, route coverage, period-over-period movers, and route-level win
-share. The score divides actual wins by the equal-performance expectation for
-the number of eligible DEXes on each route, so narrower two-provider routes do
-not inflate the cross-DEX comparison. Unsupported pairs appear as `N/A` and do
-not count as losses or availability failures. A sole valid quote still wins its
-comparison.
+The route-first `/analytics` dashboard keeps route coverage and quote
+availability at the DEX portfolio level, then compares price execution
+like-for-like on one selected route across all seven trade sizes. Best-quote
+rate answers whether a DEX actually served the customer; pairwise beat rate
+also credits second- and third-place quotes for the competing quotes they beat.
+Unsupported pairs appear as `N/A` and do not count as losses or availability
+failures. A sole valid quote still wins its comparison but is excluded from
+pairwise scoring because no competing quote was available.
 
 ## Local development
 

@@ -61,31 +61,36 @@ test("route analysis renders on a dedicated, bookmarkable page", async () => {
   assert.doesNotMatch(html, /QUOTE LEADERBOARD/);
 });
 
-test("analytics renders an eligibility-aware DEX comparison shell", async () => {
+test("analytics renders a route-first comparison shell", async () => {
   const response = await render("/analytics");
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /DEX ANALYTICS/);
-  assert.match(html, /Compare quote quality, reliability, and route coverage without rewarding an easier competitive field/);
-  assert.match(html, /Building eligibility-aware comparisons/);
+  assert.match(html, /ROUTE ANALYTICS/);
+  assert.match(html, /Compare like-for-like execution across every tracked trade size/);
+  assert.match(html, /Building route comparison/);
   assert.match(html, /href="\/analytics"/);
 });
 
-test("analytics adjusts for field size while excluding unsupported pairs from denominators", async () => {
+test("analytics separates best-quote, pairwise, coverage, and availability metrics", async () => {
   const analytics = await readFile(new URL("../app/api/analytics/route.ts", import.meta.url), "utf8");
   const collector = await readFile(new URL("../lib/collector.ts", import.meta.url), "utf8");
   const cache = await readFile(new URL("../lib/http-cache.ts", import.meta.url), "utf8");
   assert.match(collector, /error_code = 'UNSUPPORTED_PAIR' THEN 0 ELSE 1 END\) AS eligible_attempts/);
   assert.match(collector, /oracle_gap_sum_bps, eligible_attempts/);
-  assert.match(analytics, /eligibleAttempts: explicitEligibleAttempts \?\? \(supported \? attempts : 0\)/);
-  assert.match(analytics, /value\.expectedWins = eligibleProtocolCount \? value\.eligibleAttempts \/ eligibleProtocolCount : 0/);
-  assert.match(analytics, /winIndex = percent\(current\.wins, current\.expectedWins\)/);
-  assert.match(analytics, /medianRouteOracleGapBps: median\(routeOracleAverages\)/);
-  assert.match(analytics, /1\.00× is the neutral baseline/);
+  assert.match(analytics, /eligibleAttempts = explicitEligibleAttempts \?\? \(supported \? attempts : 0\)/);
+  assert.match(analytics, /async function loadPairwiseRows/);
+  assert.match(analytics, /a\.protocol < b\.protocol/);
+  assert.match(analytics, /output > opponent_output THEN 1 WHEN output = opponent_output THEN 0\.5/);
+  assert.match(analytics, /function dailyPairwiseResults/);
+  assert.match(analytics, /pairwiseBeatRate: supported \? ratio\(pairwiseTotal\.wins, pairwiseTotal\.matchups\) : null/);
+  assert.match(analytics, /medianOracleGapBps: supported \? median\(sizeOracleAverages\) : null/);
+  assert.match(analytics, /sizeRows = quoteSizes\.map/);
   assert.match(analytics, /A sole valid quote still wins/);
+  assert.match(analytics, /when both DEXes returned valid quotes/);
   assert.match(analytics, /Unsupported routes are excluded/);
   assert.match(analytics, /if \(!route \|\| !protocols\.includes\(row\.protocol\) \|\| !route\.partners\.includes\(row\.protocol\)\) continue/);
   assert.match(cache, /url\.pathname === "\/api\/analytics"/);
+  assert.match(cache, /\["routeId", url\.searchParams\.get\("routeId"\)/);
 });
 
 test("health endpoint covers stale sweeps, partial routes, and partner errors", async () => {
@@ -405,6 +410,10 @@ test("public cache keys ignore cache-busting and irrelevant parameters", () => {
   assert.equal(
     canonicalPublicCacheUrl(new Request(`${semantic}&mode=standard`)),
     canonicalPublicCacheUrl(new Request(semantic)),
+  );
+  assert.notEqual(
+    canonicalPublicCacheUrl(new Request("https://swaprank.test/api/analytics?routeId=btc_eth&amountId=50000&days=7")),
+    canonicalPublicCacheUrl(new Request("https://swaprank.test/api/analytics?routeId=zec_btc&amountId=50000&days=7")),
   );
 });
 

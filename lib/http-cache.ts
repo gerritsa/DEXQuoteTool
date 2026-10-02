@@ -24,6 +24,7 @@ export function canonicalPublicCacheUrl(request: Request) {
     const days = requestedDays === 1 || requestedDays === 30 ? String(requestedDays) : "7";
     return replaceSearch(url, [
       ["days", days],
+      ["routeId", url.searchParams.get("routeId")?.trim() ?? ""],
       ["amountId", url.searchParams.get("amountId")?.trim() ?? "50000"],
     ]).toString();
   }

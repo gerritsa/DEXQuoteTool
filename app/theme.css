@@ -155,15 +155,15 @@ button, input, select { font-family: inherit; }
 }
 
 /* Compact terminal results: the same three rows for every comparison. */
-.app-shell .leaderboard-table { table-layout: fixed; min-width: 1540px; }
+.app-shell .leaderboard-table { table-layout: fixed; min-width: 0; width: 100%; }
 .app-shell .leaderboard-table tbody td { vertical-align: top; }
-.app-shell .result-button { display: flex; padding: 8px; min-height: 132px; }
+.app-shell .result-button { display: flex; padding: 6px; min-height: 118px; }
 .app-shell .cell-result {
   --protocol-accent: #c2cedd;
   width: 100%; min-width: 0; box-sizing: border-box;
-  display: grid; grid-template-rows: 24px 32px 18px; gap: 8px;
-  min-height: 116px; padding: 12px; border-radius: 3px;
-  border: 1px solid var(--line); border-left: 2px solid var(--protocol-accent);
+  display: grid; grid-template-rows: 20px 24px minmax(32px, auto); gap: 6px;
+  min-height: 106px; padding: 10px; border-radius: 3px;
+  border: 1px solid color-mix(in srgb, var(--protocol-accent) 65%, var(--line));
   background: color-mix(in srgb, var(--protocol-accent) 5%, var(--card));
   text-align: left;
 }
@@ -174,8 +174,8 @@ button, input, select { font-family: inherit; }
 .app-shell .cell-result .result-header { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .app-shell .cell-result b { font-size: 12px; white-space: nowrap; }
 .app-shell .cell-result .partner-mark { width: 20px; height: 20px; flex: 0 0 20px; border-radius: 3px; }
-.app-shell .cell-result strong { font: 650 20px/32px var(--font-geist-mono); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.app-shell .cell-result small { font: 400 11px/18px var(--font-geist-sans); white-space: nowrap; }
+.app-shell .cell-result strong { font: 600 15px/24px var(--font-geist-mono); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.app-shell .cell-result small { font: 400 11px/16px var(--font-geist-sans); white-space: normal; overflow-wrap: anywhere; }
 .app-shell .result-age { margin-left: auto; color: var(--muted); font: 400 10px var(--font-geist-mono); white-space: nowrap; }
 .app-shell .cell-empty { width: 100%; min-height: 116px; align-content: center; }
 @media (max-width: 1050px) {
@@ -193,3 +193,80 @@ button, input, select { font-family: inherit; }
 @media (max-width: 760px) { .mobile-leaderboard-header { top: 62px; } }
 
 .theme-icon { width: 22px; height: 22px; flex: 0 0 22px; color: var(--acid); margin: 2px; }
+
+/* Terminal framing with a fluid desktop comparison matrix. */
+.topbar nav, .app-shell .segmented button, .app-shell .protocol-filter button,
+.theme-toggle, .refresh-button, .app-shell .filter-bar legend,
+.app-shell .leaderboard-table thead th { font-family: var(--font-geist-mono); }
+.eyebrow { font-family: var(--font-geist-mono); color: var(--acid); }
+.terminal-status { display: flex; flex-wrap: wrap; gap: 10px 24px; padding: 12px 14px; border: 1px solid var(--line); border-bottom: 0; background: var(--chrome); color: var(--chrome-muted); font: 400 12px/1.5 var(--font-geist-mono); }
+.terminal-status > span:first-child { display: inline-flex; align-items: center; gap: 8px; color: var(--acid); }
+.terminal-status i { width: 6px; height: 6px; background: currentColor; box-shadow: 0 0 6px color-mix(in srgb, currentColor 40%, transparent); }
+.terminal-status.delayed > span:first-child { color: #eab66a; }
+:root[data-theme="light"] .terminal-status { background: var(--card); color: var(--muted); }
+:root[data-theme="light"] .terminal-status.delayed > span:first-child { color: #86500b; }
+.app-shell .cell-result .result-metric { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; }
+.app-shell .cell-result .result-age { margin-left: auto; flex: 0 0 auto; }
+.app-shell .cell-result .result-header b { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+.app-shell .cell-result .partner-mark { width: 16px; height: 16px; flex-basis: 16px; padding: 2px; }
+.app-shell .cell-result strong { font-size: 15px; }
+.app-shell .leaderboard-table tbody td { min-width: 0; }
+.app-shell .leaderboard-table thead th:first-child, .app-shell .leaderboard-table tbody th { width: 20%; min-width: 0; max-width: none; }
+.app-shell .leaderboard-table thead th { padding-left: 4px; padding-right: 4px; }
+.app-shell .result-button:hover .cell-result { background: color-mix(in srgb, var(--protocol-accent) 10%, var(--card)); }
+@media (min-width: 1051px) and (max-width: 1300px) {
+  .app-shell .cell-result { padding: 8px; grid-template-rows: 20px 40px minmax(32px, auto); }
+  .app-shell .cell-result .result-metric { align-content: start; }
+  .app-shell .cell-result .result-age { width: 100%; margin-left: 0; }
+  .leaderboard-route-path { flex-wrap: wrap; }
+  .leaderboard-route-path code { font-size: 11px; }
+}
+
+/* One shared content boundary for navigation and dashboards. */
+.app-shell { --dashboard-width: 1440px; --dashboard-gutter: 24px; }
+.app-shell .route-section, .app-shell .route-detail, .app-shell .analytics-page { width: calc(100% - 2 * var(--dashboard-gutter)); max-width: var(--dashboard-width); margin-left: auto; margin-right: auto; }
+.app-shell .topbar { padding-left: max(var(--dashboard-gutter), calc((100% - var(--dashboard-width)) / 2)); padding-right: max(var(--dashboard-gutter), calc((100% - var(--dashboard-width)) / 2)); }
+@media (max-width: 760px) { .app-shell { --dashboard-gutter: 14px; } }
+
+/* Shared instrument-panel framing and interaction states. */
+.app-shell .cell-result.protocol-thorchain { --protocol-accent: #48dce9; }
+:root[data-theme="light"] .app-shell .cell-result.protocol-thorchain { --protocol-accent: #087d89; }
+:root[data-theme="light"] .app-shell .cell-result.protocol-chainflip { --protocol-accent: #ad2588; }
+.app-shell .theme-toggle, .app-shell .refresh-button,
+.app-shell .protocol-filter button, .app-shell .segmented button,
+.app-shell .size-selectors button, .app-shell .mobile-leaderboard-sizes button,
+.app-shell .asset-select-trigger, .app-shell .request-history-nav button,
+.app-shell .analysis-back-link, .app-shell .quote-audit-link {
+  border-radius: 3px; font-family: var(--font-geist-mono);
+}
+.app-shell .segmented button { border: 1px solid transparent; }
+@media (hover: hover) {
+  .app-shell .theme-toggle:hover, .app-shell .refresh-button:not(:disabled):hover,
+  .app-shell .protocol-filter button:not(:disabled):hover,
+  .app-shell .segmented button:not(:disabled):hover,
+  .app-shell .size-selectors button:not(:disabled):hover,
+  .app-shell .mobile-leaderboard-sizes button:hover,
+  .app-shell .asset-select-trigger:hover, .app-shell .request-history-nav button:not(:disabled):hover,
+  .app-shell .analysis-back-link:hover, .app-shell .quote-audit-link:hover {
+    border-color: var(--acid);
+  }
+}
+.app-shell .leaderboard-filter-panel, .app-shell .leaderboard-wrap,
+.app-shell .trend-card, .app-shell .request-panel, .app-shell .request-drawer,
+.app-shell .route-telemetry, .app-shell .latest-comparison,
+.app-shell .analytics-panel, .app-shell .analytics-summary-card,
+.app-shell .analytics-route-heading, .app-shell .analytics-method {
+  border-radius: 3px; border-color: var(--line);
+}
+.app-shell .trend-header, .app-shell .analytics-panel > header {
+  background: var(--card); border-bottom: 1px solid var(--line);
+}
+.app-shell .filter-bar legend, .app-shell .trend-controls legend,
+.app-shell .coverage-summary > span, .app-shell .json-label,
+.app-shell .mobile-route-card-label, .app-shell .route-telemetry > span > span {
+  font-family: var(--font-geist-mono); font-size: 11px;
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.app-shell .eyebrow { color: var(--acid); font-family: var(--font-geist-mono); }
+.app-shell .trend-visual .grid-line { stroke: var(--line); }
+.app-shell .trend-visual .zero-line { stroke: var(--muted); }

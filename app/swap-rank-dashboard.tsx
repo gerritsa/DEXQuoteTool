@@ -149,7 +149,7 @@ type RunResponse = {
 
 const partners: Array<{ id: PartnerId; name: string; cellName: string; color: string; logo: string }> = [
   { id: "thorchain", name: "THORChain", cellName: "THORChain", color: "#17b897", logo: "/partners/thorchain.png" },
-  { id: "maya", name: "MAYA PROTOCOL", cellName: "MAYA PROTOCOL", color: "#ef6a38", logo: "/partners/maya.svg" },
+  { id: "maya", name: "MAYA PROTOCOL", cellName: "MAYA", color: "#ef6a38", logo: "/partners/maya.svg" },
   { id: "chainflip", name: "CHAINFLIP", cellName: "CHAINFLIP", color: "#ed49c9", logo: "/partners/chainflip.svg" },
   { id: "near-intents", name: "NEAR", cellName: "NEAR", color: "var(--near-series)", logo: "/partners/near.svg" },
 ];
@@ -290,8 +290,8 @@ function ComparisonResult({ cell, window, now }: { cell?: ComparisonCell; window
   const runnerUp = partners.find((item) => item.id === cell.runnerUp);
   const age = formatAgeLabel(cell.capturedAt, now);
   return <span className={`cell-result protocol-${cell.leader}`} title={`${formatBps(cell.oracleGapBps)} vs oracle · ${age}`}>
-    <span className="result-header"><PartnerMark id={cell.leader} /><b>{partner.cellName}</b><span className="result-age">{age.replace(" min ago", "m").replace(" ago", "")}</span></span>
-    <strong>{cell.tie ? "Exact tie" : cell.marginBps == null ? "Single quote" : formatBps(cell.marginBps)}</strong>
+    <span className="result-header"><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span>
+    <span className="result-metric"><strong>{cell.tie ? "Exact tie" : cell.marginBps == null ? "Single quote" : formatBps(cell.marginBps)}</strong><span className="result-age">{age.replace(" min ago", "m").replace(" ago", "")}</span></span>
     <small>{cell.tie ? "Tied" : cell.marginBps == null ? "No comparison" : runnerUp ? `vs ${runnerUp.cellName}` : "Best output"} · {quoteCount} {quoteCount === 1 ? "quote" : "quotes"}</small>
   </span>;
 }
@@ -897,6 +897,7 @@ export default function SwapRankDashboard({
   const refreshCoolingDown = manualRefreshAvailableAt > now;
   const initialRoutesLoading = loading && catalog === null;
   const initialComparisonLoading = comparisonLoading && comparison === null;
+  const dataDelayed = Boolean(latestCheckAt && now - Date.parse(latestCheckAt) > 45 * 60 * 1000);
   const initialLeaderboardLoading = initialRoutesLoading || initialComparisonLoading;
 
   return <main className="app-shell" id="top">
@@ -907,9 +908,11 @@ export default function SwapRankDashboard({
 
     {view === "leaderboard" && <section className="route-section" id="leaderboard">
       <header className="page-heading">
-        <div className="page-heading-main"><div><p className="eyebrow">Market data / leaderboard</p><h1>QUOTE LEADERBOARD</h1><p className="page-heading-description">Cross-chain DEX quotes compared by trade size.</p></div></div>
+        <div className="page-heading-main"><div><p className="eyebrow">&gt; quote leaderboard</p><h1>QUOTE LEADERBOARD</h1><p className="page-heading-description">Cross-chain DEX quotes compared by trade size.</p></div></div>
         <div className="latest-check"><div><span>LATEST CHECK</span><button className="refresh-button" type="button" onClick={refreshPageData} disabled={pageRefreshing || refreshCoolingDown} aria-label={refreshCoolingDown ? "Refresh available after cooldown" : "Refresh page data"}><i aria-hidden="true">↻</i><span>{pageRefreshing ? "Refreshing" : refreshCoolingDown ? "Cooldown" : "Refresh"}</span></button></div><strong>{latestCheckAt ? formatLocalTime(latestCheckAt) : "No completed check"}</strong><small aria-live="polite">{latestCheckAt ? formatAgeLabel(latestCheckAt, now) : "Waiting for first refresh"}</small></div>
       </header>
+
+      <div className={`terminal-status ${dataDelayed ? "delayed" : ""}`} role="status"><span><i aria-hidden="true" />{pageRefreshing ? "Refreshing" : !latestCheckAt ? "Waiting for data" : dataDelayed ? "Delayed" : "Data ready"}</span><span>{latestCheckAt ? `Updated ${formatAgeLabel(latestCheckAt, now)}` : "Awaiting first completed check"}</span><span>{enabledProtocols.length} protocols selected</span></div>
 
       <section className={`leaderboard-filter-panel ${mobileFiltersOpen ? "open" : ""}`}>
         <button className="leaderboard-filter-summary" type="button" onClick={() => setMobileFiltersOpen((current) => !current)} aria-expanded={mobileFiltersOpen} aria-controls="leaderboard-filters"><span><b>Ranking settings</b><small>{assetSummary} · {activePartners.length} protocols · {viewWindow === "now" ? "Latest" : viewWindow}</small></span><strong>Filters</strong></button>
@@ -966,7 +969,7 @@ export default function SwapRankDashboard({
     {view === "analysis" && <section className="route-detail" id="analysis">
       <a className="analysis-back-link" href={initialQuery.back}>← Back to leaderboard</a>
       <div className="detail-header compact">
-        <div><p className="eyebrow">Route analysis · best-output quotes</p>{selectedRoute ? <h2 className="detail-route"><RoutePair route={selectedRoute} /></h2> : <h2>{loading ? "Loading route…" : "Route unavailable"}</h2>}</div>
+        <div><p className="eyebrow">&gt; route analysis</p>{selectedRoute ? <h2 className="detail-route"><RoutePair route={selectedRoute} /></h2> : <h2>{loading ? "Loading route…" : "Route unavailable"}</h2>}</div>
         {selectedRoute && <div className="detail-actions"><div className="coverage-summary"><span>Compared protocols</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</div></div></div>}
       </div>
       {!loading && !selectedRoute && <div className="error-state"><b>This route could not be found</b><span>It may no longer be in the supported route catalog. Return to the leaderboard to choose another route.</span></div>}

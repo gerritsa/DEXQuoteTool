@@ -56,7 +56,7 @@ test("route analysis renders on a dedicated, bookmarkable page", async () => {
   const response = await render("/routes/bitcoin%3Anative%3Abtc__ethereum%3Anative%3Aeth?size=10000&days=7&back=%2F%3Fwindow%3D7d%23leaderboard-results");
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /Route analysis · best-output quotes/);
+  assert.match(html, /route analysis/);
   assert.match(html, /← Back to leaderboard/);
   assert.match(html, /href="\/\?window=7d#leaderboard-results"/);
   assert.doesNotMatch(html, /QUOTE LEADERBOARD/);

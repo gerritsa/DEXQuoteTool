@@ -10,7 +10,7 @@ const description = "Compare synchronized cross-chain quotes across 50 fixed rou
 export const viewport: Viewport = {
   colorScheme: "dark light",
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#0b0f14" },
+    { media: "(prefers-color-scheme: dark)", color: "#08090b" },
     { media: "(prefers-color-scheme: light)", color: "#f5f8fc" },
   ],
 };

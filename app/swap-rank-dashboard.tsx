@@ -284,10 +284,16 @@ function ComparisonResult({ cell, window, now }: { cell?: ComparisonCell; window
   if (!cell.leader) return <span className="cell-empty"><b>—</b><small>{cell.successfulQuotes === 1 ? "1 valid quote" : cell.successfulQuotes === 0 ? "No valid quote at this size" : cell.sampleCount ? "No valid quotes" : "Awaiting refresh"}</small></span>;
   const partner = partners.find((item) => item.id === cell.leader)!;
   if (window !== "now") {
-    return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span><strong>{Math.round((cell.winRate ?? 0) * 100)}% wins</strong><small>avg {formatBps(cell.averageOracleGapBps)} vs oracle · {cell.sampleCount ?? 0} checks</small></span>;
+    return <span className={`cell-result protocol-${cell.leader}`} title={`Average ${formatBps(cell.averageOracleGapBps)} vs oracle`}><span className="result-header"><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span><strong>{Math.round((cell.winRate ?? 0) * 100)}% wins</strong><small>{cell.sampleCount ?? 0} checks · View details</small></span>;
   }
   const quoteCount = cell.successfulQuotes ?? 0;
-  return <span className={`cell-result protocol-${cell.leader}`}><span><PartnerMark id={cell.leader} /><b>{cell.tie ? "Tie" : partner.cellName}</b></span><strong>{cell.marginBps == null ? "ONLY QUOTE" : cell.tie ? "Exact tie" : formatBps(cell.marginBps)}{cell.marginBps != null && cell.runnerUp && !cell.tie && <span className="margin-context">vs <PartnerMark id={cell.runnerUp} /></span>}</strong><small>{formatBps(cell.oracleGapBps)} vs oracle · {quoteCount} {quoteCount === 1 ? "quote" : "quotes"} · {formatAgeLabel(cell.capturedAt, now)}</small></span>;
+  const runnerUp = partners.find((item) => item.id === cell.runnerUp);
+  const age = formatAgeLabel(cell.capturedAt, now);
+  return <span className={`cell-result protocol-${cell.leader}`} title={`${formatBps(cell.oracleGapBps)} vs oracle · ${age}`}>
+    <span className="result-header"><PartnerMark id={cell.leader} /><b>{partner.cellName}</b><span className="result-age">{age.replace(" min ago", "m").replace(" ago", "")}</span></span>
+    <strong>{cell.tie ? "Exact tie" : cell.marginBps == null ? "Single quote" : formatBps(cell.marginBps)}</strong>
+    <small>{cell.tie ? "Tied" : cell.marginBps == null ? "No comparison" : runnerUp ? `vs ${runnerUp.cellName}` : "Best output"} · {quoteCount} {quoteCount === 1 ? "quote" : "quotes"}</small>
+  </span>;
 }
 
 function ComparisonCellSkeleton() {
@@ -896,7 +902,7 @@ export default function SwapRankDashboard({
   return <main className="app-shell" id="top">
     <header className="topbar">
       <Link className="brand" href="/" aria-label="SwapRank home"><span className="brand-symbol"><i /><i /><i /></span><span>Swap<span>Rank</span></span></Link>
-      <div className="top-actions"><nav aria-label="Primary navigation">{view === "analysis" ? <><a href={initialQuery.back}>Leaderboard</a><a className="active" href="#analysis">Route analysis</a></> : <a className="active" href="#leaderboard">Leaderboard</a>}</nav><button className="theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}><span className="theme-glyph" aria-hidden="true" /><b>{theme === "dark" ? "Light" : "Dark"}</b></button></div>
+      <div className="top-actions"><nav aria-label="Primary navigation">{view === "analysis" ? <><a href={initialQuery.back}>Leaderboard</a><a className="active" href="#analysis">Route analysis</a></> : <a className="active" href="#leaderboard">Leaderboard</a>}</nav><button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}><svg className="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{theme === "dark" ? <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></> : <path d="M20.9 13.1A9 9 0 0 1 10.9 3.1a9 9 0 1 0 10 10Z" />}</svg><b>{theme === "dark" ? "Light" : "Dark"}</b></button></div>
     </header>
 
     {view === "leaderboard" && <section className="route-section" id="leaderboard">

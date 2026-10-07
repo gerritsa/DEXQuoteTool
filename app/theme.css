@@ -153,3 +153,43 @@ button, input, select { font-family: inherit; }
   .latest-quote-card { width: 210px; flex-basis: 210px; }
   .size-selectors strong { font-size: 14px; }
 }
+
+/* Compact terminal results: the same three rows for every comparison. */
+.app-shell .leaderboard-table { table-layout: fixed; min-width: 1540px; }
+.app-shell .leaderboard-table tbody td { vertical-align: top; }
+.app-shell .result-button { display: flex; padding: 8px; min-height: 132px; }
+.app-shell .cell-result {
+  --protocol-accent: #c2cedd;
+  width: 100%; min-width: 0; box-sizing: border-box;
+  display: grid; grid-template-rows: 24px 32px 18px; gap: 8px;
+  min-height: 116px; padding: 12px; border-radius: 3px;
+  border: 1px solid var(--line); border-left: 2px solid var(--protocol-accent);
+  background: color-mix(in srgb, var(--protocol-accent) 5%, var(--card));
+  text-align: left;
+}
+.app-shell .cell-result.protocol-thorchain { --protocol-accent: #45f5be; }
+.app-shell .cell-result.protocol-chainflip { --protocol-accent: #ee66cd; }
+.app-shell .cell-result.protocol-near-intents { --protocol-accent: #b7c9e5; }
+.app-shell .cell-result.protocol-maya { --protocol-accent: #f0ae70; }
+.app-shell .cell-result .result-header { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.app-shell .cell-result b { font-size: 12px; white-space: nowrap; }
+.app-shell .cell-result .partner-mark { width: 20px; height: 20px; flex: 0 0 20px; border-radius: 3px; }
+.app-shell .cell-result strong { font: 650 20px/32px var(--font-geist-mono); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.app-shell .cell-result small { font: 400 11px/18px var(--font-geist-sans); white-space: nowrap; }
+.app-shell .result-age { margin-left: auto; color: var(--muted); font: 400 10px var(--font-geist-mono); white-space: nowrap; }
+.app-shell .cell-empty { width: 100%; min-height: 116px; align-content: center; }
+@media (max-width: 1050px) {
+  .mobile-leaderboard-header { top: 68px; }
+  .mobile-leaderboard-header b { font-size: 13px; }
+  .mobile-leaderboard-header small, .mobile-route-card-label, .mobile-route-card-label b, .mobile-route-coverage, .mobile-route-cta { font-size: 11px; }
+  .mobile-leaderboard-sizes { display: flex; overflow-x: auto; }
+  .mobile-leaderboard-sizes button { min-width: 56px; min-height: 44px; flex: 0 0 auto; font-size: 12px; }
+  .mobile-route-card-header .leaderboard-route-path code { font-size: 12px; }
+  .mobile-route-card { border-radius: 3px; }
+  .mobile-route-card-label { flex-wrap: wrap; gap: 6px; }
+  .leaderboard-filter-summary b { font-size: 13px; }
+  .leaderboard-filter-summary small { font-size: 11px; }
+}
+@media (max-width: 760px) { .mobile-leaderboard-header { top: 62px; } }
+
+.theme-icon { width: 22px; height: 22px; flex: 0 0 22px; color: var(--acid); margin: 2px; }

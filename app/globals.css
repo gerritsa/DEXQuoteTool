@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-:root { color-scheme:dark; --font-geist-sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; --font-geist-mono:"SFMono-Regular",Menlo,Monaco,Consolas,"Liberation Mono",monospace; --ink:#edf3fa; --paper:#0b0f14; --card:#121923; --card-raised:#192330; --line:#2a3746; --muted:#a1aec0; --acid:#45f5be; --acid-ink:#071a16; --mint:#45f5be; --brand-accent:#45f5be; --near-series:#edf3fa; --chrome:#0d131b; --on-chrome:#edf3fa; --chrome-muted:#a1aec0; --topbar:rgba(11,15,20,.92); --table-head:#18212c; --soft:#16202b; --soft-strong:#202c39; --footer:#0d131b; --thor-bg:#143f39; --flip-bg:#3c2542; --near-bg:#293342; --maya-bg:#422e20; --danger-bg:#352029; --danger-line:#7f4653; --danger-text:#ffb2bd; }
+:root { color-scheme:dark; --font-geist-sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; --font-geist-mono:"SFMono-Regular",Menlo,Monaco,Consolas,"Liberation Mono",monospace; --ink:#f0f3f6; --paper:#08090b; --card:#101214; --card-raised:#191c20; --line:#343a42; --muted:#adb7c4; --acid:#45f5be; --acid-ink:#071a16; --mint:#45f5be; --brand-accent:#45f5be; --near-series:#f0f3f6; --chrome:#0c0e10; --on-chrome:#f0f3f6; --chrome-muted:#adb7c4; --topbar:rgba(8,9,11,.95); --table-head:#171a1e; --soft:#1c2025; --soft-strong:#272d34; --footer:#0c0e10; --thor-bg:#122520; --flip-bg:#251725; --near-bg:#1c222b; --maya-bg:#292017; --danger-bg:#352029; --danger-line:#7f4653; --danger-text:#ffb2bd; }
 :root[data-theme="light"] { color-scheme:light; --ink:#111a25; --paper:#f5f8fc; --card:#ffffff; --card-raised:#ffffff; --line:#d4dde8; --muted:#5e6c7e; --acid:#087c65; --acid-ink:#f4fffb; --mint:#087c65; --brand-accent:#087c65; --near-series:#111a25; --chrome:#17212d; --on-chrome:#f5f8fc; --chrome-muted:#a9b6c7; --topbar:rgba(245,248,252,.93); --table-head:#e9eef5; --soft:#edf2f8; --soft-strong:#e1e9f2; --footer:#e9eff6; --thor-bg:#e2f5f0; --flip-bg:#f5e8f7; --near-bg:#e9eef6; --maya-bg:#f9ede4; --danger-bg:#fff4f6; --danger-line:#e8b8c0; --danger-text:#9f3141; }
 * { box-sizing:border-box; }
 html { scroll-behavior:smooth; background:var(--paper); }
@@ -187,7 +187,7 @@ footer{margin-top:100px;padding:24px clamp(22px,5vw,76px);background:var(--foote
 html{scroll-padding-top:82px}
 #leaderboard,#analysis,#leaderboard-results{scroll-margin-top:0}
 
-@media(max-width:760px){
+@media(max-width:1050px){
   .route-section,.route-detail{margin-left:14px;margin-right:14px}
   .leaderboard-filter-panel{background:var(--chrome);color:var(--on-chrome)}
   .leaderboard-filter-summary{width:100%;min-height:58px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}

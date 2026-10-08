@@ -11,6 +11,9 @@ export type NormalizedDashboardQuery = {
   window: ViewWindow;
   sizeId: string;
   days: TrendDays;
+  volumeDays: 1 | 7 | 30;
+  runId: number | null;
+  sourceId: string;
   back: string;
 };
 
@@ -24,14 +27,19 @@ export function normalizeDashboardQuery(query: DashboardQuery): NormalizedDashbo
   const protocolIds = (singleQueryValue(query.protocols) ?? "").split(",").filter((id): id is PartnerId => defaultProtocols.includes(id as PartnerId));
   const window = singleQueryValue(query.window);
   const days = Number(singleQueryValue(query.days));
+  const volumeDays = Number(singleQueryValue(query.volumeDays));
   const sizeId = singleQueryValue(query.size);
   const back = singleQueryValue(query.back);
+  const runId = Number(singleQueryValue(query.runId));
   return {
     assets: (singleQueryValue(query.assets) ?? "").split(",").filter(Boolean),
     protocols: protocolIds.length >= 2 ? protocolIds : defaultProtocols,
     window: window === "7d" || window === "14d" || window === "30d" ? window : "now",
     sizeId: quoteSizes.some((size) => size.id === sizeId) ? sizeId! : quoteSizes[3].id,
     days: days === 7 || days === 14 || days === 30 ? days : 1,
+    volumeDays: volumeDays === 7 || volumeDays === 30 ? volumeDays : 1,
+    runId: Number.isSafeInteger(runId) && runId > 0 ? runId : null,
+    sourceId: singleQueryValue(query.source) ?? "",
     back: back?.startsWith("/") && !back.startsWith("//") ? back : "/#leaderboard-results",
   };
 }

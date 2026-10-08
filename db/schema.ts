@@ -115,6 +115,7 @@ export const latestQuotePayloads = sqliteTable("latest_quote_payloads", {
   updatedAt: text("updated_at").notNull(),
 }, (table) => [
   index("idx_latest_quote_payloads_lookup").on(table.pairId, table.amountId, table.mode),
+  index("idx_latest_quote_payloads_revision").on(table.mode, table.runId, table.updatedAt),
 ]);
 
 export const dailyComparisonMetrics = sqliteTable("daily_comparison_metrics", {
@@ -160,4 +161,41 @@ export const catalogSources = sqliteTable("catalog_sources", {
   refreshedAt: text("refreshed_at"),
   lastAttemptAt: text("last_attempt_at").notNull(),
   lastError: text("last_error"),
+});
+
+export const volumeRoutes = sqliteTable("volume_routes", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  routeId: text("route_id").notNull().unique(),
+});
+export const volumeHourly = sqliteTable("volume_hourly", {
+  id: text("id").primaryKey(), routeKey: integer("route_key").notNull(),
+  protocol: text("protocol").notNull(), hour: integer("hour").notNull(),
+  totalsJson: text("totals_json").notNull(), updatedAt: text("updated_at").notNull(),
+}, (table) => [index("idx_volume_hourly_route_hour").on(table.routeKey, table.hour), index("idx_volume_hourly_expiry").on(table.hour)]);
+export const volumeFeedHours = sqliteTable("volume_feed_hours", {
+  id: text("id").primaryKey(), protocol: text("protocol").notNull(), hour: integer("hour").notNull(),
+  status: text("status").notNull().default("pending"), generation: integer("generation").notNull().default(0),
+  cursor: text("cursor"), pages: integer("pages").notNull().default(0), records: integer("records").notNull().default(0),
+  pending: integer("pending").notNull().default(0), nextAttempt: integer("next_attempt").notNull().default(0),
+  stagedRows: integer("staged_rows").notNull().default(0),
+  failures: integer("failures").notNull().default(0), lastError: text("last_error"), updatedAt: text("updated_at"),
+}, (table) => [index("idx_volume_feed_work").on(table.protocol, table.status, table.nextAttempt, table.hour), index("idx_volume_feed_expiry").on(table.hour)]);
+export const volumeIngestionState = sqliteTable("volume_ingestion_state", {
+  protocol: text("protocol").primaryKey(), lease: text("lease"), leaseUntil: integer("lease_until").notNull().default(0),
+  nextRequest: integer("next_request").notNull().default(0), lastError: text("last_error"), updatedAt: text("updated_at"),
+  budgetDay: integer("budget_day").notNull().default(0), pagesToday: integer("pages_today").notNull().default(0),
+  backgroundPagesToday: integer("background_pages_today").notNull().default(0),
+});
+export const volumeRecentSwaps = sqliteTable("volume_recent_swaps", {
+  id: text("id").primaryKey(), jobId: text("job_id").notNull(), generation: integer("generation").notNull(),
+  routeKey: integer("route_key").notNull(), usdMicros: text("usd_micros"), pending: integer("pending").notNull(),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [index("idx_volume_recent_job").on(table.jobId, table.generation), index("idx_volume_recent_expiry").on(table.createdAt)]);
+export const routeQuoteHourly = sqliteTable("route_quote_hourly", {
+  id: text("id").primaryKey(), routeKey: integer("route_key").notNull(), hour: integer("hour").notNull(),
+  scoresJson: text("scores_json").notNull(), updatedAt: text("updated_at").notNull(),
+}, (table) => [index("idx_route_quote_hourly_lookup").on(table.routeKey, table.hour), index("idx_route_quote_hourly_expiry").on(table.hour)]);
+export const routeVolumeWindows = sqliteTable("route_volume_windows", {
+  id: text("id").primaryKey(), routeKey: integer("route_key").notNull(), days: integer("days").notNull(),
+  payloadJson: text("payload_json").notNull(), revision: text("revision").notNull(), updatedAt: text("updated_at").notNull(),
 });

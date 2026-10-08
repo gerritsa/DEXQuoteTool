@@ -1,10 +1,10 @@
 import { env } from "cloudflare:workers";
-import { and, desc, eq, isNotNull, inArray } from "drizzle-orm";
+import { and, eq, isNotNull, inArray } from "drizzle-orm";
 import { ensureBenchmarkSchema, getD1, getDb } from "../../../db";
 import { benchmarkRuns, protocolQuotes } from "../../../db/schema";
 import { runSelectedBenchmark, type BenchmarkArchiveRecord } from "../../../lib/quotes/run";
 import { rawArchiveRetentionMs } from "../../../lib/quotes/retention";
-import { bestOutputMode } from "../../../lib/quotes/protocols";
+import { completedQuoteBatch } from "../../../lib/quotes/latest";
 import { publicCacheHeaders, readPublicCache, writePublicCache } from "../../../lib/http-cache";
 
 type StoredRun = typeof benchmarkRuns.$inferSelect;
@@ -99,8 +99,6 @@ async function availableNavigation(run: StoredRun) {
 
 export async function GET(request: Request) {
   try {
-    const cached = await readPublicCache(request);
-    if (cached) return cached;
     await ensureBenchmarkSchema();
     const url = new URL(request.url);
     const routeId = url.searchParams.get("routeId")?.trim();
@@ -109,25 +107,23 @@ export async function GET(request: Request) {
     const hasRunId = Number.isInteger(requestedRunId) && requestedRunId > 0;
     if (!hasRunId && (!routeId || !amountId)) return Response.json({ error: "routeId and amountId are required" }, { status: 400 });
 
+    const batch = await completedQuoteBatch(getD1(), routeId ?? null, amountId ?? null, hasRunId ? requestedRunId : null);
+    if (!batch) return Response.json({ run: null, quotes: [] }, { headers: { "cache-control": "no-store" } });
+    const cacheUrl = new URL(request.url);
+    cacheUrl.searchParams.set("runId", String(batch.runId));
+    const cacheRequest = new Request(cacheUrl.toString(), { headers: request.headers });
+    const cached = await readPublicCache(cacheRequest);
+    if (cached) return cached;
+
     const db = getDb();
-    const [run] = hasRunId
-      ? await db.select().from(benchmarkRuns).where(and(
-          eq(benchmarkRuns.id, requestedRunId),
+    const [run] = await db.select().from(benchmarkRuns).where(and(
+          eq(benchmarkRuns.id, batch.runId),
           isNotNull(benchmarkRuns.completedAt),
           inArray(benchmarkRuns.status, ["complete", "partial"]),
-        )).limit(1)
-      : await db.select().from(benchmarkRuns)
-          .where(and(
-            eq(benchmarkRuns.pairId, routeId!),
-            eq(benchmarkRuns.amountId, amountId!),
-            eq(benchmarkRuns.mode, bestOutputMode),
-            isNotNull(benchmarkRuns.completedAt),
-            inArray(benchmarkRuns.status, ["complete", "partial"]),
-          ))
-          .orderBy(desc(benchmarkRuns.initiatedAt), desc(benchmarkRuns.id)).limit(1);
-    if (!run) return writePublicCache(request, Response.json({ run: null, quotes: [] }, { headers: publicCacheHeaders(60) }));
+        )).limit(1);
+    if (!run) return Response.json({ run: null, quotes: [] }, { headers: { "cache-control": "no-store" } });
 
-    const [quotes, payloads, archived, navigation] = await Promise.all([
+    const [quotes, payloads, navigation] = await Promise.all([
       db.select().from(protocolQuotes)
         .where(eq(protocolQuotes.runId, run.id))
         .orderBy(protocolQuotes.requestStartedAt, protocolQuotes.id),
@@ -137,11 +133,11 @@ export async function GET(request: Request) {
         FROM latest_quote_payloads
         WHERE run_id = ? AND pair_id = ? AND amount_id = ? AND mode = ?
       `).bind(run.id, run.pairId, run.amountId, run.mode).all<StoredPayload>(),
-      hasRunId ? archivedPayloads(run) : Promise.resolve({ available: false, payloads: new Map<string, StoredPayload>() }),
       availableNavigation(run),
     ]);
+    const archived = payloads.results.length ? { available: false, payloads: new Map<string, StoredPayload>() } : await archivedPayloads(run);
     const payloadByProtocol = new Map(payloads.results.map((payload) => [payload.protocol, payload]));
-    return writePublicCache(request, Response.json({
+    return writePublicCache(cacheRequest, Response.json({
       run: { ...run, depthForecastJson: undefined },
       rawDetailsAvailable: payloads.results.length > 0 || archived.available,
       navigation,

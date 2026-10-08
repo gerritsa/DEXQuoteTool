@@ -15,5 +15,6 @@ export default async function RouteAnalysisPage({
   } catch {
     // Leave malformed route ids untouched so the client can show its not-found state.
   }
-  return <SwapRankDashboard view="analysis" initialRouteId={decodedRouteId} initialQuery={normalizeDashboardQuery(query)} />;
+  const initialQuery = normalizeDashboardQuery(query);
+  return <SwapRankDashboard key={decodedRouteId} view="analysis" initialRouteId={decodedRouteId} initialQuery={initialQuery} />;
 }

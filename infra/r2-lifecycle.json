@@ -1,6 +1,12 @@
 {
   "rules": [
     {
+      "id": "expire-volume-repair-data",
+      "enabled": true,
+      "conditions": { "prefix": "volume/" },
+      "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 604800 } }
+    },
+    {
       "id": "expire-raw-quote-payloads",
       "enabled": true,
       "conditions": {

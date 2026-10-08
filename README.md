@@ -10,6 +10,14 @@ the NEAR solver quote. Scheduled Cloudflare Workers enqueue a complete sweep
 every 30 minutes. D1 stores queryable quote history and R2 stores compressed
 archives.
 
+The primary navigation has three views: the quote **Leaderboard** (`/`),
+**Route analysis** (`/routes`, with bookmarks at `/routes/[routeId]`), and
+**Volume insights** (`/volume-insights?routeId=…`). Both detail views offer
+source/destination selectors limited to tracked directed routes and a switch
+for supported reverse routes. Switching views preserves the pair and periods.
+Volume insights compares observed USD volume or successful swap counts by
+input size, with actual covered dates and separately labeled benchmark quotes.
+
 The route-first `/analytics` dashboard keeps route coverage and quote
 availability at the DEX portfolio level, then compares price execution
 like-for-like on one selected route across all seven trade sizes. Best-quote

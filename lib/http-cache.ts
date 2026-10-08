@@ -19,6 +19,10 @@ function replaceSearch(url: URL, entries: Array<[string, string]>) {
 export function canonicalPublicCacheUrl(request: Request) {
   const url = new URL(request.url);
   if (url.pathname === "/api/routes") return replaceSearch(url, []).toString();
+  if (url.pathname === "/api/route-volume") {
+    const days = Number(url.searchParams.get("days") ?? 1);
+    return replaceSearch(url, [["schema", "2"], ["routeId", url.searchParams.get("routeId")?.trim() ?? ""], ["days", [1, 7, 30].includes(days) ? String(days) : "1"]]).toString();
+  }
   if (url.pathname === "/api/analytics") {
     const requestedDays = Number(url.searchParams.get("days") ?? 7);
     const days = requestedDays === 1 || requestedDays === 30 ? String(requestedDays) : "7";
@@ -32,17 +36,19 @@ export function canonicalPublicCacheUrl(request: Request) {
     const requestedWindow = url.searchParams.get("window") ?? "now";
     const window = ["now", "7d", "14d", "30d"].includes(requestedWindow) ? requestedWindow : "now";
     return replaceSearch(url, [
+      ["schema", "3"],
       ["window", window],
       ["protocols", normalizedProtocols(url)],
+      ["revision", window === "now" && /^[a-f0-9]{64}$/.test(url.searchParams.get("revision") ?? "") ? url.searchParams.get("revision")! : ""],
     ]).toString();
   }
   if (url.pathname === "/api/runs") {
     const requestedRunId = Number(url.searchParams.get("runId"));
     if (Number.isInteger(requestedRunId) && requestedRunId > 0) {
-      return replaceSearch(url, [["schema", "8"], ["runId", String(requestedRunId)]]).toString();
+      return replaceSearch(url, [["schema", "9"], ["runId", String(requestedRunId)]]).toString();
     }
     return replaceSearch(url, [
-      ["schema", "8"],
+      ["schema", "9"],
       ["routeId", url.searchParams.get("routeId")?.trim() ?? ""],
       ["amountId", url.searchParams.get("amountId")?.trim() ?? ""],
     ]).toString();
@@ -50,11 +56,14 @@ export function canonicalPublicCacheUrl(request: Request) {
   if (url.pathname === "/api/trends") {
     const requestedDays = Number(url.searchParams.get("days") ?? 1);
     const days = [1, 7, 14, 30].includes(requestedDays) ? String(requestedDays) : "1";
+    const runId = Number(url.searchParams.get("runId"));
     return replaceSearch(url, [
+      ["schema", "6"],
       ["routeId", url.searchParams.get("routeId")?.trim() ?? ""],
       ["amountId", url.searchParams.get("amountId")?.trim() ?? ""],
       ["days", days],
       ["protocols", normalizedProtocols(url)],
+      ["runId", Number.isSafeInteger(runId) && runId > 0 ? String(runId) : ""],
     ]).toString();
   }
   return url.toString();

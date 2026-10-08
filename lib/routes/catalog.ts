@@ -541,3 +541,9 @@ export function resolveFixedRoutes(assets: CatalogAsset[], limit = fixedRouteCou
 export function fixedRoutes(assets: CatalogAsset[], limit = fixedRouteCount) {
   return resolveFixedRoutes(assets, limit).routes;
 }
+
+// Historical analytics must retain the route universe even while a live
+// provider catalog is unavailable or current quote support changes.
+export function historicalRoutes() {
+  return fixedRoutes(staticCatalogAssets());
+}

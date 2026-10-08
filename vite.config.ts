@@ -32,7 +32,7 @@ const localBindingConfig = {
       ]
     : [],
   queues: {
-    producers: [{ binding: "BENCHMARK_QUEUE", queue: "dex-quote-tool-jobs" }],
+    producers: [{ binding: "BENCHMARK_QUEUE", queue: "dex-quote-tool-jobs" }, { binding: "VOLUME_QUEUE", queue: "dex-quote-tool-volume" }],
     consumers: [{
       queue: "dex-quote-tool-jobs",
       max_batch_size: 1,
@@ -40,9 +40,16 @@ const localBindingConfig = {
       max_retries: 3,
       dead_letter_queue: "dex-quote-tool-dead-letter",
       max_concurrency: 4,
+    }, {
+      queue: "dex-quote-tool-volume",
+      max_batch_size: 1,
+      max_batch_timeout: 5,
+      max_retries: 3,
+      dead_letter_queue: "dex-quote-tool-volume-dead-letter",
+      max_concurrency: 2,
     }],
   },
-  triggers: { crons: ["*/30 * * * *", "15 0 * * *"] },
+  triggers: { crons: ["*/30 * * * *", "15 0 * * *", "10,40 * * * *"] },
 };
 
 export default defineConfig(async () => {

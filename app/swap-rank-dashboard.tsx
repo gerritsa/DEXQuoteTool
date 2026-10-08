@@ -1,14 +1,17 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- small static logos are served directly by the Worker */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import Link from "next/link";
+import RouteVolumePanel from "./route-volume-panel";
+import PrimaryNavigation from "./primary-navigation";
 import { defaultProtocols, type NormalizedDashboardQuery, type PartnerId, type TrendDays, type ViewWindow } from "./dashboard-query";
 import { quoteSizes, type QuoteSize } from "../lib/quotes/sizes";
 import { rawArchiveRetentionDays } from "../lib/quotes/retention";
+import { findSelectedRoute, reverseRoute, routeDestinationAssets, routeSourceAssets } from "../lib/routes/selection";
 
 type Theme = "dark" | "light";
-type DashboardView = "leaderboard" | "analysis";
+type DashboardView = "leaderboard" | "analysis" | "volume";
 
 const pageRefreshIntervalMs = 15 * 60_000;
 const resumeRefreshThresholdMs = 60_000;
@@ -38,6 +41,7 @@ type ComparisonCell = {
   pairId: string;
   amountId: string;
   capturedAt?: string;
+  runId?: number;
   leader: PartnerId | null;
   runnerUp?: PartnerId | null;
   marginBps?: number | null;
@@ -64,6 +68,8 @@ type TrendResponse = {
   pointMode: "comparison" | "bucket_median";
   startAt: string;
   endAt: string;
+  latestRunId?: number | null;
+  latestComparisonAt?: string | null;
   comparableRuns: number;
   leader: null | { protocol: PartnerId; averageOracleGapBps: number; medianOracleGapBps: number; winRate: number; sampleCount: number; attempts?: number; availability: number };
   summary: Array<{ protocol: PartnerId; averageOracleGapBps: number | null; medianOracleGapBps: number | null; winRate: number | null; sampleCount: number; attempts?: number; availability: number }>;
@@ -114,6 +120,8 @@ type RunResponse = {
   };
   run: null | {
     id: number;
+    pairId?: string;
+    amountId?: string;
     initiatedAt: string;
     sourceAmountBaseUnits: string;
     sourceAmountUsd: number;
@@ -155,7 +163,12 @@ const partners: Array<{ id: PartnerId; name: string; cellName: string; color: st
 ];
 
 function chainLabel(chain: string) {
-  return chain.replace(/(^|[-_ ])\w/g, (value) => value.toUpperCase());
+  const names: Record<string, string> = {
+    bitcoin: "Bitcoin", ethereum: "Ethereum", bsc: "BNB Chain", bch: "Bitcoin Cash",
+    ltc: "Litecoin", doge: "Dogecoin", sol: "Solana", xrp: "XRP Ledger",
+    tron: "TRON", zcash: "Zcash", avalanche: "Avalanche", arbitrum: "Arbitrum",
+  };
+  return names[chain.toLowerCase()] ?? chain.replace(/(^|[-_ ])\w/g, (value) => value.toUpperCase());
 }
 
 function compactChainLabel(chain: string) {
@@ -184,8 +197,115 @@ function AssetMark({ asset }: { asset: Route["source"] }) {
   return <span className="asset-mark" role="img" aria-label={`${asset.symbol} asset`}><img src={`/assets/${fileSymbol}.${extension}`} alt="" /></span>;
 }
 
-function RoutePair({ route }: { route: Route }) {
-  return <span className="route-pair"><span className="route-asset"><AssetMark asset={route.source} /><span><b>{route.source.symbol}</b><small>{route.source.chain}</small></span></span><i aria-hidden="true">→</i><span className="route-asset"><AssetMark asset={route.destination} /><span><b>{route.destination.symbol}</b><small>{route.destination.chain}</small></span></span></span>;
+function RouteAssetSelect({ side, asset, assets, loading, onSelect }: {
+  side: "source" | "destination";
+  asset?: Route["source"];
+  assets: Route["source"][];
+  loading: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const id = useId();
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const typeahead = useRef({ text: "", at: 0 });
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const disabled = loading || !assets.length;
+  const expanded = open && !disabled;
+  const label = side === "source" ? "From asset" : "To asset";
+
+  useEffect(() => {
+    if (!expanded) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [expanded]);
+
+  useEffect(() => {
+    if (expanded) root.current?.querySelector<HTMLElement>(`[data-active="true"]`)?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, expanded]);
+
+  function showMenu() {
+    const selectedIndex = assets.findIndex((option) => option.id === asset?.id);
+    setActiveIndex(Math.max(0, selectedIndex));
+    setOpen(true);
+  }
+
+  function selectAsset(selected: Route["source"]) {
+    setOpen(false);
+    if (selected.id !== asset?.id) onSelect(selected.id);
+    trigger.current?.focus();
+  }
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!expanded) showMenu();
+      else setActiveIndex((index) => Math.max(0, Math.min(assets.length - 1, index + (event.key === "ArrowDown" ? 1 : -1))));
+    } else if (expanded && (event.key === "Home" || event.key === "End")) {
+      event.preventDefault();
+      setActiveIndex(event.key === "Home" ? 0 : assets.length - 1);
+    } else if (expanded && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      if (assets[activeIndex]) selectAsset(assets[activeIndex]);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setOpen(false);
+    } else if (event.key === "Tab") {
+      setOpen(false);
+    } else if (!event.ctrlKey && !event.metaKey && !event.altKey && /^[a-z0-9]$/i.test(event.key)) {
+      event.preventDefault();
+      const now = Date.now();
+      const text = (now - typeahead.current.at < 700 ? typeahead.current.text : "") + event.key.toLowerCase();
+      typeahead.current = { text, at: now };
+      const index = assets.findIndex((option) => option.symbol.toLowerCase().startsWith(text));
+      if (index !== -1) { setActiveIndex(index); setOpen(true); }
+    }
+  }
+
+  return <div className={`route-asset-select ${asset ? "has-asset" : ""}`} ref={root}>
+    <button ref={trigger} className="route-asset-trigger" type="button" role="combobox" aria-label={label} aria-describedby={`${id}-value`} aria-haspopup="listbox" aria-expanded={expanded} aria-controls={expanded ? `${id}-menu` : undefined} aria-activedescendant={expanded ? `${id}-option-${activeIndex}` : undefined} disabled={disabled} onClick={() => expanded ? setOpen(false) : showMenu()} onKeyDown={handleKeyDown}>
+      <span className="route-select-label">{side === "source" ? "FROM" : "TO"}</span>
+      <span className="route-select-value" id={`${id}-value`}>
+        {asset ? <><AssetMark asset={asset} /><span><b>{asset.symbol}</b><small>{chainLabel(asset.chain).toUpperCase()}</small></span></> : <span><b>SELECT ASSET</b><small>{loading ? "LOADING ROUTES…" : side === "destination" && !assets.length ? "CHOOSE A SOURCE FIRST" : "CHOOSE AN ASSET"}</small></span>}
+        <svg className="route-select-chevron" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="m4 6 4 4 4-4" /></svg>
+      </span>
+    </button>
+    {expanded && <div className={`route-asset-menu route-asset-menu-${side}`}>
+      <div className="route-asset-menu-heading">{side === "source" ? "Choose source asset" : "Choose destination asset"}</div>
+      <div className="route-asset-options" id={`${id}-menu`} role="listbox" aria-label={`${label} options`}>{assets.map((option, index) => <button type="button" className={`route-asset-option ${option.id === asset?.id ? "selected" : ""}`} id={`${id}-option-${index}`} key={option.id} role="option" aria-selected={option.id === asset?.id} tabIndex={-1} data-active={index === activeIndex} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveIndex(index)} onClick={() => selectAsset(option)}>
+        <AssetMark asset={option} /><span className="route-asset-option-copy"><b>{option.symbol}</b><small>{chainLabel(option.chain).toUpperCase()}</small></span><span className="route-asset-option-check" aria-hidden="true">{option.id === asset?.id ? "✓" : ""}</span>
+      </button>)}</div>
+      <div className="route-asset-menu-footer">{assets.length} supported {side === "source" ? "assets" : "destinations"}</div>
+    </div>}
+  </div>;
+}
+
+function RoutePicker({ routes, route, sourceId, loading, onSourceChange, onRouteChange }: {
+  routes: Route[];
+  route: Route | null;
+  sourceId: string;
+  loading: boolean;
+  onSourceChange: (id: string) => void;
+  onRouteChange: (route: Route) => void;
+}) {
+  const sources = routeSourceAssets(routes);
+  const destinations = routeDestinationAssets(routes, sourceId);
+  const source = sources.find((asset) => asset.id === sourceId);
+  const reverse = route ? reverseRoute(routes, route) : null;
+
+  return <div className="route-picker" role="group" aria-label="Select a tracked route">
+    <RouteAssetSelect side="source" asset={source} assets={sources} loading={loading} onSelect={onSourceChange} />
+    <div className="route-direction"><button type="button" className="route-swap-button" disabled={!reverse || loading} aria-label="Switch route direction" title={reverse ? `Switch to ${reverse.source.symbol} → ${reverse.destination.symbol}` : route ? "The reverse route is not tracked" : "Select a route to switch direction"} onClick={() => { if (reverse) onRouteChange(reverse); }}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 4v16m-4-4 4 4 4-4M17 20V4m-4 4 4-4 4 4" /></svg>
+    </button></div>
+    <RouteAssetSelect side="destination" asset={route?.destination} assets={destinations} loading={loading} onSelect={(destinationId) => {
+      const selected = findSelectedRoute(routes, sourceId, destinationId);
+      if (selected) onRouteChange(selected);
+    }} />
+  </div>;
 }
 
 function compactThorAsset(asset: Route["source"]) {
@@ -203,6 +323,13 @@ function LeaderboardRoutePath({ route }: { route: Route }) {
 function formatTime(value?: string) {
   if (!value) return "—";
   return new Date(value).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function clearSelectedQuoteInUrl() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("runId")) return;
+  url.searchParams.delete("runId");
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
 function formatLocalTime(value?: string | null) {
@@ -291,7 +418,7 @@ function ComparisonResult({ cell, window, now }: { cell?: ComparisonCell; window
   const age = formatAgeLabel(cell.capturedAt, now);
   return <span className={`cell-result protocol-${cell.leader}`} title={`${formatBps(cell.oracleGapBps)} vs oracle · ${age}`}>
     <span className="result-header"><PartnerMark id={cell.leader} /><b>{partner.cellName}</b></span>
-    <span className="result-metric"><strong>{cell.tie ? "Exact tie" : cell.marginBps == null ? "Single quote" : formatBps(cell.marginBps)}</strong><span className="result-age">{age.replace(" min ago", "m").replace(" ago", "")}</span></span>
+    <span className="result-metric"><strong>{cell.tie ? "Exact tie" : cell.marginBps == null ? "1 quote" : formatBps(cell.marginBps)}</strong><span className="result-age">{age.replace(" min ago", "m").replace(" ago", "")}</span></span>
     <small>{cell.tie ? "Tied" : cell.marginBps == null ? "No comparison" : runnerUp ? `vs ${runnerUp.cellName}` : "Best output"} · {quoteCount} {quoteCount === 1 ? "quote" : "quotes"}</small>
   </span>;
 }
@@ -346,12 +473,15 @@ function MobileRouteCard({ route, selectedSize, cells, viewWindow, now, enabledP
   </article>;
 }
 
-function LatestQuoteComparison({ route, runDetails, runLoading, selectedSize, onOpenDetails }: {
+function LatestQuoteComparison({ route, runDetails, runLoading, selectedSize, onOpenDetails, selectedSnapshot, onUseLatest, now }: {
   route: Route;
   runDetails: RunResponse | null;
   runLoading: boolean;
   selectedSize: QuoteSize;
   onOpenDetails: () => void;
+  selectedSnapshot: boolean;
+  onUseLatest: () => void;
+  now: number;
 }) {
   const orderedQuotes = [...(runDetails?.quotes ?? [])].sort((a, b) => partners.findIndex((partner) => partner.id === a.protocol) - partners.findIndex((partner) => partner.id === b.protocol));
   const quotedOutputs = orderedQuotes
@@ -363,7 +493,8 @@ function LatestQuoteComparison({ route, runDetails, runLoading, selectedSize, on
 
   return <section className="latest-comparison" aria-labelledby="latest-comparison-title" aria-busy={runLoading}>
     <header>
-      <div><b id="latest-comparison-title">Latest quote comparison</b><span>{selectedSize.label}{runDetails?.run ? ` · captured ${formatTime(runDetails.run.initiatedAt)}` : " · synchronized batch"}</span></div>
+      <div><b id="latest-comparison-title">{selectedSnapshot ? "Selected check" : "Latest quote comparison"}</b><span>{selectedSize.label}{runDetails?.run ? <> · <time dateTime={runDetails.run.initiatedAt} title={`Captured ${formatTime(runDetails.run.initiatedAt)}`}>{formatAgeLabel(runDetails.run.initiatedAt, now)}</time></> : " · SYNCHRONIZED BATCH"}</span></div>
+      {selectedSnapshot && <button type="button" className="latest-details-button" onClick={onUseLatest}>Use latest check</button>}
       <button className="quote-audit-link" type="button" onClick={onOpenDetails}><span>Raw details</span><b aria-hidden="true">→</b></button>
     </header>
     {runLoading ? <div className="latest-comparison-state" role="status"><b>Loading latest quotes…</b><span>Reading the synchronized batch for {selectedSize.label}.</span></div> : runDetails?.run ? <>
@@ -388,7 +519,12 @@ function LatestQuoteComparison({ route, runDetails, runLoading, selectedSize, on
           })}
         </div>
       </div>
-    </> : <div className="latest-comparison-state"><b>{runDetails?.error ? "Latest comparison unavailable" : "No captured comparison yet"}</b><span>{runDetails?.error ? "Quote history could not be loaded. Raw details contain the diagnostic response." : `The next ${selectedSize.label} quote batch will appear here.`}</span></div>}
+      <details className="quote-comparison-details"><summary>Batch details</summary><dl>
+        <div><dt>Asset path</dt><dd><code>{route.source.thorAsset} → {route.destination.thorAsset}</code></dd></div>
+        <div><dt>Captured</dt><dd><time dateTime={runDetails.run.initiatedAt}>{formatTime(runDetails.run.initiatedAt)}</time></dd></div>
+        <div><dt>Sync skew</dt><dd>{runDetails.run.maxRequestSkewMs != null ? `${runDetails.run.maxRequestSkewMs} ms` : "Unavailable"}</dd></div>
+      </dl></details>
+    </> : <div className="latest-comparison-state" role="status"><b>{runDetails?.error ? "Couldn’t load quote comparison" : "Quote history is being collected"}</b><span>{runDetails?.error ? "Please try again shortly. The diagnostic response is available in Raw details." : `Waiting for the first ${selectedSize.label} comparison for this route.`}</span></div>}
   </section>;
 }
 
@@ -426,7 +562,7 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
     const value = point.oracleGapBps;
     return value == null ? [] : [{ timestamp: bucket.timestamp, value, point }];
   }));
-  if (!plotted.length) return <div className="trend-empty"><b>No oracle-backed quote yet</b><span>Run this exact route and size once to start the chart.</span></div>;
+  if (!plotted.length) return <div className="trend-empty" role="status"><b>{data.comparableRuns ? "Awaiting oracle reference" : "Quote history is being collected"}</b><span>{data.comparableRuns ? "Collected quotes need an oracle reference to appear in this chart." : "The chart will appear after an oracle-referenced comparison is collected."}</span></div>;
 
   const deviations = plotted.map((point) => Math.abs(point.value)).sort((a, b) => a - b);
   const percentile = deviations[Math.min(deviations.length - 1, Math.floor(deviations.length * 0.95))] ?? 5;
@@ -469,7 +605,7 @@ function TrendChart({ data, activePartners }: { data: TrendResponse; activePartn
             segments.push(current);
           } else current.push(point);
         }
-        return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => <circle key={point.timestamp} cx={x(point.timestamp)} cy={y(point.value)} r={data.pointMode === "comparison" && point.point.winRate ? "4" : "3"} fill={partner.color}><title>{partner.name} · {formatBps(point.value)} vs oracle · {trendPointContext(point.point, data.pointMode)}</title></circle>)}</g>;
+        return <g key={partner.id}>{segments.map((segment, index) => <polyline key={index} points={segment.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" ")} fill="none" stroke={partner.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}{points.map((point) => <circle key={point.timestamp} cx={x(point.timestamp)} cy={y(point.value)} r={data.pointMode === "comparison" && point.point.winRate ? "4" : "3"} fill={partner.color}><title>{partner.name} · {formatTime(new Date(point.timestamp).toISOString())} · {formatBps(point.value)} vs oracle · {trendPointContext(point.point, data.pointMode)}</title></circle>)}</g>;
       })}
     </svg>
     <div className="trend-legend">{activePartners.map((partner) => {
@@ -483,10 +619,12 @@ export default function SwapRankDashboard({
   view,
   initialRouteId,
   initialQuery,
+  volume30DaysEnabled = false,
 }: {
   view: DashboardView;
   initialRouteId?: string;
   initialQuery: NormalizedDashboardQuery;
+  volume30DaysEnabled?: boolean;
 }) {
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -496,14 +634,19 @@ export default function SwapRankDashboard({
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
   const [comparisonLoading, setComparisonLoading] = useState(view === "leaderboard");
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
+  const [routeSourceId, setRouteSourceId] = useState(initialQuery.sourceId);
+  const selectedRouteId = useRef(initialRouteId);
   const [selectedSize, setSelectedSize] = useState<QuoteSize>(() => quoteSizes.find((size) => size.id === initialQuery.sizeId) ?? quoteSizes[3]);
   const [runDetails, setRunDetails] = useState<RunResponse | null>(null);
+  const [analysisRunId, setAnalysisRunId] = useState<number | null>(initialQuery.runId);
+  const [loadedRunKey, setLoadedRunKey] = useState<string | null>(null);
   const [runLoading, setRunLoading] = useState(false);
   const [auditDetails, setAuditDetails] = useState<RunResponse | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditRunId, setAuditRunId] = useState<number | null>(null);
   const [requestsOpen, setRequestsOpen] = useState(false);
   const [trendDays, setTrendDays] = useState<TrendDays>(initialQuery.days);
+  const [volumeDays, setVolumeDays] = useState<1 | 7 | 30>(initialQuery.volumeDays);
   const [trend, setTrend] = useState<TrendResponse | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
@@ -599,9 +742,9 @@ export default function SwapRankDashboard({
         const data = await response.json() as CatalogResponse;
         if (!response.ok) throw new Error(data.error ?? "Route catalog unavailable");
         setCatalog(data);
-        setSelectedRoute(view === "analysis"
-          ? data.routes.find((route) => route.id === initialRouteId) ?? null
-          : null);
+        const route = view !== "leaderboard" ? data.routes.find((route) => route.id === selectedRouteId.current) ?? null : null;
+        setSelectedRoute(route);
+        if (route) setRouteSourceId(route.source.id);
       } catch (error) {
         if (!controller.signal.aborted) setCatalog({ error: error instanceof Error ? error.message : "Route catalog unavailable" } as CatalogResponse);
       } finally {
@@ -617,9 +760,12 @@ export default function SwapRankDashboard({
       .then(async (response) => setHealth(await response.json() as HealthResponse))
       .catch(() => setHealth({ status: "unhealthy", checkedAt: new Date().toISOString(), latestSweep: null, minutesSinceTerminalSweep: null, error: "Health endpoint unavailable" }));
     refresh();
+  }, [refreshVersion, view]);
+
+  useEffect(() => {
     const clockTimer = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(clockTimer);
-  }, [refreshVersion, view]);
+  }, []);
 
   useEffect(() => {
     if (!manualRefreshAvailableAt) return;
@@ -637,6 +783,8 @@ export default function SwapRankDashboard({
     const refreshIfVisibleAndStale = () => {
       if (document.visibilityState !== "visible" || Date.now() - lastRefreshRequestedAt.current < resumeRefreshThresholdMs) return;
       lastRefreshRequestedAt.current = Date.now();
+      setAnalysisRunId(null);
+      clearSelectedQuoteInUrl();
       setRefreshVersion((current) => current + 1);
     };
     const refreshTimer = window.setInterval(refreshIfVisibleAndStale, pageRefreshIntervalMs);
@@ -667,41 +815,48 @@ export default function SwapRankDashboard({
     return () => controller.abort();
   }, [protocolParam, refreshVersion, view, viewWindow]);
 
+  const runRequestKey = selectedRoute ? `${selectedRoute.id}:${selectedSize.id}:${analysisRunId ?? "latest"}:${refreshVersion}` : null;
+  const trendRunId = runDetails?.run?.pairId === selectedRoute?.id && runDetails?.run?.amountId === selectedSize.id ? runDetails.run.id : null;
   useEffect(() => {
-    if (!selectedRoute) return;
+    if (view !== "analysis" || !selectedRoute) return;
     const controller = new AbortController();
-    Promise.resolve().then(() => { if (!controller.signal.aborted) setRunLoading(true); });
+    Promise.resolve().then(() => { if (!controller.signal.aborted) { setRunLoading(true); setTrendLoading(true); } });
     const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id });
+    if (analysisRunId) params.set("runId", String(analysisRunId));
     fetch(`/api/runs?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const data = await response.json() as RunResponse;
         if (!response.ok) throw new Error(data.error ?? "Quote history unavailable");
-        setRunDetails(data);
+        if (!controller.signal.aborted) { setRunDetails(data); setLoadedRunKey(runRequestKey); }
       })
       .catch((error) => {
-        if (!controller.signal.aborted) setRunDetails({ run: null, quotes: [], error: error instanceof Error ? error.message : "Quote history unavailable" });
+        if (!controller.signal.aborted) {
+          setRunDetails({ run: null, quotes: [], error: error instanceof Error ? error.message : "Quote history unavailable" });
+          setLoadedRunKey(runRequestKey);
+        }
       })
       .finally(() => { if (!controller.signal.aborted) setRunLoading(false); });
     return () => controller.abort();
-  }, [refreshVersion, selectedRoute, selectedSize.id]);
+  }, [analysisRunId, refreshVersion, runRequestKey, selectedRoute, selectedSize.id, view]);
 
   useEffect(() => {
-    if (!selectedRoute) return;
+    if (view !== "analysis" || !selectedRoute || runLoading || loadedRunKey !== runRequestKey) return;
     const controller = new AbortController();
     Promise.resolve().then(() => { if (!controller.signal.aborted) { setTrendLoading(true); setTrendError(null); } });
-    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, days: String(trendDays), protocols: protocolParam, v: "5" });
+    const params = new URLSearchParams({ routeId: selectedRoute.id, amountId: selectedSize.id, days: String(trendDays), protocols: protocolParam });
+    if (trendRunId) params.set("runId", String(trendRunId));
     fetch(`/api/trends?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const data = await response.json() as TrendResponse;
         if (!response.ok) throw new Error(data.error ?? "Trend data unavailable");
-        setTrend(data);
+        if (!controller.signal.aborted) setTrend(data);
       })
       .catch((error) => {
         if (!controller.signal.aborted) { setTrend(null); setTrendError(error instanceof Error ? error.message : "Trend data unavailable"); }
       })
       .finally(() => { if (!controller.signal.aborted) setTrendLoading(false); });
     return () => controller.abort();
-  }, [protocolParam, refreshVersion, selectedRoute, selectedSize.id, trendDays]);
+  }, [loadedRunKey, protocolParam, refreshVersion, runLoading, runRequestKey, selectedRoute, selectedSize.id, trendDays, trendRunId, view]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("swaprank-theme");
@@ -741,6 +896,7 @@ export default function SwapRankDashboard({
 
   const cells = useMemo(() => new Map((comparison?.cells ?? []).map((cell) => [`${cell.pairId}::${cell.amountId}`, cell])), [comparison]);
   const trendLeaderPartner = partners.find((partner) => partner.id === trend?.leader?.protocol);
+  const trendInitializing = trendError === "Trend data is initializing" || trendError === "A completed oracle-backed quote batch for this route and size is required";
   const latestCheckAt = useMemo(() => {
     const timestamps = [
       ...(comparison?.cells ?? []).map((cell) => cell.capturedAt),
@@ -765,17 +921,21 @@ export default function SwapRankDashboard({
       protocols: enabledProtocols.join(","),
       back: leaderboardReturnHref(),
     });
+    const cell = viewWindow === "now" ? comparison?.cells.find((cell) => cell.pairId === route.id && cell.amountId === size.id) : null;
+    if (cell?.runId) params.set("runId", String(cell.runId));
     return `/routes/${encodeURIComponent(route.id)}?${params}`;
   }
 
-  function replaceAnalysisUrl(size: QuoteSize, days: TrendDays) {
+  function replaceAnalysisUrl(size: QuoteSize, days: TrendDays, runId = analysisRunId) {
     if (view !== "analysis" || !selectedRoute) return;
     const params = new URLSearchParams({
       size: size.id,
       days: String(days),
       protocols: enabledProtocols.join(","),
       back: initialQuery.back,
+      volumeDays: String(volumeDays),
     });
+    if (runId) params.set("runId", String(runId));
     window.history.replaceState(null, "", `/routes/${encodeURIComponent(selectedRoute.id)}?${params}`);
   }
 
@@ -784,14 +944,47 @@ export default function SwapRankDashboard({
     window.location.assign(analysisHref(route, size));
   }
 
+  function routeViewHref(target: "analysis" | "volume", route: Route | null, sourceId = routeSourceId) {
+    const params = new URLSearchParams({ size: selectedSize.id, days: String(trendDays), protocols: protocolParam, back: view === "leaderboard" ? leaderboardReturnHref() : initialQuery.back, volumeDays: String(volumeDays) });
+    const routeId = route?.id ?? (loading ? initialRouteId : undefined);
+    if (target === "volume" && routeId) params.set("routeId", routeId);
+    if (!route && sourceId) params.set("source", sourceId);
+    if (routeId && analysisRunId) params.set("runId", String(analysisRunId));
+    const path = target === "volume" ? "/volume-insights" : routeId ? `/routes/${encodeURIComponent(routeId)}` : "/routes";
+    return `${path}?${params}`;
+  }
+
+  function chooseRoute(route: Route | null, sourceId = route?.source.id ?? "") {
+    auditRequest.current?.abort();
+    setRequestsOpen(false);
+    setAuditDetails(null);
+    setRunDetails(null);
+    setTrend(null);
+    setLoadedRunKey(null);
+    setAnalysisRunId(null);
+    setRunLoading(Boolean(route) && view === "analysis");
+    setTrendLoading(Boolean(route) && view === "analysis");
+    selectedRouteId.current = route?.id;
+    setSelectedRoute(route);
+    setRouteSourceId(sourceId);
+    const url = new URL(routeViewHref(view === "volume" ? "volume" : "analysis", route, sourceId), window.location.origin);
+    url.searchParams.delete("runId");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+  }
+
+  function changeRouteSource(sourceId: string) {
+    chooseRoute(findSelectedRoute(catalog?.routes ?? [], sourceId, selectedRoute?.destination.id ?? ""), sourceId);
+  }
+
   function changeWindow(window: ViewWindow) {
     setViewWindow(window);
     if (window !== "now") setTrendDays(Number(window.slice(0, -1)) as TrendDays);
   }
 
   function changeAnalysisSize(size: QuoteSize) {
+    setAnalysisRunId(null);
     setSelectedSize(size);
-    replaceAnalysisUrl(size, trendDays);
+    replaceAnalysisUrl(size, trendDays, null);
   }
 
   function changeTrendDays(days: TrendDays) {
@@ -889,6 +1082,8 @@ export default function SwapRankDashboard({
     const requestedAt = Date.now();
     if (manualRefreshAvailableAt > requestedAt) return;
     lastRefreshRequestedAt.current = requestedAt;
+    setAnalysisRunId(null);
+    clearSelectedQuoteInUrl();
     setManualRefreshAvailableAt(requestedAt + manualRefreshCooldownMs);
     setRefreshVersion((current) => current + 1);
   }
@@ -903,7 +1098,7 @@ export default function SwapRankDashboard({
   return <main className="app-shell" id="top">
     <header className="topbar">
       <Link className="brand" href="/" aria-label="SwapRank home"><span className="brand-symbol"><i /><i /><i /></span><span>Swap<span>Rank</span></span></Link>
-      <div className="top-actions"><nav aria-label="Primary navigation">{view === "analysis" ? <><a href={initialQuery.back}>Leaderboard</a><a className="active" href="#analysis">Route analysis</a></> : <a className="active" href="#leaderboard">Leaderboard</a>}</nav><button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}><svg className="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{theme === "dark" ? <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></> : <path d="M20.9 13.1A9 9 0 0 1 10.9 3.1a9 9 0 1 0 10 10Z" />}</svg><b>{theme === "dark" ? "Light" : "Dark"}</b></button></div>
+      <div className="top-actions"><PrimaryNavigation active={view} leaderboardHref={view === "leaderboard" ? "/" : initialQuery.back} analysisHref={view === "leaderboard" ? "/routes" : routeViewHref("analysis", selectedRoute)} volumeHref={view === "leaderboard" ? "/volume-insights" : routeViewHref("volume", selectedRoute)} /><button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}><svg className="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{theme === "dark" ? <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></> : <path d="M20.9 13.1A9 9 0 0 1 10.9 3.1a9 9 0 1 0 10 10Z" />}</svg><b>{theme === "dark" ? "Light" : "Dark"}</b></button></div>
     </header>
 
     {view === "leaderboard" && <section className="route-section" id="leaderboard">
@@ -966,36 +1161,44 @@ export default function SwapRankDashboard({
       </div>}
     </section>}
 
-    {view === "analysis" && <section className="route-detail" id="analysis">
-      <a className="analysis-back-link" href={initialQuery.back}>← Back to leaderboard</a>
-      <div className="detail-header compact">
-        <div><p className="eyebrow">&gt; route analysis</p>{selectedRoute ? <h2 className="detail-route"><RoutePair route={selectedRoute} /></h2> : <h2>{loading ? "Loading route…" : "Route unavailable"}</h2>}</div>
-        {selectedRoute && <div className="detail-actions"><div className="coverage-summary"><span>Compared protocols</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</div></div></div>}
+    {view !== "leaderboard" && <section className={`route-detail route-view-${view}`} id={view === "analysis" ? "analysis" : "volume-insights"}>
+      <div className="route-page-links">
+        <a className="analysis-back-link" href={initialQuery.back}>← BACK TO LEADERBOARD</a>
+        <Link className="route-view-link" href={routeViewHref(view === "analysis" ? "volume" : "analysis", selectedRoute)}>{view === "analysis" ? "VIEW VOLUME INSIGHTS →" : "VIEW ROUTE ANALYSIS →"}</Link>
       </div>
-      {!loading && !selectedRoute && <div className="error-state"><b>This route could not be found</b><span>It may no longer be in the supported route catalog. Return to the leaderboard to choose another route.</span></div>}
-      {selectedRoute && <div className="route-telemetry" aria-label="Route telemetry">
-        <span><b>ASSET PATH</b><code>{selectedRoute.source.thorAsset} → {selectedRoute.destination.thorAsset}</code></span>
-        <span><b>QUOTE AGE</b><strong>{runDetails?.run ? formatAgeLabel(runDetails.run.initiatedAt, now) : runLoading ? "syncing" : "—"}</strong></span>
-        <span><b>SYNC SKEW</b><strong>{runDetails?.run?.maxRequestSkewMs != null ? `${runDetails.run.maxRequestSkewMs} ms` : "—"}</strong></span>
-      </div>}
-
-      {selectedRoute && <LatestQuoteComparison route={selectedRoute} runDetails={runDetails} runLoading={runLoading} selectedSize={selectedSize} onOpenDetails={openLatestDetails} />}
-
+      <div className="detail-header compact route-view-header">
+        <div className="route-view-heading"><h1 className="eyebrow">&gt; {view === "analysis" ? "route analysis" : "volume insights"}</h1><RoutePicker routes={catalog?.routes ?? []} route={selectedRoute} sourceId={routeSourceId} loading={loading} onSourceChange={changeRouteSource} onRouteChange={chooseRoute} />{!selectedRoute && <p className="route-picker-help">Select a source asset and one of its tracked destinations.</p>}</div>
+      </div>
+      {catalog?.catalog?.status === "stale" && <p className="route-picker-help" role="status">Showing the last known tracked routes while the live catalog refreshes.</p>}
+      {catalog?.error ? <div className="error-state"><b>Route catalog unavailable</b><span>{catalog.error}</span></div> : !selectedRoute && <div className="route-picker-empty" role="status"><b>{loading ? "Loading tracked routes…" : initialRouteId && !routeSourceId ? "This route is no longer available" : "Choose a route to explore"}</b><span>{loading ? "Your asset choices will appear shortly." : !catalog?.routes.length ? "No supported routes are currently available." : routeSourceId ? "Choose a destination. Only tracked routes from your selected asset are shown." : "Select a source asset, then choose one of its tracked destinations."}</span></div>}
+      {view === "analysis" && <>
       {selectedRoute && <div className="analysis-toolbar">
-        <p className="mobile-toolbar-label">Trade size</p>
+        <p className="analysis-size-label">Trade size</p>
         <div className="size-selectors" role="group" aria-label="Exact USD input for route analysis">{quoteSizes.map((size) => <button key={size.id} className={selectedSize.id === size.id ? "selected" : ""} onClick={() => changeAnalysisSize(size)} aria-pressed={selectedSize.id === size.id}><strong>{size.label}</strong></button>)}</div>
+        <div className="coverage-summary analysis-coverage"><span>Compared protocols</span><div>{partners.map((partner) => <PartnerMark key={partner.id} id={partner.id} muted={!selectedRoute.partners.includes(partner.id) || !enabledProtocols.includes(partner.id)} />)}</div></div>
       </div>}
+
+      {selectedRoute && <LatestQuoteComparison route={selectedRoute} runDetails={runDetails} runLoading={runLoading} selectedSize={selectedSize} onOpenDetails={openLatestDetails} selectedSnapshot={analysisRunId != null} onUseLatest={refreshPageData} now={now} />}
 
       {selectedRoute && <section className="trend-card" aria-labelledby="trend-title">
         <header className="trend-header">
-          <div><p className="eyebrow">Historical best-output deviation from THORChain oracle · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} won most quotes over {trendPeriodLabel(trendDays)}</> : <>Performance over {trendPeriodLabel(trendDays)}</>}</h3><p>{trend?.leader ? `${Math.round(trend.leader.winRate * 100)}% win share · ${formatBps(trend.leader.averageOracleGapBps)} average vs oracle · ${Math.round(trend.leader.availability * 100)}% quote availability · ${trend.comparableRuns} comparisons` : "A period leader appears after the first oracle-referenced quote batch."}</p></div>
+          <div><p className="eyebrow">Historical best-output deviation from THORChain oracle · {selectedSize.label}</p><h3 id="trend-title">{trendLeaderPartner && trend?.leader ? <>{trendLeaderPartner.name} won most quotes over {trendPeriodLabel(trendDays)}</> : <>Performance over {trendPeriodLabel(trendDays)}</>}</h3><p>{trend?.leader ? `${Math.round(trend.leader.winRate * 100)}% win share · ${formatBps(trend.leader.averageOracleGapBps)} average vs oracle · ${Math.round(trend.leader.availability * 100)}% quote availability · ${trend.comparableRuns} comparisons` : "A period leader appears after the first oracle-referenced quote batch."}</p>{!trendLoading && trend?.latestComparisonAt && <p className="trend-freshness">{trend.pointMode === "comparison" ? "Latest plotted check" : "Latest included check"}: <time dateTime={trend.latestComparisonAt}>{formatTime(trend.latestComparisonAt)}</time></p>}</div>
           <div className="trend-controls">
-            <fieldset><legend>Period</legend><div className="segmented light">{([1, 7, 14, 30] as const).map((days) => <button key={days} className={trendDays === days ? "selected" : ""} onClick={() => changeTrendDays(days)}>{days === 1 ? "Last 24 hours" : `${days}d`}</button>)}</div></fieldset>
+            <fieldset><legend>Period</legend><div className="segmented light">{([1, 7, 14, 30] as const).map((days) => <button key={days} className={trendDays === days ? "selected" : ""} onClick={() => changeTrendDays(days)}>{days === 1 ? "LAST 24 HOURS" : `${days}D`}</button>)}</div></fieldset>
           </div>
         </header>
-        {trendLoading ? <div className="trend-empty"><b>Loading quote history…</b><span>Building the basis-point series for this route and size.</span></div> : trend ? <TrendChart data={trend} activePartners={activePartners} /> : <div className="trend-empty"><b>Trend unavailable</b><span>{trendError ?? "No historical quote data was returned."}</span></div>}
+        {trendLoading ? <div className="trend-empty" role="status"><b>Loading quote history…</b><span>Reading comparisons for this route and size.</span></div> : trend ? <TrendChart data={trend} activePartners={activePartners} /> : <div className="trend-empty" role="status"><b>{trendInitializing ? "Quote history is being collected" : "Couldn’t load quote history"}</b><span>{trendInitializing ? "The chart will appear once oracle-referenced comparisons are available." : "Please try again shortly."}</span></div>}
         <div className="trend-note"><b>0 bps is THORChain oracle parity</b><span>{trend?.pointMode === "comparison" ? "Every point compares the quoted output with the same synchronized CEX-derived oracle cross-rate. The best available valid quote wins each batch; if only one DEX returns a quote, it wins. Missing quotes appear as gaps and never invent a price point." : "Every point shows each DEX’s median signed deviation from the synchronized CEX-derived oracle within that time bucket. The best available valid quote wins each batch, including batches with only one quote; missing buckets appear as gaps."}</span></div>
       </section>}
+
+      </>}
+
+      {view === "volume" && selectedRoute && <RouteVolumePanel routeId={selectedRoute.id} routeLabel={`${selectedRoute.source.label} → ${selectedRoute.destination.label}`} days={volumeDays} providers={partners} supportedProtocols={selectedRoute.partners} volume30DaysEnabled={volume30DaysEnabled} refreshVersion={refreshVersion} now={now} onDaysChange={(days) => {
+        setVolumeDays(days);
+        const url = new URL(window.location.href);
+        url.searchParams.set("volumeDays", String(days));
+        window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      }} />}
 
       {requestsOpen && <div className="request-drawer-backdrop">
         <button className="request-drawer-dismiss" onClick={closeRequestDrawer} aria-label="Close quote details" />
@@ -1006,6 +1209,6 @@ export default function SwapRankDashboard({
       </div>}
     </section>}
 
-    <footer><Link className="footer-brand" href="/"><span className="brand-symbol"><i /><i /><i /></span><b>SwapRank</b></Link><div className="footer-links">{view === "analysis" ? <a href={initialQuery.back}>← Leaderboard</a> : <a href="#top">Back to top ↑</a>}<a className="footer-github" href="https://github.com/gerritsa/DEXQuoteTool" target="_blank" rel="noreferrer" aria-label="View SwapRank on GitHub"><svg aria-hidden="true" viewBox="0 0 24 24"><path fill="currentColor" d="M12 .3a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.26c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.74.08-.74 1.2.09 1.84 1.23 1.84 1.23 1.07 1.84 2.8 1.31 3.49 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.34-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.17 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.65.24 2.87.12 3.17.77.84 1.24 1.91 1.24 3.22 0 4.6-2.8 5.62-5.48 5.92.43.37.81 1.1.81 2.22v3.28c0 .32.22.69.83.57A12 12 0 0 0 12 .3" /></svg><span>GitHub</span></a></div></footer>
+    <footer><Link className="footer-brand" href="/"><span className="brand-symbol"><i /><i /><i /></span><b>SwapRank</b></Link><div className="footer-links">{view !== "leaderboard" ? <a href={initialQuery.back}>← Leaderboard</a> : <a href="#top">Back to top ↑</a>}<a className="footer-github" href="https://github.com/gerritsa/DEXQuoteTool" target="_blank" rel="noreferrer" aria-label="View SwapRank on GitHub"><svg aria-hidden="true" viewBox="0 0 24 24"><path fill="currentColor" d="M12 .3a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.26c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.74.08-.74 1.2.09 1.84 1.23 1.84 1.23 1.07 1.84 2.8 1.31 3.49 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.34-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.17 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.65.24 2.87.12 3.17.77.84 1.24 1.91 1.24 3.22 0 4.6-2.8 5.62-5.48 5.92.43.37.81 1.1.81 2.22v3.28c0 .32.22.69.83.57A12 12 0 0 0 12 .3" /></svg><span>GitHub</span></a></div></footer>
   </main>;
 }

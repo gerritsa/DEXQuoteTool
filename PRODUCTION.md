@@ -1,5 +1,10 @@
 # Production collector
 
+Route-volume collection and its separate activation steps are documented in
+[`docs/route-volume-rollout.md`](./docs/route-volume-rollout.md). Production
+collection is enabled with the volume queue bindings, additive migrations,
+Explorer credential and fixed request/storage budgets provisioned.
+
 The production collector is designed for 50 fixed routes, seven USD sizes, one
 best-output quote strategy, and one sweep every 30 minutes.
 
@@ -64,6 +69,21 @@ and collector bookkeeping older than eight days, and keeps compact daily metrics
 for 2,000 days. Thirty-day charts remain available from precomputed trend buckets,
 while normalized R2 archives retain the inputs needed for future analysis for the
 same 2,000-day period.
+
+Route charts merge completed quotes newer than their precomputed history without
+waiting for the whole collector sweep. The recent read uses the existing route/size
+and quote indexes, is capped at 24 hours and 64 batches, and deduplicates batch IDs.
+The chart uses the comparison card's completed batch ID as its cache revision;
+the fifteen-minute shared cache and existing page refresh schedule remain in place.
+The page shows the actual latest plotted check, and point tooltips include timestamps.
+This adds no provider requests, database tables, or retention.
+
+Latest leaderboard responses use a revision derived from the completed quote
+entries, read through the fixed-size `idx_latest_quote_payloads_revision` covering
+index. Quote cards also cache by completed batch ID. Opening a leaderboard cell
+passes its batch ID to analysis, so its card and chart agree even if another
+comparison finishes during navigation. "Use latest check", automatic refresh,
+and changing trade size release that selection and load the latest completed batch.
 
 ## Monitoring
 

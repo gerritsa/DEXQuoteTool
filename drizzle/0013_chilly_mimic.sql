@@ -1,0 +1,1 @@
+CREATE INDEX `idx_latest_quote_payloads_revision` ON `latest_quote_payloads` (`mode`,`run_id`,`updated_at`);

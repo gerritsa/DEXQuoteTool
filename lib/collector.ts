@@ -29,6 +29,7 @@ export type CollectorEnvironment = {
   DB: D1Database;
   ARCHIVE: R2Bucket;
   BENCHMARK_QUEUE: Queue<CollectorBundle>;
+  VOLUME_COLLECTION_ENABLED?: string;
 };
 
 function chunks<T>(items: T[], size: number) {
@@ -339,6 +340,12 @@ export async function processCollectorBundle(bundle: CollectorBundle, environmen
   const sweep = await updateSweepProgress(bundle.sweepId, d1);
   if (sweep && sweep.status !== "pending" && sweep.status !== "running") {
     await refreshTrendBucketsForTimestamp(sweep.scheduledFor, d1);
+    const { refreshVolumeQuoteHour } = await import("./volume/collector");
+    try {
+      await refreshVolumeQuoteHour(Date.parse(sweep.scheduledFor), environment);
+    } catch {
+      console.warn("Volume quote summary refresh failed; benchmark collection is unaffected");
+    }
   }
 
   if (archiveError) throw new Error(archiveError);

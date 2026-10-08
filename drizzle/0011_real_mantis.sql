@@ -1,0 +1,1 @@
+ALTER TABLE `volume_feed_hours` ADD `staged_rows` integer DEFAULT 0 NOT NULL;

@@ -5,6 +5,12 @@
   "compatibility_date": "2026-08-17",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
+    "VOLUME_COLLECTION_ENABLED": "true",
+    "VOLUME_DAILY_PAGE_LIMIT": "2000",
+    "VOLUME_LIVE_PAGE_RESERVE": "1000",
+    "VOLUME_30D_ENABLED": "false",
+    "VOLUME_LIVE_CATCHUP_DAY": "2026-10-08",
+    "VOLUME_LIVE_CATCHUP_PAGES": "250",
     "BENCHMARK_ZEC_ADDRESS": "t1SEgZvXCu3ceE42qrq5pCeSq7HbLjX8NJv"
   },
   "assets": {
@@ -30,6 +36,10 @@
       {
         "binding": "BENCHMARK_QUEUE",
         "queue": "dex-quote-tool-jobs"
+      },
+      {
+        "binding": "VOLUME_QUEUE",
+        "queue": "dex-quote-tool-volume"
       }
     ],
     "consumers": [
@@ -40,11 +50,19 @@
         "max_retries": 3,
         "dead_letter_queue": "dex-quote-tool-dead-letter",
         "max_concurrency": 4
+      },
+      {
+        "queue": "dex-quote-tool-volume",
+        "max_batch_size": 1,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "dead_letter_queue": "dex-quote-tool-volume-dead-letter",
+        "max_concurrency": 2
       }
     ]
   },
   "triggers": {
-    "crons": ["*/30 * * * *", "15 0 * * *"]
+    "crons": ["*/30 * * * *", "15 0 * * *", "10,40 * * * *"]
   },
   "limits": {
     "cpu_ms": 30000,

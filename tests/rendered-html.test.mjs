@@ -2,10 +2,21 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { registerHooks } from "node:module";
 import { canonicalPublicCacheUrl } from "../lib/http-cache.ts";
 import { oracleGapBps, oraclePriceForAsset, referenceForAmount } from "../lib/oracle.ts";
 
+// Node's SSR harness does not provide the Workers-native environment module.
+// Give server components the same binding values supplied to worker.fetch.
+globalThis.__swaprankTestEnv = {};
+registerHooks({ resolve(specifier, context, nextResolve) {
+  if (specifier === "cloudflare:workers") return { url: "data:text/javascript,export const env = globalThis.__swaprankTestEnv;", shortCircuit: true };
+  return nextResolve(specifier, context);
+} });
+
 async function render(path = "/", environment = {}) {
+  for (const key of Object.keys(globalThis.__swaprankTestEnv)) delete globalThis.__swaprankTestEnv[key];
+  Object.assign(globalThis.__swaprankTestEnv, environment);
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
@@ -45,7 +56,8 @@ test("server-renders the SwapRank dashboard", async () => {
   assert.match(html, /MAYA PROTOCOL/);
   assert.match(html, /THORChain[\s\S]*MAYA PROTOCOL[\s\S]*CHAINFLIP[\s\S]*NEAR/);
   assert.doesNotMatch(html, /Maya is disabled|MAYA PROTOCOL · DISABLED/);
-  assert.doesNotMatch(html, /Route analysis/);
+  assert.match(html, /href="\/routes"[^>]*>ROUTE ANALYSIS/);
+  assert.match(html, /href="\/volume-insights"[^>]*>VOLUME INSIGHTS/);
   assert.doesNotMatch(html, /href="\/analytics"/);
   assert.doesNotMatch(html, />Exact input</);
   assert.doesNotMatch(html, /Run \$.*test/);
@@ -57,9 +69,35 @@ test("route analysis renders on a dedicated, bookmarkable page", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /route analysis/);
-  assert.match(html, /← Back to leaderboard/);
+  assert.match(html, /← BACK TO LEADERBOARD/);
   assert.match(html, /href="\/\?window=7d#leaderboard-results"/);
   assert.doesNotMatch(html, /QUOTE LEADERBOARD/);
+  assert.match(html, /aria-label="From asset"/);
+  assert.match(html, /aria-label="To asset"/);
+  assert.match(html, /Switch route direction/);
+  assert.doesNotMatch(html, /Trading volume by size|route-volume-panel/);
+});
+
+test("route and volume entry pages offer the same accessible route picker", async () => {
+  for (const [path, activeLabel] of [["/routes", "ROUTE ANALYSIS"], ["/volume-insights", "VOLUME INSIGHTS"]]) {
+    const response = await render(path);
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.match(html, new RegExp(`aria-current="page">${activeLabel}`));
+    assert.match(html, /aria-label="Select a tracked route"/);
+    assert.match(html, /aria-label="From asset"/);
+    assert.match(html, /aria-label="To asset"/);
+    assert.match(html, /Switch route direction/);
+    assert.doesNotMatch(html, /This route could not be found|QUOTE LEADERBOARD/);
+  }
+});
+
+test("volume route bookmarks render without quote analysis", async () => {
+  const response = await render("/volume-insights?routeId=bitcoin%3Anative%3Abtc__ethereum%3Anative%3Aeth&volumeDays=7");
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /volume insights/);
+  assert.doesNotMatch(html, /Latest quote comparison|Historical best-output deviation/);
 });
 
 test("analytics page remains hidden until it is ready", async () => {
@@ -236,12 +274,14 @@ test("does not expose a public collector page", async () => {
 
 test("build includes the production collection bindings", async () => {
   const config = JSON.parse(await readFile(new URL("../dist/server/wrangler.json", import.meta.url), "utf8"));
-  assert.deepEqual(config.triggers.crons, ["*/30 * * * *", "15 0 * * *"]);
+  assert.deepEqual(config.triggers.crons, ["*/30 * * * *", "15 0 * * *", "10,40 * * * *"]);
   assert.equal(config.r2_buckets[0].binding, "ARCHIVE");
   assert.equal(config.queues.producers[0].binding, "BENCHMARK_QUEUE");
   assert.equal(config.queues.consumers[0].max_batch_size, 1);
   assert.equal(config.queues.consumers[0].max_concurrency, 4);
   assert.equal(config.queues.consumers[0].dead_letter_queue, "dex-quote-tool-dead-letter");
+  assert.equal(config.queues.producers[1].binding, "VOLUME_QUEUE");
+  assert.equal(config.queues.consumers[1].max_concurrency, 2);
 });
 
 test("the clean baseline includes collector resilience and precomputed trends", async () => {
@@ -405,7 +445,7 @@ test("public cache keys ignore cache-busting and irrelevant parameters", () => {
   );
   assert.equal(
     canonicalPublicCacheUrl(new Request("https://swaprank.test/api/runs?runId=42&routeId=ignored&junk=anything")),
-    "https://swaprank.test/api/runs?schema=8&runId=42",
+    "https://swaprank.test/api/runs?schema=9&runId=42",
   );
   assert.match(
     canonicalPublicCacheUrl(new Request("https://swaprank.test/api/comparison?protocols=thorchain,maya")),

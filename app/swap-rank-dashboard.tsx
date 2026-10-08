@@ -1,8 +1,8 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- small static logos are served directly by the Worker */
+/* eslint-disable @next/next/no-html-link-for-pages -- native anchors avoid vinext's production RSC navigation error */
 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import Link from "next/link";
 import RouteVolumePanel from "./route-volume-panel";
 import PrimaryNavigation from "./primary-navigation";
 import { defaultProtocols, type NormalizedDashboardQuery, type PartnerId, type TrendDays, type ViewWindow } from "./dashboard-query";
@@ -1097,7 +1097,7 @@ export default function SwapRankDashboard({
 
   return <main className="app-shell" id="top">
     <header className="topbar">
-      <Link className="brand" href="/" aria-label="SwapRank home"><span className="brand-symbol"><i /><i /><i /></span><span>Swap<span>Rank</span></span></Link>
+      <a className="brand" href="/" aria-label="SwapRank home"><span className="brand-symbol"><i /><i /><i /></span><span>Swap<span>Rank</span></span></a>
       <div className="top-actions"><PrimaryNavigation active={view} leaderboardHref={view === "leaderboard" ? "/" : initialQuery.back} analysisHref={view === "leaderboard" ? "/routes" : routeViewHref("analysis", selectedRoute)} volumeHref={view === "leaderboard" ? "/volume-insights" : routeViewHref("volume", selectedRoute)} /><button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}><svg className="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{theme === "dark" ? <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></> : <path d="M20.9 13.1A9 9 0 0 1 10.9 3.1a9 9 0 1 0 10 10Z" />}</svg><b>{theme === "dark" ? "Light" : "Dark"}</b></button></div>
     </header>
 
@@ -1164,7 +1164,7 @@ export default function SwapRankDashboard({
     {view !== "leaderboard" && <section className={`route-detail route-view-${view}`} id={view === "analysis" ? "analysis" : "volume-insights"}>
       <div className="route-page-links">
         <a className="analysis-back-link" href={initialQuery.back}>← BACK TO LEADERBOARD</a>
-        <Link className="route-view-link" href={routeViewHref(view === "analysis" ? "volume" : "analysis", selectedRoute)}>{view === "analysis" ? "VIEW VOLUME INSIGHTS →" : "VIEW ROUTE ANALYSIS →"}</Link>
+        <a className="route-view-link" href={routeViewHref(view === "analysis" ? "volume" : "analysis", selectedRoute)}>{view === "analysis" ? "VIEW VOLUME INSIGHTS →" : "VIEW ROUTE ANALYSIS →"}</a>
       </div>
       <div className="detail-header compact route-view-header">
         <div className="route-view-heading"><h1 className="eyebrow">&gt; {view === "analysis" ? "route analysis" : "volume insights"}</h1><RoutePicker routes={catalog?.routes ?? []} route={selectedRoute} sourceId={routeSourceId} loading={loading} onSourceChange={changeRouteSource} onRouteChange={chooseRoute} />{!selectedRoute && <p className="route-picker-help">Select a source asset and one of its tracked destinations.</p>}</div>
@@ -1209,6 +1209,6 @@ export default function SwapRankDashboard({
       </div>}
     </section>}
 
-    <footer><Link className="footer-brand" href="/"><span className="brand-symbol"><i /><i /><i /></span><b>SwapRank</b></Link><div className="footer-links">{view !== "leaderboard" ? <a href={initialQuery.back}>← Leaderboard</a> : <a href="#top">Back to top ↑</a>}<a className="footer-github" href="https://github.com/gerritsa/DEXQuoteTool" target="_blank" rel="noreferrer" aria-label="View SwapRank on GitHub"><svg aria-hidden="true" viewBox="0 0 24 24"><path fill="currentColor" d="M12 .3a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.26c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.74.08-.74 1.2.09 1.84 1.23 1.84 1.23 1.07 1.84 2.8 1.31 3.49 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.34-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.17 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.65.24 2.87.12 3.17.77.84 1.24 1.91 1.24 3.22 0 4.6-2.8 5.62-5.48 5.92.43.37.81 1.1.81 2.22v3.28c0 .32.22.69.83.57A12 12 0 0 0 12 .3" /></svg><span>GitHub</span></a></div></footer>
+    <footer><a className="footer-brand" href="/"><span className="brand-symbol"><i /><i /><i /></span><b>SwapRank</b></a><div className="footer-links">{view !== "leaderboard" ? <a href={initialQuery.back}>← Leaderboard</a> : <a href="#top">Back to top ↑</a>}<a className="footer-github" href="https://github.com/gerritsa/DEXQuoteTool" target="_blank" rel="noreferrer" aria-label="View SwapRank on GitHub"><svg aria-hidden="true" viewBox="0 0 24 24"><path fill="currentColor" d="M12 .3a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.26c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.74.08-.74 1.2.09 1.84 1.23 1.84 1.23 1.07 1.84 2.8 1.31 3.49 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.34-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.17 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.65.24 2.87.12 3.17.77.84 1.24 1.91 1.24 3.22 0 4.6-2.8 5.62-5.48 5.92.43.37.81 1.1.81 2.22v3.28c0 .32.22.69.83.57A12 12 0 0 0 12 .3" /></svg><span>GitHub</span></a></div></footer>
   </main>;
 }

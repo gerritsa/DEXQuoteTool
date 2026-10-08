@@ -1,5 +1,4 @@
-import Link from "next/link";
-
+// Full page navigation avoids vinext’s production RSC link handler.
 export default function PrimaryNavigation({ active, leaderboardHref = "/", analysisHref = "/routes", volumeHref = "/volume-insights" }: {
   active: "leaderboard" | "analysis" | "volume";
   leaderboardHref?: string;
@@ -7,8 +6,8 @@ export default function PrimaryNavigation({ active, leaderboardHref = "/", analy
   volumeHref?: string;
 }) {
   return <nav aria-label="Primary navigation">
-    <Link href={leaderboardHref} className={active === "leaderboard" ? "active" : undefined} aria-current={active === "leaderboard" ? "page" : undefined}>LEADERBOARD</Link>
-    <Link href={analysisHref} className={active === "analysis" ? "active" : undefined} aria-current={active === "analysis" ? "page" : undefined}>ROUTE ANALYSIS</Link>
-    <Link href={volumeHref} className={active === "volume" ? "active" : undefined} aria-current={active === "volume" ? "page" : undefined}>VOLUME INSIGHTS</Link>
+    <a href={leaderboardHref} className={active === "leaderboard" ? "active" : undefined} aria-current={active === "leaderboard" ? "page" : undefined}>LEADERBOARD</a>
+    <a href={analysisHref} className={active === "analysis" ? "active" : undefined} aria-current={active === "analysis" ? "page" : undefined}>ROUTE ANALYSIS</a>
+    <a href={volumeHref} className={active === "volume" ? "active" : undefined} aria-current={active === "volume" ? "page" : undefined}>VOLUME INSIGHTS</a>
   </nav>;
 }
